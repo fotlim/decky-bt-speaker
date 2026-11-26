@@ -116,7 +116,12 @@ def build_filters_block(filters):
 def build_conf(preset_key, target_sink_name="auto"):
     """生成 PipeWire filter-chain 配置文本。
 
-    结构：虚拟 sink（应用往这里输出） -> param_eq -> 真实扬声器。
+    结构：虚拟 sink（应用往这里输出） -> param_eq -> clamp -> 真实扬声器。
+
+    ⚠️ 为什么末尾要加 `clamp`？
+    软件增益或 EQ 提升都可能让信号超过 0 dBFS，超过就削波，听感是**爆音/破音**。
+    `clamp` 是 PipeWire 内置的零延迟硬限幅器，把样本钳在 [-1.0, 1.0]，
+    能挡住「增益过头」造成的爆音。它不改变正常电平（不超限就不动作）。
     """
     # 未知预设统一回退到 flat，注释里也要写回退后的真实值
     resolved = preset_key if preset_key in PRESETS else DEFAULT_PRESET
@@ -132,6 +137,9 @@ def build_conf(preset_key, target_sink_name="auto"):
 # 位置：~/.config/pipewire/pipewire.conf.d/{name}
 # 预设：{preset}（{label}）
 # 删除本文件并重启 PipeWire 即可恢复原状。
+#
+# 信号链：输入 L/R -> param_eq -> clamp L/R -> 输出
+# clamp 是零延迟硬限幅（钳在 ±1.0），挡住增益/EQ 过头造成的爆音。
 
 context.modules = [
   {{ name = libpipewire-module-filter-chain
@@ -147,7 +155,23 @@ context.modules = [
             config = {{
 {block}            }}
           }}
+          {{
+            type  = builtin
+            name  = clamp_l
+            label = clamp
+          }}
+          {{
+            type  = builtin
+            name  = clamp_r
+            label = clamp
+          }}
         ]
+        links = [
+          {{ output = "eq:Out 1" input = "clamp_l:In" }}
+          {{ output = "eq:Out 2" input = "clamp_r:In" }}
+        ]
+        inputs  = [ "eq:In 1" "eq:In 2" ]
+        outputs = [ "clamp_l:Out" "clamp_r:Out" ]
       }}
       capture.props = {{
         node.name      = "effect_input.bt_speaker_eq"

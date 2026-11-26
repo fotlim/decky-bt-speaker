@@ -393,6 +393,15 @@ def test_eq():
     check("flat 用空 filters", "filters = [ ]" in flat_conf)
     check("未知预设回退 flat", "预设：flat" in eq.build_conf("nonexistent"))
 
+    # 抗削波 clamp（防止增益过头爆音）
+    check("含 clamp 抗削波节点", "label = clamp" in conf)
+    check("左右声道各一个 clamp", conf.count("label = clamp") == 2, str(conf.count("label = clamp")))
+    check("clamp 已连线 eq:Out 1", 'output = "eq:Out 1"' in conf)
+    check("clamp 已连线 eq:Out 2", 'output = "eq:Out 2"' in conf)
+    check("输出指向 clamp_l", 'clamp_l:Out' in conf)
+    check("输出指向 clamp_r", 'clamp_r:Out' in conf)
+    check("links 块存在", "links = [" in conf)
+
     # AutoEQ 解析
     autoeq = """Preamp: -6.8 dB
 Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100

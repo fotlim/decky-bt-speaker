@@ -211,7 +211,7 @@ export function Speaker() {
           <SliderField
             value={showVol}
             min={0}
-            max={300}
+            max={150}
             step={5}
             showValue={false}
             onChange={changeVolume}
@@ -220,17 +220,17 @@ export function Speaker() {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: COLORS.dim, marginTop: -2 }}>
         <span>0%</span>
-        <span style={{ color: showVol > 100 ? COLORS.accent : COLORS.dim }}>
-          {showVol}%{showVol > 100 ? "（增益）" : ""}
+        <span style={{ color: showVol > 100 ? COLORS.accentWarm : COLORS.dim }}>
+          {showVol}%{showVol > 100 ? "（增益·可能破音）" : ""}
         </span>
-        <span>300%</span>
+        <span>150%</span>
       </div>
 
-      {/* 声音太小？一键增益 */}
-      {showVol < 200 && (
+      {/* 声音太小？一键增益到 130%（安全范围内） */}
+      {showVol < 120 && (
         <Focusable
-          onClick={() => act(() => api.boostVolume(2.0), "已增益到 200%")}
-          onActivate={() => act(() => api.boostVolume(2.0), "已增益到 200%")}
+          onClick={() => act(() => api.boostVolume(1.3), "已增益到 130%")}
+          onActivate={() => act(() => api.boostVolume(1.3), "已增益到 130%")}
           style={{
             marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -238,7 +238,7 @@ export function Speaker() {
             fontSize: 12.5, color: COLORS.accent,
           }}
         >
-          <FaVolumeUp size={11} /> 声音太小？点这里增强到 200%
+          <FaVolumeUp size={11} /> 声音太小？增强到 130%
         </Focusable>
       )}
 

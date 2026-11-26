@@ -69,14 +69,23 @@ def latency_list():
 
 
 def build_latency_conf(profile_key):
-    """生成延迟档位的 WirePlumber 配置片段。
+    """生成延迟 / 抗卡顿 / 抗爆音的 WirePlumber 配置片段。
 
-    用 `node.latency` 控制 PipeWire 的处理块大小，
-    `bluez5.decode-buffer.latency` 控制蓝牙解码缓冲（毫秒，0 = 自动）。
+    解决三类问题：
+
+    1. **卡顿**（日志出现 `client too slow!`）
+       蓝牙链路带宽不够，PipeWire 填不满传输缓冲。加大量化与缓冲。
+
+    2. **爆音**（削波破音）
+       软件增益超过 100% 后必然削波。`node.pause-on-idle = false` 避免
+       暂停/恢复时的爆点；`node.latency` 给足缓冲减少 xrun。
+
+    3. **开始播放时的爆音**
+       节点空闲被挂起，恢复瞬间会有 pop。关掉挂起。
     """
     resolved = profile_key if profile_key in LATENCY_PROFILES else DEFAULT_LATENCY
     p = LATENCY_PROFILES[resolved]
-    return """# 由「蓝牙音箱」Decky 插件生成 —— 延迟档位
+    return """# 由「蓝牙音箱」Decky 插件生成 —— 延迟 / 抗卡顿 / 抗爆音
 # 位置：~/.config/wireplumber/wireplumber.conf.d/{name}
 # 档位：{resolved}（{label}，约 {ms}ms）
 # 删除本文件并重启 WirePlumber 即可恢复默认。
@@ -91,10 +100,22 @@ monitor.bluez.rules = [
       update-props = {{
         node.latency = "{latency}"
         bluez5.decode-buffer.latency = {decode}
+        # 不因空闲挂起节点：避免恢复播放瞬间的爆音（pop）
+        node.pause-on-idle = false
+        # 会话挂起超时设为 0 = 不自动挂起，减少卡顿与爆点
+        session.suspend-timeout-seconds = 0
+        # 给足缓冲，缓解 client too slow
+        node.quantum = 1024
       }}
     }}
   }}
 ]
+
+# 全局：蓝牙相关缓冲与重采样设置
+wireplumber.settings = {{
+  # 蓝牙链路抖动时用更宽松的时钟同步
+  node.features.audio.adapter = true
+}}
 """.format(
         name=COMBINE_CONF_NAME.replace("combine", "latency"),
         resolved=resolved,

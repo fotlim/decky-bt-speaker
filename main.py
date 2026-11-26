@@ -723,20 +723,22 @@ class Plugin:
     # RPC：音量增益
     # ------------------------------------------------------------------
     @_safe
-    async def boost_volume(self, gain=1.5):
+    async def boost_volume(self, gain=1.3):
         """一键增益：把总音量和外部源音量同时拉高。
 
         蓝牙接收场景声音偏小的两个原因：
         1. 手机推流进来的 `bluez_input` 节点音量默认只有 70~80%
         2. Deck 自己的 sink 音量可能也不是满的
 
-        两者叠加就明显偏轻。这里一次性把两处都拉到指定倍数。
-        PipeWire 的软件音量可以超过 100%，所以能真正变响。
+        ⚠️ 超过 100% 会削波（爆音），所以：
+        - 默认只增益到 130%（SAFE_GAIN 内）
+        - 上限硬限制在 MAX_GAIN（200%）
+        - 返回值里带上 `clipping_warning`，让前端提示用户
         """
         try:
             g = max(1.0, min(bt.MAX_GAIN, float(gain)))
         except (TypeError, ValueError):
-            g = 1.5
+            g = 1.3
 
         applied = []
 
@@ -769,8 +771,16 @@ class Plugin:
             except Exception as e:  # noqa: BLE001
                 self._log("增益：设置外部源音量失败 %s" % e)
 
+        warn = g > 1.0
         self._log("一键增益 %s：%s" % (g, "、".join(applied) or "无操作"))
-        return {"ok": True, "gain": g, "applied": applied}
+        return {
+            "ok": True,
+            "gain": g,
+            "applied": applied,
+            "clipping_warning": warn,
+            "hint": ("超过 100% 会削波，可能出现爆音。"
+                     "如果听到破音请调回 100% 以内。") if warn else "",
+        }
 
     @_safe
     async def set_auto_gain(self, enabled):
