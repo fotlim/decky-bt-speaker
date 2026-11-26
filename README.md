@@ -223,7 +223,7 @@ decky-bt-speaker/
 ├── output.py            # 延迟档位 / 多输出同步
 ├── metadata.py          # AVRCP 元数据
 ├── pack.py              # 打包（含漏包自检）
-├── tests_offline.py     # 离线自检（200+ 项，不需要 Deck）
+├── tests_offline.py     # 离线自检（197 项，不需要 Deck）
 ├── src/
 │   ├── index.tsx        # definePlugin
 │   ├── backend.ts       # RPC 封装
@@ -234,7 +234,8 @@ decky-bt-speaker/
 │       ├── Speaker.tsx        # QAM 面板
 │       └── BtSpeakerPage.tsx  # 全屏页（设备/设置/均衡器/诊断）
 └── docs/
-    └── 功能拓展与竞品调研.md
+    ├── 功能拓展与竞品调研.md
+    └── 商店提交指南.md
 ```
 
 ```bash
