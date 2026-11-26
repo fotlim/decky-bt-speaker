@@ -170,6 +170,12 @@ export interface SpeakerStatus {
   tools: { bluetoothctl: boolean; busctl: boolean; wpctl: boolean };
 }
 
+export interface CheckItem {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
 export interface DiagnoseInfo {
   tools: Record<string, boolean>;
   adapter_raw: string;
@@ -177,4 +183,6 @@ export interface DiagnoseInfo {
   versions: Versions;
   agent: boolean;
   settings: Settings;
+  checks: CheckItem[];
+  modules: Record<string, boolean>;
 }

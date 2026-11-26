@@ -46,5 +46,6 @@ export const api = {
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),
   removeTuning: () => call<[], { ok: boolean; installed: boolean }>("remove_tuning"),
   diagnose: () => call<[], DiagnoseInfo>("diagnose"),
+  report: () => call<[], { text: string }>("report"),
   getLog: (tail = 200) => call<[number], { path: string; text: string }>("get_log", tail),
 };
