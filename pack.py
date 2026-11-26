@@ -28,6 +28,7 @@ INCLUDE_FILES = [
     "silence.py",
     "eq.py",
     "output.py",
+    "metadata.py",
     "dist/index.js",
     "README.md",
     "CHANGELOG.md",

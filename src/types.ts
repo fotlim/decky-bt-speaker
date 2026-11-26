@@ -81,6 +81,22 @@ export interface LiveSource {
   norm?: { jumped: boolean; baseline: number | null; delta: number };
 }
 
+export interface TrackInfo {
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  track_number: number;
+  total_tracks: number;
+  duration_ms: number;
+  duration: string;
+  status: string;
+  status_label: string;
+  position_ms: number;
+  position: string;
+  mac: string;
+}
+
 export interface SilenceInfo {
   enabled: boolean;
   timeout: number;
@@ -137,6 +153,7 @@ export interface SpeakerStatus {
   volume: VolumeInfo;
   sink: string;
   live: LiveSource | null;
+  track: TrackInfo | null;
   codec: CodecInfo;
   focus: FocusInfo;
   silence: SilenceInfo | null;
