@@ -59,6 +59,13 @@ except Exception:
     silence = None
     _SILENCE_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import eq  # type: ignore
+    _EQ_IMPORT_ERR = None
+except Exception:
+    eq = None
+    _EQ_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -68,6 +75,7 @@ DEFAULT_SETTINGS = {
     "last_device": "",         # 上次连接过的设备 MAC（唤醒后优先重连它）
     "focus_mode": "coexist",   # 音频焦点：receiver_first / coexist / manual
     "silence_disconnect": 0,   # 静音 N 秒后自动断开（0 = 关闭）
+    "eq_preset": "flat",       # 均衡器预设
 }
 
 _ERR = "__bt_error__"
@@ -104,6 +112,7 @@ class Plugin:
     foc = None
     guard = None
     norm = None
+    eqcfg = None
     _keep_task = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
@@ -183,6 +192,7 @@ class Plugin:
         if silence is not None:
             self.guard = silence.SilenceGuard(self.settings.get("silence_disconnect", 0), self._log)
             self.norm = silence.Normalizer(self._log)
+        self.eqcfg = eq.EqConfig(self._log) if eq is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -476,6 +486,12 @@ class Plugin:
             },
             "silence": (self.guard.status() if self.guard is not None else None),
             "normalize": (self.norm.status() if self.norm is not None else None),
+            "eq": {
+                "installed": (eq.EqConfig.installed() if eq is not None else False),
+                "preset": self.settings.get("eq_preset", "flat"),
+                "presets": (eq.preset_list() if eq is not None else []),
+                "path": (eq.EqConfig.conf_path() if eq is not None else ""),
+            },
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
@@ -635,6 +651,65 @@ class Plugin:
             raise bt.BtError("silence 模块未加载")
         self.norm.reset()
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # RPC：均衡器
+    # ------------------------------------------------------------------
+    @_safe
+    async def set_eq_preset(self, preset):
+        """切换 EQ 预设。会写配置并重启 PipeWire 让它生效。"""
+        if eq is None:
+            raise bt.BtError("eq 模块未加载")
+        if preset not in eq.PRESETS:
+            raise bt.BtError("未知 EQ 预设：%s" % preset)
+        self.eqcfg.apply(preset)
+        self.settings["eq_preset"] = preset
+        self._save_settings()
+        await self._restart_pipewire()
+        return {"ok": True, "preset": preset, "label": eq.PRESETS[preset]["label"]}
+
+    @_safe
+    async def remove_eq(self):
+        if eq is None:
+            raise bt.BtError("eq 模块未加载")
+        self.eqcfg.remove()
+        self.settings["eq_preset"] = "flat"
+        self._save_settings()
+        await self._restart_pipewire()
+        return {"ok": True, "installed": False}
+
+    @_safe
+    async def import_autoeq(self, text):
+        """导入 AutoEQ / Squiglink 的 ParametricEQ 文本。"""
+        if eq is None:
+            raise bt.BtError("eq 模块未加载")
+        parsed = eq.autoeq_to_filters(text)
+        if not parsed["filters"]:
+            raise bt.BtError(
+                "没有解析到任何滤波器。请确认是 AutoEQ 的 ParametricEQ.txt 格式"
+                "（形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`）"
+            )
+        if len(parsed["filters"]) > 20:
+            raise bt.BtError("滤波器太多（%d 段），最多支持 20 段" % len(parsed["filters"]))
+        self.eqcfg.apply_custom(parsed["filters"], label="AutoEQ 自定义")
+        self.settings["eq_preset"] = "custom"
+        self._save_settings()
+        await self._restart_pipewire()
+        return {
+            "ok": True,
+            "bands": len(parsed["filters"]),
+            "preamp": parsed["preamp"],
+            "skipped": parsed["skipped"],
+        }
+
+    async def _restart_pipewire(self):
+        """重启用户级 PipeWire 让 filter-chain 配置生效。"""
+        for unit in ("pipewire", "pipewire.service"):
+            rc, out = await bt.run_cmd(["systemctl", "--user", "restart", unit], timeout=20.0)
+            if rc == 0:
+                self._log("PipeWire 已重启（%s）" % unit)
+                return True
+        raise bt.BtError("重启 PipeWire 失败，请手动重启或重启 Deck")
 
     @_safe
     async def set_setting(self, key, value):

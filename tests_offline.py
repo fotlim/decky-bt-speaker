@@ -360,6 +360,79 @@ def test_silence():
     check("None 音量不崩", n.observe(None)["jumped"] is False)
 
 
+def test_eq():
+    print("均衡器")
+    import eq
+    import tempfile
+
+    # 预设完整性
+    check("有 5 个预设", len(eq.PRESETS) == 5, str(list(eq.PRESETS)))
+    check("默认是 flat", eq.DEFAULT_PRESET == "flat")
+    check("flat 无滤波器", eq.PRESETS["flat"]["filters"] == [])
+    plist = eq.preset_list()
+    check("preset_list 有 5 条", len(plist) == 5)
+    check("每条有 label/desc/bands", all("label" in p and "desc" in p and "bands" in p for p in plist))
+
+    # 所有预设的滤波器 type 必须是合法的 biquad 标签
+    valid_types = {"bq_lowshelf", "bq_highshelf", "bq_peaking", "bq_lowpass",
+                   "bq_highpass", "bq_bandpass", "bq_notch"}
+    for key, p in eq.PRESETS.items():
+        for typ, _f, _g, _q in p["filters"]:
+            check("预设 %s 的 type %s 合法" % (key, typ), typ in valid_types)
+
+    # 配置生成
+    conf = eq.build_conf("bass")
+    check("配置含 filter-chain", "libpipewire-module-filter-chain" in conf)
+    check("配置含 param_eq", "label = param_eq" in conf)
+    check("配置含 bq_lowshelf", "bq_lowshelf" in conf)
+    check("配置含 Audio/Sink", "Audio/Sink" in conf)
+    check("占位符已替换", "{name}" not in conf and "{block}" not in conf)
+    check("预设名写进注释", "预设：bass" in conf)
+
+    flat_conf = eq.build_conf("flat")
+    check("flat 用空 filters", "filters = [ ]" in flat_conf)
+    check("未知预设回退 flat", "预设：flat" in eq.build_conf("nonexistent"))
+
+    # AutoEQ 解析
+    autoeq = """Preamp: -6.8 dB
+Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100
+Filter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000
+Filter 3: ON HSC Fc 10000 Hz Gain -2.6 dB Q 0.700
+Filter 4: OFF PK Fc 500 Hz Gain 3.0 dB Q 1.000
+"""
+    r = eq.autoeq_to_filters(autoeq)
+    check("解析出 3 段（OFF 跳过）", len(r["filters"]) == 3, str(r["filters"]))
+    check("preamp = -6.8", abs(r["preamp"] + 6.8) < 1e-6)
+    check("PK -> bq_peaking", r["filters"][0][0] == "bq_peaking")
+    check("LSC -> bq_lowshelf", r["filters"][1][0] == "bq_lowshelf")
+    check("HSC -> bq_highshelf", r["filters"][2][0] == "bq_highshelf")
+    check("频率解析正确", abs(r["filters"][0][1] - 21.0) < 1e-6)
+    check("增益解析正确", abs(r["filters"][0][2] - 6.7) < 1e-6)
+    check("Q 解析正确", abs(r["filters"][0][3] - 1.100) < 1e-6)
+    check("空输入不崩", eq.autoeq_to_filters("")["filters"] == [])
+    check("None 不崩", eq.autoeq_to_filters(None)["filters"] == [])
+    check("垃圾输入不崩", eq.autoeq_to_filters("hello world")["filters"] == [])
+
+    # 配置文件生命周期
+    old = os.environ.get("XDG_CONFIG_HOME")
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["XDG_CONFIG_HOME"] = td
+        try:
+            cfg = eq.EqConfig()
+            path = cfg.apply("vocal")
+            check("EQ 配置已写入", os.path.isfile(path))
+            check("落在 pipewire.conf.d", "pipewire.conf.d" in path)
+            check("installed() 为真", eq.EqConfig.installed())
+            check("current_preset 反推出 vocal", cfg.current_preset() == "vocal")
+            cfg.remove()
+            check("删除后 installed() 为假", not eq.EqConfig.installed())
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -393,7 +466,7 @@ def test_power_parse():
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
-               test_nodes_parse, test_focus, test_silence, test_power_parse):
+               test_nodes_parse, test_focus, test_silence, test_eq, test_power_parse):
         fn()
     print()
     if FAILED:

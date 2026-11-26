@@ -4,9 +4,9 @@ import { toaster } from "@decky/api";
 import { api } from "../backend";
 import { useSpeaker } from "../store";
 import { COLORS } from "../route";
-import { Pill, ErrorText, Hint, Avatar, SectionTitle, Loading } from "../components";
+import { Pill, ErrorText, Hint, Avatar, SectionTitle, Loading, Card } from "../components";
 
-type Tab = "devices" | "settings" | "diag";
+type Tab = "devices" | "settings" | "eq" | "diag";
 
 export function BtSpeakerPage() {
   const { state, error, refresh } = useSpeaker();
@@ -58,6 +58,7 @@ export function BtSpeakerPage() {
         {([
           ["devices", "已配对设备"],
           ["settings", "设置"],
+          ["eq", "均衡器"],
           ["diag", "诊断"],
         ] as [Tab, string][]).map(([k, label]) => (
           <Focusable
@@ -86,6 +87,7 @@ export function BtSpeakerPage() {
             />
           )}
           {tab === "settings" && <SettingsTab state={state} refresh={refresh} />}
+          {tab === "eq" && <EqTab state={state} refresh={refresh} />}
           {tab === "diag" && <DiagTab />}
         </>
       )}
@@ -432,6 +434,162 @@ function ToggleRow({ label, desc, checked, onChange }: { label: string; desc: st
         }} />
       </div>
     </Focusable>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [importText, setImportText] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const presets: any[] = state.eq?.presets || [];
+  const current = state.eq?.preset || "flat";
+
+  const apply = async (key: string) => {
+    if (busy) return;
+    setBusy(key);
+    try {
+      await api.setEqPreset(key);
+      toaster.toast({ title: "均衡器已切换", body: "PipeWire 已重启，可能有一两秒静音" });
+      setTimeout(refresh, 1500);
+    } catch (e: any) {
+      toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doImport = async () => {
+    if (!importText.trim()) return;
+    setBusy("import");
+    try {
+      const r = await api.importAutoeq(importText);
+      toaster.toast({
+        title: `已导入 ${r.bands} 段 EQ`,
+        body: r.skipped ? `跳过 ${r.skipped} 行无法识别` : "PipeWire 已重启",
+      });
+      setShowImport(false);
+      setImportText("");
+      setTimeout(refresh, 1500);
+    } catch (e: any) {
+      toaster.toast({ title: "导入失败", body: e?.message || String(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const box: any = {
+    marginTop: 8, padding: 10, borderRadius: 9, width: "100%", minHeight: 120,
+    fontSize: 12, color: COLORS.text, fontFamily: "monospace",
+    background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
+    outline: "none", resize: "vertical" as any,
+  };
+
+  return (
+    <div style={{ marginTop: 16, maxWidth: 760 }}>
+      <SectionTitle>预设</SectionTitle>
+      <Hint>
+        用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。
+      </Hint>
+      <Focusable flow-children="column" style={{ marginTop: 10 }}>
+        {presets.map((p) => {
+          const active = current === p.key;
+          const isBusy = busy === p.key;
+          return (
+            <Focusable
+              key={p.key}
+              onClick={() => apply(p.key)}
+              onActivate={() => apply(p.key)}
+              style={{
+                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+                borderRadius: 11, cursor: "pointer",
+                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+                opacity: isBusy ? 0.5 : 1,
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14.5, color: COLORS.text }}>
+                  {p.label}{isBusy ? "（应用中…）" : ""}
+                </div>
+                <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 3 }}>{p.desc}</div>
+              </div>
+              {p.bands > 0 && <Pill>{p.bands} 段</Pill>}
+            </Focusable>
+          );
+        })}
+        {current === "custom" && (
+          <Card active>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, color: COLORS.text }}>自定义（AutoEQ 导入）</div>
+              <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 3 }}>当前正在使用导入的曲线</div>
+            </div>
+            <Pill tone="accent">生效中</Pill>
+          </Card>
+        )}
+      </Focusable>
+
+      <SectionTitle>导入 AutoEQ / Squiglink 曲线</SectionTitle>
+      <Hint>
+        从 <span style={{ color: COLORS.sub }}>AutoEq</span> 或 <span style={{ color: COLORS.sub }}>squig.link</span> 复制
+        ParametricEQ.txt 的内容粘进来。格式形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`。
+      </Hint>
+      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <Focusable
+          onClick={() => setShowImport(!showImport)}
+          onActivate={() => setShowImport(!showImport)}
+          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}
+        >{showImport ? "收起" : "粘贴曲线…"}</Focusable>
+        {state.eq?.installed && (
+          <Focusable
+            onClick={async () => {
+              try {
+                await api.removeEq();
+                toaster.toast({ title: "已移除均衡器", body: "PipeWire 已重启" });
+                setTimeout(refresh, 1500);
+              } catch (e: any) {
+                toaster.toast({ title: "移除失败", body: e?.message || String(e) });
+              }
+            }}
+            onActivate={async () => {
+              try { await api.removeEq(); setTimeout(refresh, 1500); } catch { /* ignore */ }
+            }}
+            style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }}
+          >完全移除 EQ</Focusable>
+        )}
+      </Focusable>
+
+      {showImport && (
+        <div style={{ marginTop: 10 }}>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={"Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000"}
+            style={box}
+          />
+          <Focusable
+            onClick={doImport}
+            onActivate={doImport}
+            style={{
+              display: "inline-block", marginTop: 8, padding: "9px 20px", borderRadius: 9,
+              background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
+              opacity: busy === "import" ? 0.5 : 1,
+            }}
+          >{busy === "import" ? "导入中…" : "导入并应用"}</Focusable>
+        </div>
+      )}
+
+      <Hint>
+        配置文件：<span style={{ color: COLORS.sub }}>{state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf"}</span>
+      </Hint>
+    </div>
   );
 }
 

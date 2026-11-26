@@ -120,6 +120,9 @@ const api = {
     setSilenceTimeout: (sec) => call("set_silence_timeout", sec),
     setVolumeBaseline: (v) => call("set_volume_baseline", v),
     resetVolumeBaseline: () => call("reset_volume_baseline"),
+    setEqPreset: (preset) => call("set_eq_preset", preset),
+    removeEq: () => call("remove_eq"),
+    importAutoeq: (text) => call("import_autoeq", text),
     setSetting: (key, value) => call("set_setting", key, value),
     applyTuning: () => call("apply_tuning"),
     removeTuning: () => call("remove_tuning"),
@@ -226,6 +229,16 @@ function ErrorText({ text }) {
 function Hint({ children }) {
     return (SP_JSX.jsx("div", { style: { margin: "6px 4px", fontSize: 12, lineHeight: 1.65, color: COLORS.dim }, children: children }));
 }
+function Card({ children, onClick, active = false }) {
+    const inner = (SP_JSX.jsx("div", { style: {
+            display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
+            borderRadius: 10, background: active ? "rgba(76,154,255,0.12)" : "rgba(255,255,255,0.045)",
+            border: `1px solid ${active ? "rgba(76,154,255,0.35)" : COLORS.border}`,
+        }, children: children }));
+    if (!onClick)
+        return inner;
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, onClick: onClick, style: { cursor: "pointer", marginBottom: 8 }, children: inner }));
+}
 function Avatar({ icon, connected }) {
     const isPhone = (icon || "").includes("phone");
     const glyph = isPhone ? "📱" : (icon || "").includes("computer") ? "💻" : "🔊";
@@ -322,12 +335,13 @@ function BtSpeakerPage() {
         }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }, children: [SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: { fontSize: 26, fontWeight: 700, color: COLORS.text }, children: "\u84DD\u7259\u97F3\u7BB1" }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, marginTop: 3 }, children: ad ? `${ad.alias} · ${ad.address || "未知地址"}` : "正在读取蓝牙适配器…" })] }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 8 }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u84DD\u7259\u5DF2\u5F00" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u84DD\u7259\u5DF2\u5173" }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: "\u53EF\u88AB\u53D1\u73B0" }) : SP_JSX.jsx(Pill, { children: "\u4E0D\u53EF\u89C1" }), ad?.a2dp_sink ? SP_JSX.jsx(Pill, { tone: "ok", children: "A2DP Sink" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u65E0 Sink \u89D2\u8272" })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, margin: "14px 0 4px" }, children: [
                     ["devices", "已配对设备"],
                     ["settings", "设置"],
+                    ["eq", "均衡器"],
                     ["diag", "诊断"],
                 ].map(([k, label]) => (SP_JSX.jsx(DFL.Focusable, { onActivate: () => setTab(k), onClick: () => setTab(k), style: {
                         padding: "7px 16px", borderRadius: 18, cursor: "pointer", fontSize: 13.5,
                         background: tab === k ? COLORS.accent : "rgba(255,255,255,0.06)",
                         color: tab === k ? "#fff" : COLORS.sub,
-                    }, children: label }, k))) }), !state ? SP_JSX.jsx(Loading, {}) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: paired, connectedMacs: connectedMacs, busyMac: busyMac, onAction: act, discoverable: !!ad?.discoverable, alias: ad?.alias || "" })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }));
+                    }, children: label }, k))) }), !state ? SP_JSX.jsx(Loading, {}) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: paired, connectedMacs: connectedMacs, busyMac: busyMac, onAction: act, discoverable: !!ad?.discoverable, alias: ad?.alias || "" })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "eq" && SP_JSX.jsx(EqTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }));
 }
 // ---------------------------------------------------------------------------
 function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
@@ -486,6 +500,91 @@ function ToggleRow({ label, desc, checked, onChange }) {
                         position: "absolute", top: 3, left: checked ? 21 : 3, width: 18, height: 18, borderRadius: 9,
                         background: "#fff", transition: "left .15s",
                     } }) })] }));
+}
+// ---------------------------------------------------------------------------
+function EqTab({ state, refresh }) {
+    const [busy, setBusy] = SP_REACT.useState(null);
+    const [importText, setImportText] = SP_REACT.useState("");
+    const [showImport, setShowImport] = SP_REACT.useState(false);
+    const presets = state.eq?.presets || [];
+    const current = state.eq?.preset || "flat";
+    const apply = async (key) => {
+        if (busy)
+            return;
+        setBusy(key);
+        try {
+            await api.setEqPreset(key);
+            toaster.toast({ title: "均衡器已切换", body: "PipeWire 已重启，可能有一两秒静音" });
+            setTimeout(refresh, 1500);
+        }
+        catch (e) {
+            toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusy(null);
+        }
+    };
+    const doImport = async () => {
+        if (!importText.trim())
+            return;
+        setBusy("import");
+        try {
+            const r = await api.importAutoeq(importText);
+            toaster.toast({
+                title: `已导入 ${r.bands} 段 EQ`,
+                body: r.skipped ? `跳过 ${r.skipped} 行无法识别` : "PipeWire 已重启",
+            });
+            setShowImport(false);
+            setImportText("");
+            setTimeout(refresh, 1500);
+        }
+        catch (e) {
+            toaster.toast({ title: "导入失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusy(null);
+        }
+    };
+    const box = {
+        marginTop: 8, padding: 10, borderRadius: 9, width: "100%", minHeight: 120,
+        fontSize: 12, color: COLORS.text, fontFamily: "monospace",
+        background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
+        outline: "none", resize: "vertical",
+    };
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u9884\u8BBE" }), SP_JSX.jsx(Hint, { children: "\u7528 PipeWire \u5185\u7F6E\u7684 param_eq\uFF08\u4E0D\u4F9D\u8D56\u4EFB\u4F55\u5916\u90E8\u63D2\u4EF6\uFF09\u3002\u5207\u6362\u4F1A\u91CD\u542F PipeWire\uFF0C\u53EF\u80FD\u6709\u4E00\u4E24\u79D2\u9759\u97F3\u3002" }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", style: { marginTop: 10 }, children: [presets.map((p) => {
+                        const active = current === p.key;
+                        const isBusy = busy === p.key;
+                        return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => apply(p.key), onActivate: () => apply(p.key), style: {
+                                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+                                borderRadius: 11, cursor: "pointer",
+                                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+                                opacity: isBusy ? 0.5 : 1,
+                            }, children: [SP_JSX.jsx("div", { style: {
+                                        width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                                        border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                    }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 14.5, color: COLORS.text }, children: [p.label, isBusy ? "（应用中…）" : ""] }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: p.desc })] }), p.bands > 0 && SP_JSX.jsxs(Pill, { children: [p.bands, " \u6BB5"] })] }, p.key));
+                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: "\u81EA\u5B9A\u4E49\uFF08AutoEQ \u5BFC\u5165\uFF09" }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: "\u5F53\u524D\u6B63\u5728\u4F7F\u7528\u5BFC\u5165\u7684\u66F2\u7EBF" })] }), SP_JSX.jsx(Pill, { tone: "accent", children: "\u751F\u6548\u4E2D" })] }))] }), SP_JSX.jsx(SectionTitle, { children: "\u5BFC\u5165 AutoEQ / Squiglink \u66F2\u7EBF" }), SP_JSX.jsxs(Hint, { children: ["\u4ECE ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "AutoEq" }), " \u6216 ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "squig.link" }), " \u590D\u5236 ParametricEQ.txt \u7684\u5185\u5BB9\u7C98\u8FDB\u6765\u3002\u683C\u5F0F\u5F62\u5982 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`\u3002"] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? "收起" : "粘贴曲线…" }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                            try {
+                                await api.removeEq();
+                                toaster.toast({ title: "已移除均衡器", body: "PipeWire 已重启" });
+                                setTimeout(refresh, 1500);
+                            }
+                            catch (e) {
+                                toaster.toast({ title: "移除失败", body: e?.message || String(e) });
+                            }
+                        }, onActivate: async () => {
+                            try {
+                                await api.removeEq();
+                                setTimeout(refresh, 1500);
+                            }
+                            catch { /* ignore */ }
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }, children: "\u5B8C\u5168\u79FB\u9664 EQ" }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: box }), SP_JSX.jsx(DFL.Focusable, { onClick: doImport, onActivate: doImport, style: {
+                            display: "inline-block", marginTop: 8, padding: "9px 20px", borderRadius: 9,
+                            background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
+                            opacity: busy === "import" ? 0.5 : 1,
+                        }, children: busy === "import" ? "导入中…" : "导入并应用" })] })), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
 }
 // ---------------------------------------------------------------------------
 function DiagTab() {

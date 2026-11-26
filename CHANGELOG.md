@@ -4,6 +4,46 @@
 
 ---
 
+## [1.5.0] - 2026-11-26
+
+均衡器 —— 占住 Decky 生态里 EasyEffects 的空白位。
+
+调研确认：**Decky 生态没有任何 EasyEffects 包装**（GitHub 搜索 0 结果），而 Deck 自带喇叭与便宜蓝牙音箱的频响都不怎么样，EQ 是感知提升最大的一项。
+
+### Added
+
+- **`eq.py`**：基于 PipeWire 内置 `param_eq` 的均衡器
+- **5 个预设**
+  - `flat` 平直（关闭）
+  - `bass` 低音增强（补 Deck 喇叭偏薄的低频）
+  - `vocal` 人声清晰（抬中频、削低频浑浊，适合播客）
+  - `bright` 明亮通透（抬高频细节，适合古典）
+  - `loudness` 等响补偿（小音量下补两端，夜间用）
+- **AutoEQ / Squiglink 曲线导入**：粘贴 `ParametricEQ.txt` 内容即可
+  - 自动转换 `PK`/`LSC`/`HSC`/`LPQ`/`HPQ`/`BP` → PipeWire 的 `bq_peaking`/`bq_lowshelf`/`bq_highshelf`/...
+  - 解析 `Preamp`，跳过 `OFF` 的行，报告无法识别的行数
+  - 最多 20 段
+- 新增 RPC：`set_eq_preset` / `remove_eq` / `import_autoeq`
+- 新增「均衡器」标签页
+
+### Design Notes
+
+**为什么不用 EasyEffects？** 它是 flatpak，需要用户手动装 + 手动常驻（flatpak 版没配自动启动的 dbus service），还依赖一大堆 LSP / Calf / ZamAudio 插件。对「只想调个低音」的用户太重。
+
+**为什么用 `param_eq`？** 它是 PipeWire **内置**的 builtin 滤波器，不依赖任何外部插件，纯配置文件，随 PipeWire 启动自动加载。`filters` 数组可以直接内联曲线，不需要外部文件。
+
+**配置结构**：虚拟 sink（`Audio/Sink`，应用往这里输出）→ `param_eq` → 真实扬声器（`node.passive = true`）。
+
+### Fixed
+
+- `build_conf` 未知预设回退时，注释里写的还是传入的原名而不是 `flat`（测试抓到的）
+
+### Tests
+
+- 新增 30 项 EQ 自检（5 个预设的 type 合法性、配置生成、AutoEQ 三种类型转换、OFF 行跳过、垃圾输入、配置文件生命周期）
+
+---
+
 ## [1.4.0] - 2026-11-26
 
 静音自动断开 + 音量归一化。两个来自成熟产品的启发，针对掌机场景改造。
