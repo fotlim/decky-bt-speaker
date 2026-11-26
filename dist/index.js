@@ -114,6 +114,9 @@ const api = {
     setMute: (m) => call("set_mute", m),
     setSourceVolume: (nodeId, v) => call("set_source_volume", nodeId, v),
     setSourceMute: (nodeId, m) => call("set_source_mute", nodeId, m),
+    setFocusMode: (mode) => call("set_focus_mode", mode),
+    getAutoswitch: () => call("get_autoswitch"),
+    setAutoswitch: (on) => call("set_autoswitch", on),
     setSetting: (key, value) => call("set_setting", key, value),
     applyTuning: () => call("apply_tuning"),
     removeTuning: () => call("remove_tuning"),
@@ -359,6 +362,19 @@ function SettingsTab({ state, refresh }) {
             toaster.toast({ title: "保存失败", body: e?.message || String(e) });
         }
     };
+    const changeFocus = async (mode) => {
+        try {
+            const r = await api.setFocusMode(mode);
+            toaster.toast({
+                title: "焦点模式已切换",
+                body: r.applied && r.applied.length ? r.applied.join("、") : "",
+            });
+            refresh();
+        }
+        catch (e) {
+            toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+        }
+    };
     const applyAlias = async () => {
         const v = alias.trim();
         if (!v || busy)
@@ -397,7 +413,23 @@ function SettingsTab({ state, refresh }) {
                     catch (e) {
                         toaster.toast({ title: "操作失败", body: e?.message || String(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }), SP_JSX.jsx("br", {}), "\u8FDE\u4E0A\u4E86\u5374\u6CA1\u58F0\u97F3\u3001\u6216\u8005\u58F0\u97F3\u53D8\u6210\u5355\u58F0\u9053\u53D1\u95F7\u65F6\uFF0C\u6253\u5F00\u5B83\u518D\u91CD\u8FDE\u4E00\u6B21\u901A\u5E38\u5C31\u597D\u4E86\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u884C\u4E3A" }), SP_JSX.jsx(ToggleRow, { label: "\u63D2\u4EF6\u52A0\u8F7D\u65F6\u81EA\u52A8\u8FDB\u5165\u53EF\u88AB\u53D1\u73B0", desc: "\u6253\u5F00 Decky \u540E\u81EA\u52A8\u5F00\u597D\u84DD\u7259\uFF0C\u7701\u5F97\u6BCF\u6B21\u624B\u52A8\u70B9", checked: !!s.auto_start, onChange: (v) => save("auto_start", v, v ? "已开启自动启动" : "已关闭自动启动") }), SP_JSX.jsx(ToggleRow, { label: "\u4FDD\u6301\u53EF\u88AB\u53D1\u73B0", desc: "BlueZ \u9ED8\u8BA4 180 \u79D2\u540E\u81EA\u52A8\u9690\u85CF\uFF0C\u8FD9\u91CC\u6BCF\u5206\u949F\u590D\u67E5\u4E00\u6B21", checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活") }), SP_JSX.jsx(ToggleRow, { label: "\u7761\u7720\u5524\u9192\u540E\u81EA\u52A8\u6062\u590D", desc: state.power?.watching
+                } }), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }), SP_JSX.jsx("br", {}), "\u8FDE\u4E0A\u4E86\u5374\u6CA1\u58F0\u97F3\u3001\u6216\u8005\u58F0\u97F3\u53D8\u6210\u5355\u58F0\u9053\u53D1\u95F7\u65F6\uFF0C\u6253\u5F00\u5B83\u518D\u91CD\u8FDE\u4E00\u6B21\u901A\u5E38\u5C31\u597D\u4E86\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u7126\u70B9" }), SP_JSX.jsx(Hint, { children: "\u51B3\u5B9A\u300C\u624B\u673A\u63A8\u6D41\u300D\u548C\u300CDeck \u6E38\u620F\u58F0\u97F3\u300D\u600E\u4E48\u5171\u5B58\u3002\u4E0D\u4F1A\u6539\u5199\u4F60\u7684\u7CFB\u7EDF\u9ED8\u8BA4\u8F93\u51FA\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
+                    ["coexist", "与游戏共存", "两者都出声，互不抢占（推荐）"],
+                    ["receiver_first", "接收端优先", "优先保证手机推流音质，关闭自动切通话模式"],
+                    ["manual", "手动", "插件不插手，完全自己用系统音量面板调"],
+                ].map(([mode, label, desc]) => {
+                    const active = (s.focus_mode || "coexist") === mode;
+                    return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => changeFocus(mode), onActivate: () => changeFocus(mode), style: {
+                            display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
+                            borderRadius: 10, cursor: "pointer",
+                            background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                            border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+                        }, children: [SP_JSX.jsx("div", { style: {
+                                    width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                                    border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: desc })] })] }, mode));
+                }) }), SP_JSX.jsx(SectionTitle, { children: "\u7F16\u7801\u5668" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["\u5F53\u524D\u7F16\u7801\uFF1A", state.codec?.codec || "未连接"] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: ["\u65B9\u5411\uFF1A", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u884C\u4E3A" }), SP_JSX.jsx(ToggleRow, { label: "\u63D2\u4EF6\u52A0\u8F7D\u65F6\u81EA\u52A8\u8FDB\u5165\u53EF\u88AB\u53D1\u73B0", desc: "\u6253\u5F00 Decky \u540E\u81EA\u52A8\u5F00\u597D\u84DD\u7259\uFF0C\u7701\u5F97\u6BCF\u6B21\u624B\u52A8\u70B9", checked: !!s.auto_start, onChange: (v) => save("auto_start", v, v ? "已开启自动启动" : "已关闭自动启动") }), SP_JSX.jsx(ToggleRow, { label: "\u4FDD\u6301\u53EF\u88AB\u53D1\u73B0", desc: "BlueZ \u9ED8\u8BA4 180 \u79D2\u540E\u81EA\u52A8\u9690\u85CF\uFF0C\u8FD9\u91CC\u6BCF\u5206\u949F\u590D\u67E5\u4E00\u6B21", checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活") }), SP_JSX.jsx(ToggleRow, { label: "\u7761\u7720\u5524\u9192\u540E\u81EA\u52A8\u6062\u590D", desc: state.power?.watching
                     ? `已监听（${state.power.backend}）：唤醒后自动恢复可发现并重连上次的设备`
                     : "监听 logind 的睡眠信号，唤醒后自动恢复蓝牙状态（合盖再开盖不会失联）", checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, v ? "已开启唤醒恢复" : "已关闭唤醒恢复") }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: ["\u5DF2\u6355\u83B7 ", state.power.events, " \u6B21\u7761\u7720/\u5524\u9192\u4E8B\u4EF6", state.power.last ? `，最近一次：${state.power.last[0] === "sleep" ? "睡眠" : "唤醒"}` : "", s.last_device ? ` · 上次设备 ${s.last_device}` : ""] })), SP_JSX.jsx(SectionTitle, { children: "\u7CFB\u7EDF\u4FE1\u606F" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || "未知"] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || "未知"] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || "未知"] }), SP_JSX.jsxs("div", { children: ["\u9ED8\u8BA4\u8F93\u51FA\uFF1A", state.sink || "未知"] })] })] }));
 }

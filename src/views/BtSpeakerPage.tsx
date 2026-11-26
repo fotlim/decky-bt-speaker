@@ -176,6 +176,19 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     }
   };
 
+  const changeFocus = async (mode: string) => {
+    try {
+      const r = await api.setFocusMode(mode);
+      toaster.toast({
+        title: "焦点模式已切换",
+        body: r.applied && r.applied.length ? r.applied.join("、") : "",
+      });
+      refresh();
+    } catch (e: any) {
+      toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+    }
+  };
+
   const applyAlias = async () => {
     const v = alias.trim();
     if (!v || busy) return;
@@ -240,6 +253,50 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         配置文件：<span style={{ color: COLORS.sub }}>{state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf"}</span>
         <br />连上了却没声音、或者声音变成单声道发闷时，打开它再重连一次通常就好了。
       </Hint>
+
+      <SectionTitle>音频焦点</SectionTitle>
+      <Hint>决定「手机推流」和「Deck 游戏声音」怎么共存。不会改写你的系统默认输出。</Hint>
+      <Focusable flow-children="column" style={{ marginTop: 8 }}>
+        {([
+          ["coexist", "与游戏共存", "两者都出声，互不抢占（推荐）"],
+          ["receiver_first", "接收端优先", "优先保证手机推流音质，关闭自动切通话模式"],
+          ["manual", "手动", "插件不插手，完全自己用系统音量面板调"],
+        ] as [string, string, string][]).map(([mode, label, desc]) => {
+          const active = (s.focus_mode || "coexist") === mode;
+          return (
+            <Focusable
+              key={mode}
+              onClick={() => changeFocus(mode)}
+              onActivate={() => changeFocus(mode)}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
+                borderRadius: 10, cursor: "pointer",
+                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, color: COLORS.text }}>{label}</div>
+                <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 2 }}>{desc}</div>
+              </div>
+            </Focusable>
+          );
+        })}
+      </Focusable>
+
+      <SectionTitle>编码器</SectionTitle>
+      <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
+        <div>当前编码：{state.codec?.codec || "未连接"}</div>
+        <div>Profile：{state.codec?.profile || "—"}</div>
+        <div>方向：{state.codec?.role || "—"}</div>
+      </div>
 
       <SectionTitle>行为</SectionTitle>
       <ToggleRow

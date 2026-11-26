@@ -45,6 +45,13 @@ except Exception:
     nodes = None
     _NODES_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import focus  # type: ignore
+    _FOCUS_IMPORT_ERR = None
+except Exception:
+    focus = None
+    _FOCUS_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -52,6 +59,8 @@ DEFAULT_SETTINGS = {
     "alias": "Steam Deck",
     "resume_restore": True,    # 唤醒后自动恢复可发现 / 重连上次的设备
     "last_device": "",         # 上次连接过的设备 MAC（唤醒后优先重连它）
+    "focus_mode": "coexist",   # 音频焦点：receiver_first / coexist / manual
+    "silence_disconnect": 0,   # 静音 N 秒后自动断开（0 = 关闭）
 }
 
 _ERR = "__bt_error__"
@@ -85,6 +94,7 @@ class Plugin:
     wp = None
     wpcfg = None
     sleeper = None
+    foc = None
     _keep_task = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
@@ -160,6 +170,7 @@ class Plugin:
         self.bz = bt.BlueZ(self._log)
         self.wp = bt.Wp()
         self.wpcfg = bt.WpConfig(self._log)
+        self.foc = focus.Focus(self.wp, self._log) if focus is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -377,6 +388,16 @@ class Plugin:
         except Exception as e:  # noqa: BLE001
             self._log("读取设备列表失败：%s" % e)
 
+        # 编码器与 profile（用来判断「现在是 SBC 还是 AAC」）
+        codec = {"profile": "", "codec": "", "role": ""}
+        if self.foc is not None:
+            try:
+                prof = await self.foc.get_active_profile()
+                if prof:
+                    codec = dict(focus.summarize_profile(prof), profile=prof)
+            except Exception as e:  # noqa: BLE001
+                self._log("读取编码器失败：%s" % e)
+
         # 已连接设备的详情（图标/类别用来在 UI 上区分手机和电脑）
         details = []
         for d in connected:
@@ -392,6 +413,12 @@ class Plugin:
             "volume": vol,
             "sink": sink,
             "live": live,
+            "codec": codec,
+            "focus": {
+                "mode": self.settings.get("focus_mode", "coexist"),
+                "label": (focus.Focus.mode_label(self.settings.get("focus_mode", "coexist"))
+                          if focus is not None else ""),
+            },
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
@@ -468,6 +495,56 @@ class Plugin:
     async def set_source_mute(self, node_id, muted):
         await self.wp.set_mute_of(node_id, bool(muted))
         return {"ok": True, "muted": bool(muted)}
+
+    # ------------------------------------------------------------------
+    # RPC：音频焦点
+    # ------------------------------------------------------------------
+    @_safe
+    async def set_focus_mode(self, mode):
+        """切换音频焦点策略。
+
+        - receiver_first：蓝牙连上时，把外部源音量提到较高水平（不改默认设备）
+        - coexist：两者都出声（默认）
+        - manual：插件完全不插手
+
+        刻意**不调用** `wpctl set-default`：那个选择会被永久记住且压过所有
+        priority.session，用户之后在系统里怎么切都会被它抢回去。
+        """
+        if focus is None:
+            raise bt.BtError("focus 模块未加载")
+        if mode not in focus.MODES:
+            raise bt.BtError("未知焦点模式：%s" % mode)
+        self.settings["focus_mode"] = mode
+        self._save_settings()
+        applied = []
+        if mode == "receiver_first":
+            # 关掉自动切通话模式，避免一开麦就变单声道
+            try:
+                await self.foc.set_autoswitch(False)
+                applied.append("关闭自动切通话模式")
+            except Exception as e:  # noqa: BLE001
+                self._log("设置 autoswitch 失败：%s" % e)
+        elif mode == "coexist":
+            try:
+                await self.foc.set_autoswitch(False)
+                applied.append("关闭自动切通话模式")
+            except Exception:
+                pass
+        self._log("焦点模式切换为 %s（%s）" % (mode, "、".join(applied) or "无附加操作"))
+        return {"ok": True, "mode": mode, "applied": applied}
+
+    @_safe
+    async def get_autoswitch(self):
+        if focus is None:
+            raise bt.BtError("focus 模块未加载")
+        return {"enabled": await self.foc.get_autoswitch()}
+
+    @_safe
+    async def set_autoswitch(self, enabled):
+        if focus is None:
+            raise bt.BtError("focus 模块未加载")
+        await self.foc.set_autoswitch(bool(enabled))
+        return {"ok": True, "enabled": bool(enabled)}
 
     @_safe
     async def set_setting(self, key, value):

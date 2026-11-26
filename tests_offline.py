@@ -275,6 +275,33 @@ def test_nodes_parse():
     check("None 不崩", nodes.parse_status(None)["sources"] == [])
 
 
+def test_focus():
+    print("音频焦点 / 编码器")
+    import focus
+
+    check("三种模式齐全", set(focus.MODES) == {"receiver_first", "coexist", "manual"})
+    check("模式有中文标签", focus.Focus.mode_label("coexist") == "与游戏共存")
+    check("未知模式原样返回", focus.Focus.mode_label("xxx") == "xxx")
+
+    # profile 翻译
+    cases = [
+        ("a2dp-sink-sbc", ("SBC", "接收")),
+        ("a2dp-sink-sbc_xq", ("SBC-XQ", "接收")),
+        ("a2dp-sink-aac", ("AAC", "接收")),
+        ("a2dp-source-ldac", ("LDAC", "发送")),
+        ("headset-head-unit", ("HFP 通话", "通话")),
+        ("a2dp-sink-sbc_xq", ("SBC-XQ", "接收")),
+        ("hfp-ag", ("HFP 通话", "通话")),
+    ]
+    for prof, (want_codec, want_role) in cases:
+        r = focus.summarize_profile(prof)
+        check("profile %s -> %s" % (prof, want_codec), r["codec"] == want_codec, str(r))
+        check("profile %s role=%s" % (prof, want_role or "空"), r["role"] == want_role, str(r))
+
+    check("空 profile 不崩", focus.summarize_profile("") == {"codec": "", "role": ""})
+    check("None profile 不崩", focus.summarize_profile(None) == {"codec": "", "role": ""})
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -308,7 +335,7 @@ def test_power_parse():
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
-               test_nodes_parse, test_power_parse):
+               test_nodes_parse, test_focus, test_power_parse):
         fn()
     print()
     if FAILED:
