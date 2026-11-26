@@ -66,6 +66,13 @@ except Exception:
     eq = None
     _EQ_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import output  # type: ignore
+    _OUTPUT_IMPORT_ERR = None
+except Exception:
+    output = None
+    _OUTPUT_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -76,6 +83,8 @@ DEFAULT_SETTINGS = {
     "focus_mode": "coexist",   # 音频焦点：receiver_first / coexist / manual
     "silence_disconnect": 0,   # 静音 N 秒后自动断开（0 = 关闭）
     "eq_preset": "flat",       # 均衡器预设
+    "latency_profile": "balanced",  # 延迟档位：low / balanced / stable
+    "multi_output": False,     # 多输出同步（combine-stream）
 }
 
 _ERR = "__bt_error__"
@@ -113,6 +122,7 @@ class Plugin:
     guard = None
     norm = None
     eqcfg = None
+    outcfg = None
     _keep_task = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
@@ -193,6 +203,7 @@ class Plugin:
             self.guard = silence.SilenceGuard(self.settings.get("silence_disconnect", 0), self._log)
             self.norm = silence.Normalizer(self._log)
         self.eqcfg = eq.EqConfig(self._log) if eq is not None else None
+        self.outcfg = output.CombineConfig(self._log) if output is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -492,6 +503,13 @@ class Plugin:
                 "presets": (eq.preset_list() if eq is not None else []),
                 "path": (eq.EqConfig.conf_path() if eq is not None else ""),
             },
+            "output": {
+                "multi": self.settings.get("multi_output", False),
+                "installed": (output.CombineConfig.installed() if output is not None else False),
+                "latency": self.settings.get("latency_profile", "balanced"),
+                "latency_profiles": (output.latency_list() if output is not None else []),
+                "sinks": (await output.list_sinks(self.wp) if output is not None else []),
+            },
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
@@ -710,6 +728,49 @@ class Plugin:
                 self._log("PipeWire 已重启（%s）" % unit)
                 return True
         raise bt.BtError("重启 PipeWire 失败，请手动重启或重启 Deck")
+
+    # ------------------------------------------------------------------
+    # RPC：延迟档位 / 多输出同步
+    # ------------------------------------------------------------------
+    @_safe
+    async def set_latency_profile(self, profile):
+        """切换延迟档位（写 WirePlumber 配置并重启它）。"""
+        if output is None:
+            raise bt.BtError("output 模块未加载")
+        if profile not in output.LATENCY_PROFILES:
+            raise bt.BtError("未知延迟档位：%s" % profile)
+        self.outcfg.apply_latency(profile)
+        self.settings["latency_profile"] = profile
+        self._save_settings()
+        await self.wpcfg.restart()
+        return {
+            "ok": True,
+            "profile": profile,
+            "label": output.LATENCY_PROFILES[profile]["label"],
+            "latency_ms": output.LATENCY_PROFILES[profile]["latency_ms"],
+        }
+
+    @_safe
+    async def set_multi_output(self, enabled):
+        """开关多输出同步（combine-stream）。
+
+        注意：这是 Deck **同时推流到多个输出设备**（喇叭 + 多副耳机）。
+        反方向（多个蓝牙源同时连 Deck 当音箱）受 AVDTP 协议限制，做不到。
+        """
+        if output is None:
+            raise bt.BtError("output 模块未加载")
+        enabled = bool(enabled)
+        self.outcfg.apply(enabled)
+        self.settings["multi_output"] = enabled
+        self._save_settings()
+        await self._restart_pipewire()
+        return {"ok": True, "enabled": enabled}
+
+    @_safe
+    async def list_outputs(self):
+        if output is None:
+            raise bt.BtError("output 模块未加载")
+        return {"sinks": await output.list_sinks(self.wp)}
 
     @_safe
     async def set_setting(self, key, value):

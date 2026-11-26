@@ -4,6 +4,39 @@
 
 ---
 
+## [1.6.0] - 2026-11-26
+
+延迟档位 + 多输出同步。
+
+### Added
+
+- **`output.py`**：延迟档位与多输出配置
+- **延迟档位**（三选一，显示估算 ms）
+  - `low` 低延迟（约 60ms）：缓冲小，看视频口型更同步
+  - `balanced` 均衡（约 120ms，默认）
+  - `stable` 抗卡顿（约 240ms）：干扰环境下更稳
+  - 用 `node.latency` + `bluez5.decode-buffer.latency` 实现
+- **多输出同步**（`libpipewire-module-combine-stream`）
+  - 创建虚拟 sink「Deck 多输出（同步）」，声音同时送到内置喇叭 + 蓝牙耳机 + 有线耳机
+  - `combine.latency-compensate = true` 尝试对齐各流延迟
+  - 用 match 规则动态匹配，新插入的设备也能自动加入
+- 新增 RPC：`set_latency_profile` / `set_multi_output` / `list_outputs`
+- 设置页新增延迟档位卡片与多输出开关
+
+### Design Notes
+
+**方向很重要。** 这是 Deck **同时推流到多个输出设备**（喇叭 + 多副耳机），不是「多个蓝牙源同时连 Deck」。
+
+后者受协议限制做不到：AVDTP v1.3 §5.3 规定同一适配器上一个本地 SEP 只能连一个远端 SEP，PipeWire 作者 Wim Taymans 的提交原文是「bluez5: endpoint can be used only by one device at a time ... Trying to have it connected to multiple remotes either fails or causes misbehavior later on」（a58d815）。
+
+UI 上直接把这句限制写出来了，避免用户误解。
+
+### Tests
+
+- 新增 22 项 output 自检（档位顺序、配置生成、指定/不指定 sink、开关状态、配置文件生命周期）
+
+---
+
 ## [1.5.0] - 2026-11-26
 
 均衡器 —— 占住 Decky 生态里 EasyEffects 的空白位。

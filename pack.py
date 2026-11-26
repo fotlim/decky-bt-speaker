@@ -27,6 +27,7 @@ INCLUDE_FILES = [
     "focus.py",
     "silence.py",
     "eq.py",
+    "output.py",
     "dist/index.js",
     "README.md",
     "CHANGELOG.md",
