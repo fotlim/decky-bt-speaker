@@ -1,0 +1,465 @@
+const manifest = {"name":"蓝牙音箱"};
+const API_VERSION = 2;
+const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
+if (!internalAPIConnection) {
+    throw new Error('[@decky/api]: Failed to connect to the loader as as the loader API was not initialized. This is likely a bug in Decky Loader.');
+}
+let api$1;
+try {
+    api$1 = internalAPIConnection.connect(API_VERSION, manifest.name);
+}
+catch {
+    api$1 = internalAPIConnection.connect(1, manifest.name);
+    console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version 1. Some features may not work.`);
+}
+if (api$1._version != API_VERSION) {
+    console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api$1._version}. Some features may not work.`);
+}
+const call$1 = api$1.call;
+const routerHook = api$1.routerHook;
+const toaster = api$1.toaster;
+const definePlugin = (fn) => {
+    return (...args) => {
+        return fn(...args);
+    };
+};
+
+var DefaultContext = {
+  color: undefined,
+  size: undefined,
+  className: undefined,
+  style: undefined,
+  attr: undefined
+};
+var IconContext = SP_REACT.createContext && /*#__PURE__*/SP_REACT.createContext(DefaultContext);
+
+var _excluded = ["attr", "size", "title"];
+function _objectWithoutProperties(e, t) { if (null == e) return {}; var o, r, i = _objectWithoutPropertiesLoose(e, t); if (Object.getOwnPropertySymbols) { var n = Object.getOwnPropertySymbols(e); for (r = 0; r < n.length; r++) o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]); } return i; }
+function _objectWithoutPropertiesLoose(r, e) { if (null == r) return {}; var t = {}; for (var n in r) if ({}.hasOwnProperty.call(r, n)) { if (-1 !== e.indexOf(n)) continue; t[n] = r[n]; } return t; }
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), true).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: true, configurable: true, writable: true }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+function Tree2Element(tree) {
+  return tree && tree.map((node, i) => /*#__PURE__*/SP_REACT.createElement(node.tag, _objectSpread({
+    key: i
+  }, node.attr), Tree2Element(node.child)));
+}
+function GenIcon(data) {
+  return props => /*#__PURE__*/SP_REACT.createElement(IconBase, _extends({
+    attr: _objectSpread({}, data.attr)
+  }, props), Tree2Element(data.child));
+}
+function IconBase(props) {
+  var elem = conf => {
+    var attr = props.attr,
+      size = props.size,
+      title = props.title,
+      svgProps = _objectWithoutProperties(props, _excluded);
+    var computedSize = size || conf.size || "1em";
+    var className;
+    if (conf.className) className = conf.className;
+    if (props.className) className = (className ? className + " " : "") + props.className;
+    return /*#__PURE__*/SP_REACT.createElement("svg", _extends({
+      stroke: "currentColor",
+      fill: "currentColor",
+      strokeWidth: "0"
+    }, conf.attr, attr, svgProps, {
+      className: className,
+      style: _objectSpread(_objectSpread({
+        color: props.color || conf.color
+      }, conf.style), props.style),
+      height: computedSize,
+      width: computedSize,
+      xmlns: "http://www.w3.org/2000/svg"
+    }), title && /*#__PURE__*/SP_REACT.createElement("title", null, title), props.children);
+  };
+  return IconContext !== undefined ? /*#__PURE__*/SP_REACT.createElement(IconContext.Consumer, null, conf => elem(conf)) : elem(DefaultContext);
+}
+
+// THIS FILE IS AUTO GENERATED
+function FaBluetooth (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 448 512"},"child":[{"tag":"path","attr":{"d":"M292.6 171.1L249.7 214l-.3-86 43.2 43.1m-43.2 219.8l43.1-43.1-42.9-42.9-.2 86zM416 259.4C416 465 344.1 512 230.9 512S32 465 32 259.4 115.4 0 228.6 0 416 53.9 416 259.4zm-158.5 0l79.4-88.6L211.8 36.5v176.9L138 139.6l-27 26.9 92.7 93-92.7 93 26.9 26.9 73.8-73.8 2.3 170 127.4-127.5-83.9-88.7z"},"child":[]}]})(props);
+}function FaBluetoothB (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 320 512"},"child":[{"tag":"path","attr":{"d":"M196.48 260.023l92.626-103.333L143.125 0v206.33l-86.111-86.111-31.406 31.405 108.061 108.399L25.608 368.422l31.406 31.405 86.111-86.111L145.84 512l148.552-148.644-97.912-103.333zm40.86-102.996l-49.977 49.978-.338-100.295 50.315 50.317zM187.363 313.04l49.977 49.978-50.315 50.316.338-100.294z"},"child":[]}]})(props);
+}function FaVolumeUp (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 576 512"},"child":[{"tag":"path","attr":{"d":"M215.03 71.05L126.06 160H24c-13.26 0-24 10.74-24 24v144c0 13.25 10.74 24 24 24h102.06l88.97 88.95c15.03 15.03 40.97 4.47 40.97-16.97V88.02c0-21.46-25.96-31.98-40.97-16.97zm233.32-51.08c-11.17-7.33-26.18-4.24-33.51 6.95-7.34 11.17-4.22 26.18 6.95 33.51 66.27 43.49 105.82 116.6 105.82 195.58 0 78.98-39.55 152.09-105.82 195.58-11.17 7.32-14.29 22.34-6.95 33.5 7.04 10.71 21.93 14.56 33.51 6.95C528.27 439.58 576 351.33 576 256S528.27 72.43 448.35 19.97zM480 256c0-63.53-32.06-121.94-85.77-156.24-11.19-7.14-26.03-3.82-33.12 7.46s-3.78 26.21 7.41 33.36C408.27 165.97 432 209.11 432 256s-23.73 90.03-63.48 115.42c-11.19 7.14-14.5 22.07-7.41 33.36 6.51 10.36 21.12 15.14 33.12 7.46C447.94 377.94 480 319.54 480 256zm-141.77-76.87c-11.58-6.33-26.19-2.16-32.61 9.45-6.39 11.61-2.16 26.2 9.45 32.61C327.98 228.28 336 241.63 336 256c0 14.38-8.02 27.72-20.92 34.81-11.61 6.41-15.84 21-9.45 32.61 6.43 11.66 21.05 15.8 32.61 9.45 28.23-15.55 45.77-45 45.77-76.88s-17.54-61.32-45.78-76.86z"},"child":[]}]})(props);
+}function FaVolumeMute (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M215.03 71.05L126.06 160H24c-13.26 0-24 10.74-24 24v144c0 13.25 10.74 24 24 24h102.06l88.97 88.95c15.03 15.03 40.97 4.47 40.97-16.97V88.02c0-21.46-25.96-31.98-40.97-16.97zM461.64 256l45.64-45.64c6.3-6.3 6.3-16.52 0-22.82l-22.82-22.82c-6.3-6.3-16.52-6.3-22.82 0L416 210.36l-45.64-45.64c-6.3-6.3-16.52-6.3-22.82 0l-22.82 22.82c-6.3 6.3-6.3 16.52 0 22.82L370.36 256l-45.63 45.63c-6.3 6.3-6.3 16.52 0 22.82l22.82 22.82c6.3 6.3 16.52 6.3 22.82 0L416 301.64l45.64 45.64c6.3 6.3 16.52 6.3 22.82 0l22.82-22.82c6.3-6.3 6.3-16.52 0-22.82L461.64 256z"},"child":[]}]})(props);
+}function FaMobileAlt (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 320 512"},"child":[{"tag":"path","attr":{"d":"M272 0H48C21.5 0 0 21.5 0 48v416c0 26.5 21.5 48 48 48h224c26.5 0 48-21.5 48-48V48c0-26.5-21.5-48-48-48zM160 480c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm112-108c0 6.6-5.4 12-12 12H60c-6.6 0-12-5.4-12-12V60c0-6.6 5.4-12 12-12h200c6.6 0 12 5.4 12 12v312z"},"child":[]}]})(props);
+}function FaLaptop (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 640 512"},"child":[{"tag":"path","attr":{"d":"M624 416H381.54c-.74 19.81-14.71 32-32.74 32H288c-18.69 0-33.02-17.47-32.77-32H16c-8.8 0-16 7.2-16 16v16c0 35.2 28.8 64 64 64h512c35.2 0 64-28.8 64-64v-16c0-8.8-7.2-16-16-16zM576 48c0-26.4-21.6-48-48-48H112C85.6 0 64 21.6 64 48v336h512V48zm-64 272H128V64h384v256z"},"child":[]}]})(props);
+}function FaCog (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M487.4 315.7l-42.6-24.6c4.3-23.2 4.3-47 0-70.2l42.6-24.6c4.9-2.8 7.1-8.6 5.5-14-11.1-35.6-30-67.8-54.7-94.6-3.8-4.1-10-5.1-14.8-2.3L380.8 110c-17.9-15.4-38.5-27.3-60.8-35.1V25.8c0-5.6-3.9-10.5-9.4-11.7-36.7-8.2-74.3-7.8-109.2 0-5.5 1.2-9.4 6.1-9.4 11.7V75c-22.2 7.9-42.8 19.8-60.8 35.1L88.7 85.5c-4.9-2.8-11-1.9-14.8 2.3-24.7 26.7-43.6 58.9-54.7 94.6-1.7 5.4.6 11.2 5.5 14L67.3 221c-4.3 23.2-4.3 47 0 70.2l-42.6 24.6c-4.9 2.8-7.1 8.6-5.5 14 11.1 35.6 30 67.8 54.7 94.6 3.8 4.1 10 5.1 14.8 2.3l42.6-24.6c17.9 15.4 38.5 27.3 60.8 35.1v49.2c0 5.6 3.9 10.5 9.4 11.7 36.7 8.2 74.3 7.8 109.2 0 5.5-1.2 9.4-6.1 9.4-11.7v-49.2c22.2-7.9 42.8-19.8 60.8-35.1l42.6 24.6c4.9 2.8 11 1.9 14.8-2.3 24.7-26.7 43.6-58.9 54.7-94.6 1.5-5.5-.7-11.3-5.6-14.1zM256 336c-44.1 0-80-35.9-80-80s35.9-80 80-80 80 35.9 80 80-35.9 80-80 80z"},"child":[]}]})(props);
+}
+
+/** 包一层 call：后端出错时返回 {__bt_error__}，这里转成可读 Error 抛出 */
+async function call(route, ...args) {
+    const r = await call$1(route, ...args);
+    if (r && typeof r === "object" && "__bt_error__" in r) {
+        throw new Error(String(r["__bt_error__"]));
+    }
+    return r;
+}
+const api = {
+    status: () => call("status"),
+    setDiscoverable: (on) => call("set_discoverable", on),
+    setPower: (on) => call("set_power", on),
+    setAlias: (alias) => call("set_alias", alias),
+    deviceAction: (mac, action) => call("device_action", mac, action),
+    setVolume: (v) => call("set_volume", v),
+    setMute: (m) => call("set_mute", m),
+    setSetting: (key, value) => call("set_setting", key, value),
+    applyTuning: () => call("apply_tuning"),
+    removeTuning: () => call("remove_tuning"),
+    diagnose: () => call("diagnose"),
+    getLog: (tail = 200) => call("get_log", tail),
+};
+
+/**
+ * 状态单例：QAM 面板和全屏页共用一份轮询，
+ * 避免两个界面同时开着时反复起子进程（后端每次 status 要跑几条系统命令）。
+ */
+let _state = null;
+let _error = null;
+let _loading = true;
+let _subs = new Set();
+let _timer = null;
+let _inflight = null;
+function emit() { _subs.forEach((f) => f()); }
+async function refresh(force = false) {
+    if (_inflight && !force)
+        return _inflight;
+    _inflight = (async () => {
+        try {
+            const r = await api.status();
+            _state = r;
+            _error = r.ok ? null : (r.error || "未知错误");
+        }
+        catch (e) {
+            _error = e?.message || String(e);
+        }
+        finally {
+            _loading = false;
+            _inflight = null;
+            emit();
+        }
+    })();
+    return _inflight;
+}
+function startPolling(intervalMs = 4000) {
+    if (_timer)
+        return;
+    refresh(true);
+    _timer = setInterval(() => { refresh(); }, intervalMs);
+}
+function stopPolling() {
+    if (_timer) {
+        clearInterval(_timer);
+        _timer = null;
+    }
+}
+function useSpeaker() {
+    const [, force] = SP_REACT.useState(0);
+    SP_REACT.useEffect(() => {
+        const f = () => force((n) => n + 1);
+        _subs.add(f);
+        startPolling();
+        return () => {
+            _subs.delete(f);
+            // 注意：不在这里停轮询——QAM 收起时轮询继续，状态才不会「过期」
+        };
+    }, []);
+    return { state: _state, error: _error, loading: _loading, refresh: () => { refresh(true); } };
+}
+
+const ROUTE = "/decky/bt-speaker";
+const COLORS = {
+    bg: "#0f1620",
+    accent: "#4c9aff",
+    accentWarm: "#ec4141",
+    ok: "#4cc38a",
+    text: "#e8ebee",
+    sub: "#9aa6b2",
+    dim: "#6b7783",
+    border: "rgba(255,255,255,0.07)",
+};
+
+function Pill({ children, tone = "dim" }) {
+    const map = {
+        ok: { bg: "rgba(76,195,138,0.16)", fg: COLORS.ok },
+        warn: { bg: "rgba(236,65,65,0.16)", fg: COLORS.accentWarm },
+        accent: { bg: "rgba(76,154,255,0.16)", fg: COLORS.accent },
+        dim: { bg: "rgba(255,255,255,0.07)", fg: COLORS.sub },
+    };
+    const c = map[tone] || map.dim;
+    return (SP_JSX.jsx("span", { style: {
+            display: "inline-flex", alignItems: "center", gap: 4,
+            padding: "2px 8px", borderRadius: 10, fontSize: 11,
+            background: c.bg, color: c.fg, whiteSpace: "nowrap",
+        }, children: children }));
+}
+function SectionTitle({ children, right }) {
+    return (SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", margin: "18px 4px 10px" }, children: [SP_JSX.jsx("div", { style: { fontSize: 18, fontWeight: 600, color: COLORS.text }, children: children }), right] }));
+}
+function Loading({ text = "加载中…" }) {
+    return SP_JSX.jsx("div", { style: { padding: 24, color: COLORS.sub, fontSize: 14, textAlign: "center" }, children: text });
+}
+function ErrorText({ text }) {
+    return (SP_JSX.jsx("div", { style: {
+            margin: "8px 4px", padding: "10px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.6,
+            color: "#ffb3b3", background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.25)",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+        }, children: text }));
+}
+function Hint({ children }) {
+    return (SP_JSX.jsx("div", { style: { margin: "6px 4px", fontSize: 12, lineHeight: 1.65, color: COLORS.dim }, children: children }));
+}
+function Avatar({ icon, connected }) {
+    const isPhone = (icon || "").includes("phone");
+    const glyph = isPhone ? "📱" : (icon || "").includes("computer") ? "💻" : "🔊";
+    return (SP_JSX.jsx("div", { style: {
+            width: 40, height: 40, borderRadius: 20, flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+            background: connected ? "rgba(76,195,138,0.16)" : "rgba(255,255,255,0.06)",
+            border: `1px solid ${connected ? "rgba(76,195,138,0.4)" : COLORS.border}`,
+        }, children: glyph }));
+}
+
+function Speaker() {
+    const { state, error } = useSpeaker();
+    const [busy, setBusy] = SP_REACT.useState(false);
+    const [vol, setVol] = SP_REACT.useState(null);
+    // 拖动后 1.2s 内用自己的值，之后交还给后端轮询（避免轮询把滑块拽回去）
+    const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
+    SP_REACT.useEffect(() => {
+        if (vol === null)
+            return;
+        const t = setTimeout(() => setVol(null), 1200);
+        return () => clearTimeout(t);
+    }, [vol]);
+    const ad = state?.adapter;
+    const connected = state?.connected || [];
+    const showVol = vol === null ? backendVol : vol;
+    const act = async (fn, okMsg) => {
+        if (busy)
+            return;
+        setBusy(true);
+        try {
+            await fn();
+            if (okMsg)
+                toaster.toast({ title: okMsg, body: "" });
+        }
+        catch (e) {
+            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const toggleDiscoverable = async (on) => {
+        await act(() => api.setDiscoverable(on), on ? "已开启可被发现" : "已关闭可被发现");
+    };
+    const changeVolume = (v) => {
+        setVol(v);
+        api.setVolume(v / 100).catch(() => { });
+    };
+    const toggleMute = () => {
+        if (!state)
+            return;
+        act(() => api.setMute(!state.volume.muted), state.volume.muted ? "已取消静音" : "已静音");
+    };
+    return (SP_JSX.jsxs(DFL.PanelSection, { children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "2px 2px 8px" }, children: [SP_JSX.jsx("div", { style: {
+                            width: 38, height: 38, borderRadius: 19, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: ad?.discoverable ? "rgba(76,154,255,0.18)" : "rgba(255,255,255,0.06)",
+                            color: ad?.discoverable ? COLORS.accent : COLORS.dim, flexShrink: 0,
+                        }, children: SP_JSX.jsx(FaBluetooth, { size: 17 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: ad ? ad.alias : "蓝牙音箱" }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u84DD\u7259\u5DF2\u5F00" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u84DD\u7259\u5DF2\u5173" }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: "\u53EF\u88AB\u53D1\u73B0" }) : SP_JSX.jsx(Pill, { children: "\u4E0D\u53EF\u89C1" }), connected.length > 0 && SP_JSX.jsxs(Pill, { tone: "ok", children: [connected.length, " \u53F0\u5DF2\u8FDE\u63A5"] })] })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "\u5141\u8BB8\u8BBE\u5907\u53D1\u73B0\u5E76\u8FDE\u63A5", description: ad?.discoverable ? "手机 / 电脑的蓝牙列表里能看到这台 Deck" : "打开后其它设备才能搜到", checked: !!ad?.discoverable, disabled: busy || !ad?.powered, onChange: toggleDiscoverable }) }), ad && !ad.powered && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), "蓝牙已打开"), children: "\u6253\u5F00\u84DD\u7259" }) })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
+                        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
+                        borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
+                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: "\u6B63\u5728\u64AD\u653E" })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: "\u65AD\u5F00" })] }, d.mac))) })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4, width: "100%" }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 13 }) : SP_JSX.jsx(FaVolumeUp, { size: 13 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 1, showValue: false, onChange: changeVolume }) })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsxs("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: ["\u5728\u624B\u673A\u7684\u300C\u84DD\u7259\u300D\u91CC\u627E ", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: ad.alias }), "\uFF0C\u914D\u5BF9\u540E\u76F4\u63A5\u653E\u6B4C\u5373\u53EF\uFF5E"] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " \u8BBE\u5907\u7BA1\u7406 / \u8BBE\u7F6E"] }) }) })] }));
+}
+
+function BtSpeakerPage() {
+    const { state, error, refresh } = useSpeaker();
+    const [tab, setTab] = SP_REACT.useState("devices");
+    const [busyMac, setBusyMac] = SP_REACT.useState(null);
+    const ad = state?.adapter;
+    const paired = state?.paired || [];
+    const connectedMacs = new Set((state?.connected || []).map((d) => d.mac));
+    const act = async (mac, action, label) => {
+        if (busyMac)
+            return;
+        setBusyMac(mac);
+        try {
+            await api.deviceAction(mac, action);
+            toaster.toast({ title: label, body: "" });
+            setTimeout(refresh, 600);
+        }
+        catch (e) {
+            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusyMac(null);
+        }
+    };
+    return (SP_JSX.jsxs("div", { style: {
+            position: "absolute", inset: 0, overflowY: "auto", background: COLORS.bg,
+            padding: "18px 34px 40px", display: "flex", flexDirection: "column",
+        }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }, children: [SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: { fontSize: 26, fontWeight: 700, color: COLORS.text }, children: "\u84DD\u7259\u97F3\u7BB1" }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, marginTop: 3 }, children: ad ? `${ad.alias} · ${ad.address || "未知地址"}` : "正在读取蓝牙适配器…" })] }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 8 }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u84DD\u7259\u5DF2\u5F00" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u84DD\u7259\u5DF2\u5173" }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: "\u53EF\u88AB\u53D1\u73B0" }) : SP_JSX.jsx(Pill, { children: "\u4E0D\u53EF\u89C1" }), ad?.a2dp_sink ? SP_JSX.jsx(Pill, { tone: "ok", children: "A2DP Sink" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u65E0 Sink \u89D2\u8272" })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, margin: "14px 0 4px" }, children: [
+                    ["devices", "已配对设备"],
+                    ["settings", "设置"],
+                    ["diag", "诊断"],
+                ].map(([k, label]) => (SP_JSX.jsx(DFL.Focusable, { onActivate: () => setTab(k), onClick: () => setTab(k), style: {
+                        padding: "7px 16px", borderRadius: 18, cursor: "pointer", fontSize: 13.5,
+                        background: tab === k ? COLORS.accent : "rgba(255,255,255,0.06)",
+                        color: tab === k ? "#fff" : COLORS.sub,
+                    }, children: label }, k))) }), !state ? SP_JSX.jsx(Loading, {}) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: paired, connectedMacs: connectedMacs, busyMac: busyMac, onAction: act, discoverable: !!ad?.discoverable, alias: ad?.alias || "" })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }));
+}
+// ---------------------------------------------------------------------------
+function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
+    if (!paired.length) {
+        return (SP_JSX.jsx("div", { style: { marginTop: 22 }, children: SP_JSX.jsxs(Hint, { children: ["\u8FD8\u6CA1\u6709\u914D\u5BF9\u8FC7\u4EFB\u4F55\u8BBE\u5907\u3002", discoverable ? SP_JSX.jsxs(SP_JSX.Fragment, { children: ["\u73B0\u5728\u7528\u624B\u673A\u6216\u7535\u8111\u7684\u84DD\u7259\u5217\u8868\u641C\u7D22 ", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: alias }), "\uFF0C\u914D\u5BF9\u4E00\u6B21\u4E4B\u540E\u5C31\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002"] }) : "先回设置里打开「可被发现」。"] }) }));
+    }
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(SectionTitle, { children: ["\u5DF2\u914D\u5BF9\uFF08", paired.length, "\uFF09"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
+                    const connected = connectedMacs.has(d.mac);
+                    const busy = busyMac === d.mac;
+                    return (SP_JSX.jsxs("div", { style: {
+                            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+                            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
+                        }, children: [SP_JSX.jsx(Avatar, { connected: connected }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: d.mac })] }), connected ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u5DF2\u8FDE\u63A5" }) : SP_JSX.jsx(Pill, { children: "\u672A\u8FDE\u63A5" }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…"), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…"), style: {
+                                    padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
+                                    background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
+                                    color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
+                                }, children: busy ? "…" : connected ? "断开" : "连接" }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "remove", "已移除配对"), onActivate: () => onAction(d.mac, "remove", "已移除配对"), style: {
+                                    padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
+                                    background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm,
+                                }, children: "\u79FB\u9664" })] }, d.mac));
+                }) }), SP_JSX.jsx(Hint, { children: "\u8FDE\u63A5\u6210\u529F\u540E\u5728\u624B\u673A\u4E0A\u64AD\u653E\u97F3\u4E50\uFF0C\u58F0\u97F3\u5C31\u4F1A\u4ECE Deck \u7684\u5587\u53ED\u51FA\u6765\u3002\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u6709\u4E00\u4E2A\u6E90\u5728\u653E\uFF08\u84DD\u7259 A2DP \u7684\u9650\u5236\uFF09\u3002" })] }));
+}
+// ---------------------------------------------------------------------------
+function SettingsTab({ state, refresh }) {
+    const [alias, setAlias] = SP_REACT.useState(state.adapter?.alias || "");
+    const [busy, setBusy] = SP_REACT.useState(false);
+    const s = state.settings || {};
+    SP_REACT.useEffect(() => { setAlias(state.adapter?.alias || ""); }, [state.adapter?.alias]);
+    const save = async (key, value, label) => {
+        try {
+            await api.setSetting(key, value);
+            toaster.toast({ title: label, body: "" });
+        }
+        catch (e) {
+            toaster.toast({ title: "保存失败", body: e?.message || String(e) });
+        }
+    };
+    const applyAlias = async () => {
+        const v = alias.trim();
+        if (!v || busy)
+            return;
+        setBusy(true);
+        try {
+            await api.setAlias(v);
+            toaster.toast({ title: "设备名已改为 " + v, body: "" });
+        }
+        catch (e) {
+            toaster.toast({ title: "改名失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u8BBE\u5907\u540D" }), SP_JSX.jsx(Hint, { children: "\u522B\u4EBA\u84DD\u7259\u5217\u8868\u91CC\u770B\u5230\u7684\u540D\u5B57\u3002\u5EFA\u8BAE\u6539\u6210\u4E00\u4E2A\u597D\u8BA4\u7684\u540D\u5B57\u3002" }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
+                            flex: 1, padding: "10px 12px", borderRadius: 9, fontSize: 14,
+                            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+                            color: COLORS.text, outline: "none",
+                        } }), SP_JSX.jsx(DFL.Focusable, { onClick: applyAlias, onActivate: applyAlias, style: {
+                            padding: "10px 20px", borderRadius: 9, fontSize: 14, cursor: "pointer",
+                            background: COLORS.accent, color: "#fff", opacity: busy ? 0.6 : 1,
+                        }, children: busy ? "保存中…" : "保存" })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u8C03\u4F18" }), SP_JSX.jsx(ToggleRow, { label: "\u542F\u7528\u300C\u97F3\u7BB1\u4F18\u5316\u300D\u914D\u7F6E", desc: "\u5199\u5165\u7528\u6237\u7EA7 WirePlumber \u914D\u7F6E\uFF1A\u53EA\u4FDD\u7559 A2DP \u89D2\u8272\u3001\u624B\u673A\u63A8\u6D41\u76F4\u51FA\u3001\u907F\u514D\u6389\u6210\u901A\u8BDD\u5355\u58F0\u9053\u3002\u6539\u5B8C\u4F1A\u81EA\u52A8\u91CD\u542F WirePlumber\u3002", checked: !!state.tuning?.installed, onChange: async (v) => {
+                    try {
+                        if (v) {
+                            await api.applyTuning();
+                            toaster.toast({ title: "已启用音箱优化", body: "WirePlumber 已重启" });
+                        }
+                        else {
+                            await api.removeTuning();
+                            toaster.toast({ title: "已恢复系统默认", body: "WirePlumber 已重启" });
+                        }
+                        refresh();
+                    }
+                    catch (e) {
+                        toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+                    }
+                } }), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }), SP_JSX.jsx("br", {}), "\u8FDE\u4E0A\u4E86\u5374\u6CA1\u58F0\u97F3\u3001\u6216\u8005\u58F0\u97F3\u53D8\u6210\u5355\u58F0\u9053\u53D1\u95F7\u65F6\uFF0C\u6253\u5F00\u5B83\u518D\u91CD\u8FDE\u4E00\u6B21\u901A\u5E38\u5C31\u597D\u4E86\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u884C\u4E3A" }), SP_JSX.jsx(ToggleRow, { label: "\u63D2\u4EF6\u52A0\u8F7D\u65F6\u81EA\u52A8\u8FDB\u5165\u53EF\u88AB\u53D1\u73B0", desc: "\u6253\u5F00 Decky \u540E\u81EA\u52A8\u5F00\u597D\u84DD\u7259\uFF0C\u7701\u5F97\u6BCF\u6B21\u624B\u52A8\u70B9", checked: !!s.auto_start, onChange: (v) => save("auto_start", v, v ? "已开启自动启动" : "已关闭自动启动") }), SP_JSX.jsx(ToggleRow, { label: "\u4FDD\u6301\u53EF\u88AB\u53D1\u73B0", desc: "BlueZ \u9ED8\u8BA4 180 \u79D2\u540E\u81EA\u52A8\u9690\u85CF\uFF0C\u8FD9\u91CC\u6BCF\u5206\u949F\u590D\u67E5\u4E00\u6B21", checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活") }), SP_JSX.jsx(SectionTitle, { children: "\u7CFB\u7EDF\u4FE1\u606F" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || "未知"] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || "未知"] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || "未知"] }), SP_JSX.jsxs("div", { children: ["\u9ED8\u8BA4\u8F93\u51FA\uFF1A", state.sink || "未知"] })] })] }));
+}
+function ToggleRow({ label, desc, checked, onChange }) {
+    return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => onChange(!checked), onActivate: () => onChange(!checked), style: {
+            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
+            cursor: "pointer",
+        }, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14.5, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 3, lineHeight: 1.5 }, children: desc })] }), SP_JSX.jsx("div", { style: {
+                    width: 42, height: 24, borderRadius: 12, flexShrink: 0, position: "relative",
+                    background: checked ? COLORS.accent : "rgba(255,255,255,0.14)", transition: "background .15s",
+                }, children: SP_JSX.jsx("div", { style: {
+                        position: "absolute", top: 3, left: checked ? 21 : 3, width: 18, height: 18, borderRadius: 9,
+                        background: "#fff", transition: "left .15s",
+                    } }) })] }));
+}
+// ---------------------------------------------------------------------------
+function DiagTab() {
+    const [data, setData] = SP_REACT.useState(null);
+    const [log, setLog] = SP_REACT.useState(null);
+    const [loading, setLoading] = SP_REACT.useState(false);
+    const load = async () => {
+        setLoading(true);
+        try {
+            setData(await api.diagnose());
+        }
+        catch (e) {
+            toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    const loadLog = async () => {
+        try {
+            setLog(await api.getLog(200));
+        }
+        catch (e) {
+            toaster.toast({ title: "读取日志失败", body: e?.message || String(e) });
+        }
+    };
+    SP_REACT.useEffect(() => { load(); }, []);
+    const box = {
+        marginTop: 10, padding: 12, borderRadius: 9, background: "rgba(0,0,0,0.35)",
+        fontSize: 11.5, color: COLORS.sub, fontFamily: "monospace", whiteSpace: "pre-wrap",
+        maxHeight: 340, overflowY: "auto", lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
+    };
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? "读取中…" : "重新读取" }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: "\u67E5\u770B\u65E5\u5FD7" })] }), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u547D\u4EE4\u53EF\u7528\u6027" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " \u914D\u5BF9 agent"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u9002\u914D\u5668\u539F\u59CB\u4FE1\u606F" }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u72B6\u6001" }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: "\u63D2\u4EF6\u65E5\u5FD7" }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
+}
+
+var index = definePlugin(() => {
+    try {
+        routerHook.removeRoute(ROUTE);
+    }
+    catch { /* ignore */ }
+    routerHook.addRoute(ROUTE, BtSpeakerPage);
+    return {
+        name: "蓝牙音箱",
+        icon: SP_JSX.jsx(FaBluetoothB, {}),
+        content: SP_JSX.jsx(Speaker, {}),
+        onDismount() {
+            try {
+                routerHook.removeRoute(ROUTE);
+            }
+            catch { /* ignore */ }
+            stopPolling();
+        },
+    };
+});
+
+export { index as default };
+//# sourceMappingURL=index.js.map

@@ -1,0 +1,11 @@
+{
+  "name": "蓝牙音箱",
+  "author": "大肥鱼",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["bluetooth", "audio", "speaker", "a2dp", "utility", "蓝牙"],
+    "description": "把 Steam Deck 变成一台蓝牙音箱：手机、平板、电脑都能连上来播放音乐，直接用 Deck 的双喇叭外放。基于 PipeWire / WirePlumber 的 A2DP 接收端，无需 root，支持可被发现、配对管理、编码器与音量控制。",
+    "image": "https://raw.githubusercontent.com/fotlim/decky-netease-music/main/docs/screenshots/02-nowplaying.jpg"
+  }
+}

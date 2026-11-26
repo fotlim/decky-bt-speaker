@@ -1,0 +1,163 @@
+import { useEffect, useState } from "react";
+import {
+  PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
+} from "@decky/ui";
+import { toaster } from "@decky/api";
+import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog } from "react-icons/fa";
+import { api } from "../backend";
+import { useSpeaker } from "../store";
+import { COLORS, ROUTE } from "../route";
+import { Pill, ErrorText } from "../components";
+
+export function Speaker() {
+  const { state, error } = useSpeaker();
+  const [busy, setBusy] = useState(false);
+  const [vol, setVol] = useState<number | null>(null);
+
+  // 拖动后 1.2s 内用自己的值，之后交还给后端轮询（避免轮询把滑块拽回去）
+  const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
+  useEffect(() => {
+    if (vol === null) return;
+    const t = setTimeout(() => setVol(null), 1200);
+    return () => clearTimeout(t);
+  }, [vol]);
+
+  const ad = state?.adapter;
+  const connected = state?.connected || [];
+  const showVol = vol === null ? backendVol : vol;
+
+  const act = async (fn: () => Promise<any>, okMsg?: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+      if (okMsg) toaster.toast({ title: okMsg, body: "" });
+    } catch (e: any) {
+      toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleDiscoverable = async (on: boolean) => {
+    await act(() => api.setDiscoverable(on), on ? "已开启可被发现" : "已关闭可被发现");
+  };
+
+  const changeVolume = (v: number) => {
+    setVol(v);
+    api.setVolume(v / 100).catch(() => {});
+  };
+
+  const toggleMute = () => {
+    if (!state) return;
+    act(() => api.setMute(!state.volume.muted), state.volume.muted ? "已取消静音" : "已静音");
+  };
+
+  return (
+    <PanelSection>
+      {/* 状态摘要 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 2px 8px" }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 19, display: "flex", alignItems: "center", justifyContent: "center",
+          background: ad?.discoverable ? "rgba(76,154,255,0.18)" : "rgba(255,255,255,0.06)",
+          color: ad?.discoverable ? COLORS.accent : COLORS.dim, flexShrink: 0,
+        }}>
+          <FaBluetooth size={17} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {ad ? ad.alias : "蓝牙音箱"}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+            {ad?.powered ? <Pill tone="ok">蓝牙已开</Pill> : <Pill tone="warn">蓝牙已关</Pill>}
+            {ad?.discoverable ? <Pill tone="accent">可被发现</Pill> : <Pill>不可见</Pill>}
+            {connected.length > 0 && <Pill tone="ok">{connected.length} 台已连接</Pill>}
+          </div>
+        </div>
+      </div>
+
+      {error && <ErrorText text={error} />}
+
+      {/* 主开关 */}
+      <PanelSectionRow>
+        <ToggleField
+          label="允许设备发现并连接"
+          description={ad?.discoverable ? "手机 / 电脑的蓝牙列表里能看到这台 Deck" : "打开后其它设备才能搜到"}
+          checked={!!ad?.discoverable}
+          disabled={busy || !ad?.powered}
+          onChange={toggleDiscoverable}
+        />
+      </PanelSectionRow>
+
+      {/* 蓝牙本身关着时，给一个直接打开的入口 */}
+      {ad && !ad.powered && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => act(() => api.setPower(true), "蓝牙已打开")}
+          >
+            打开蓝牙
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+
+      {/* 已连接设备 */}
+      {connected.length > 0 && (
+        <div style={{ margin: "6px 0 2px" }}>
+          {connected.map((d) => (
+            <div key={d.mac} style={{
+              display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
+              borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
+            }}>
+              <div style={{ color: COLORS.ok, flexShrink: 0 }}>
+                {(d.icon || "").includes("phone") ? <FaMobileAlt size={15} /> : <FaLaptop size={15} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {d.name}
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 1 }}>正在播放</div>
+              </div>
+              <Focusable
+                onClick={() => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name)}
+                onActivate={() => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name)}
+                style={{ fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }}
+              >断开</Focusable>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 音量 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, width: "100%" }}>
+        <Focusable onClick={toggleMute} onActivate={toggleMute} style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}>
+          {state?.volume.muted ? <FaVolumeMute size={13} /> : <FaVolumeUp size={13} />}
+        </Focusable>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SliderField
+            value={showVol}
+            min={0}
+            max={150}
+            step={1}
+            showValue={false}
+            onChange={changeVolume}
+          />
+        </div>
+      </div>
+
+      {connected.length === 0 && ad?.discoverable && (
+        <div style={{ fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>
+          在手机的「蓝牙」里找 <b style={{ color: COLORS.sub }}>{ad.alias}</b>，配对后直接放歌即可～
+        </div>
+      )}
+
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={() => Navigation.Navigate(ROUTE)}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <FaCog size={12} /> 设备管理 / 设置
+          </div>
+        </ButtonItem>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
