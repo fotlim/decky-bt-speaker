@@ -254,6 +254,23 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         checked={!!s.keep_alive}
         onChange={(v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活")}
       />
+      <ToggleRow
+        label="睡眠唤醒后自动恢复"
+        desc={
+          state.power?.watching
+            ? `已监听（${state.power.backend}）：唤醒后自动恢复可发现并重连上次的设备`
+            : "监听 logind 的睡眠信号，唤醒后自动恢复蓝牙状态（合盖再开盖不会失联）"
+        }
+        checked={!!s.resume_restore}
+        onChange={(v) => save("resume_restore", v, v ? "已开启唤醒恢复" : "已关闭唤醒恢复")}
+      />
+      {state.power?.watching && (
+        <Hint>
+          已捕获 {state.power.events} 次睡眠/唤醒事件
+          {state.power.last ? `，最近一次：${state.power.last[0] === "sleep" ? "睡眠" : "唤醒"}` : ""}
+          {s.last_device ? ` · 上次设备 ${s.last_device}` : ""}
+        </Hint>
+      )}
 
       <SectionTitle>系统信息</SectionTitle>
       <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>

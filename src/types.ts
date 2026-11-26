@@ -35,6 +35,15 @@ export interface Settings {
   discoverable: boolean;
   keep_alive: boolean;
   alias: string;
+  resume_restore: boolean;
+  last_device: string;
+}
+
+export interface PowerInfo {
+  watching: boolean;
+  backend: string;
+  events: number;
+  last: [string, number] | null;
 }
 
 export interface Versions {
@@ -59,6 +68,7 @@ export interface SpeakerStatus {
   agent: boolean;
   settings: Settings;
   tuning: TuningInfo;
+  power: PowerInfo;
   versions: Versions;
   tools: { bluetoothctl: boolean; busctl: boolean; wpctl: boolean };
 }

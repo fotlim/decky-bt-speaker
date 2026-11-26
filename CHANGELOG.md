@@ -4,6 +4,33 @@
 
 ---
 
+## [1.1.0] - 2026-11-26
+
+跨睡眠保活与自动重连 —— 掌机独有的场景，桌面软件不需要处理，因此没有现成方案可抄。
+
+### Added
+
+- **睡眠/唤醒监听**（`power.py`）：订阅 logind 的 `PrepareForSleep` 信号
+  - 优先用 `busctl monitor --match`，退回 `gdbus monitor`
+  - **不用 `dbus-monitor --system`**：它首步请求 `org.freedesktop.DBus.Monitoring.BecomeMonitor`，系统总线上该权限只给 root，普通用户会被 AccessDenied 并退回已弃用的 eavesdropping 模式
+- **睡前快照**：记录 `powered` / `discoverable` / 已连接设备列表 / 上次设备 MAC
+- **唤醒恢复**：按固定顺序执行，顺序有讲究
+  1. 上电（睡眠时可能被 rfkill 关掉）
+  2. 重启配对 agent（子进程被内核冻结过，很可能已失联）
+  3. 恢复可发现（`DiscoverableTimeout` 在睡眠期间照常计时）
+  4. 重连睡前连着的设备（优先 `last_device`）
+- **唤醒延迟**：等待 4 秒让 BlueZ / WirePlumber 重新枚举设备后再恢复
+- **设置项** `resume_restore`（默认开）、`last_device`（自动记录）
+- **前端**：设置页新增「睡眠唤醒后自动恢复」开关，显示已捕获事件数与最近一次事件
+
+### Technical
+
+- `SleepWatcher.parse_sleep_state()` 同时兼容 `busctl` 的多行输出与 `gdbus` 的单行 `(true,)` 格式
+- 监听进程退出不抛异常，仅记录日志 —— 睡眠监听失败不影响主功能
+- 新增 8 项离线自检覆盖两种信号格式
+
+---
+
 ## [1.0.0] - 2026-11-26
 
 首个可用版本。把 Steam Deck 变成一台可被手机 / 电脑连接的蓝牙音箱（A2DP Sink）。

@@ -31,11 +31,20 @@ except Exception:
     bt = None
     _BT_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import power  # type: ignore
+    _POWER_IMPORT_ERR = None
+except Exception:
+    power = None
+    _POWER_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
     "keep_alive": True,        # 每 60s 复查一次可发现性（BlueZ 默认 180s 超时）
     "alias": "Steam Deck",
+    "resume_restore": True,    # 唤醒后自动恢复可发现 / 重连上次的设备
+    "last_device": "",         # 上次连接过的设备 MAC（唤醒后优先重连它）
 }
 
 _ERR = "__bt_error__"
@@ -68,7 +77,9 @@ class Plugin:
     bz = None
     wp = None
     wpcfg = None
+    sleeper = None
     _keep_task = None
+    _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
     # ------------------------------------------------------------------
     # 日志
@@ -170,6 +181,15 @@ class Plugin:
         if self.settings.get("keep_alive", True):
             self._keep_task = asyncio.create_task(self._keep_alive_loop())
 
+        # 睡眠 / 唤醒监听（掌机核心场景：合盖再开盖，蓝牙状态不能丢）
+        if self.settings.get("resume_restore", True) and power is not None:
+            try:
+                self.sleeper = power.SleepWatcher(self._on_power_event, self._log)
+                await self.sleeper.start()
+            except Exception as e:  # noqa: BLE001
+                self._log("睡眠监听启动失败（不影响主功能）：%s" % e)
+                self.sleeper = None
+
     async def _unload(self):
         self._log("插件卸载")
         if self._keep_task is not None:
@@ -178,11 +198,111 @@ class Plugin:
             except Exception:
                 pass
             self._keep_task = None
+        if self.sleeper is not None:
+            try:
+                await self.sleeper.stop()
+            except Exception:
+                pass
+            self.sleeper = None
         if self.bz is not None:
             try:
                 await self.bz.stop_agent()
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # 睡眠 / 唤醒处理
+    # ------------------------------------------------------------------
+    async def _on_power_event(self, sleeping):
+        """睡前一秒做快照，唤醒后按快照恢复。"""
+        if sleeping:
+            await self._snapshot_before_sleep()
+        else:
+            await power.wait_resume_settle()
+            await self._restore_after_resume()
+
+    async def _snapshot_before_sleep(self):
+        snap = {"powered": False, "discoverable": False, "connected": []}
+        try:
+            info = await self.bz.show(force=True)
+            snap["powered"] = bool(info.get("powered"))
+            snap["discoverable"] = bool(info.get("discoverable"))
+        except Exception as e:  # noqa: BLE001
+            self._log("睡前快照：读取适配器失败 %s" % e)
+        try:
+            for d in await self.bz.list_devices("Connected"):
+                snap["connected"].append(d["mac"])
+                self.settings["last_device"] = d["mac"]
+        except Exception as e:  # noqa: BLE001
+            self._log("睡前快照：读取已连接设备失败 %s" % e)
+        if snap["connected"]:
+            self._save_settings()
+        self._pre_sleep = snap
+        self._log(
+            "睡前快照：powered=%s discoverable=%s 已连接=%d"
+            % (snap["powered"], snap["discoverable"], len(snap["connected"]))
+        )
+
+    async def _restore_after_resume(self):
+        """唤醒后恢复蓝牙状态。
+
+        顺序有讲究：
+        1. 先确保适配器上电（睡眠时可能被 rfkill 关掉）
+        2. 再重启配对 agent（子进程被冻结过，很可能已失联）
+        3. 然后恢复可发现（DiscoverableTimeout 在睡眠期间照常计时）
+        4. 最后尝试重连睡前连着的设备
+        """
+        snap = self._pre_sleep or {}
+        actions = []
+        try:
+            info = await self.bz.show(force=True)
+        except Exception as e:  # noqa: BLE001
+            self._log("唤醒恢复：读取适配器失败 %s" % e)
+            return
+
+        # 1. 上电
+        if snap.get("powered", True) and not info.get("powered"):
+            try:
+                await self.bz.power_on()
+                actions.append("上电")
+            except Exception as e:  # noqa: BLE001
+                self._log("唤醒恢复：上电失败 %s" % e)
+
+        # 2. agent
+        if not self.bz.agent_alive():
+            try:
+                await self.bz.start_agent()
+                actions.append("重启配对 agent")
+            except Exception as e:  # noqa: BLE001
+                self._log("唤醒恢复：agent 重启失败 %s" % e)
+
+        # 3. 可发现
+        if snap.get("discoverable", self.settings.get("discoverable", True)):
+            try:
+                info2 = await self.bz.show(force=True)
+                if info2.get("powered") and not info2.get("discoverable"):
+                    await self.bz.set_discoverable(True)
+                    actions.append("恢复可发现")
+            except Exception as e:  # noqa: BLE001
+                self._log("唤醒恢复：可发现失败 %s" % e)
+
+        # 4. 重连
+        candidates = list(snap.get("connected") or [])
+        last = (self.settings.get("last_device") or "").strip()
+        if last and last not in candidates:
+            candidates.append(last)
+        for mac in candidates:
+            try:
+                d = await self.bz.info(mac)
+                if d.get("connected"):
+                    continue
+                await self.bz.device_action(mac, "connect")
+                actions.append("重连 %s" % (d.get("name") or mac))
+            except Exception as e:  # noqa: BLE001
+                self._log("唤醒恢复：重连 %s 失败 %s" % (mac, e))
+
+        self._log("唤醒恢复完成：%s" % ("、".join(actions) if actions else "无需操作"))
+        self._pre_sleep = None
 
     async def _keep_alive_loop(self):
         """BlueZ 的 DiscoverableTimeout 默认 180s，这里定期复查，保证一直能被搜到。"""
@@ -252,6 +372,12 @@ class Plugin:
             "agent": self.bz.agent_alive(),
             "settings": self.settings,
             "tuning": {"installed": bt.WpConfig.installed(), "path": bt.WpConfig.conf_path()},
+            "power": {
+                "watching": bool(self.sleeper and self.sleeper.alive()),
+                "backend": (self.sleeper.backend if self.sleeper else ""),
+                "events": (self.sleeper.event_count if self.sleeper else 0),
+                "last": (self.sleeper.last_event if self.sleeper else None),
+            },
             "versions": await bt.versions(),
             "tools": {
                 "bluetoothctl": bt.which("bluetoothctl") is not None,
@@ -360,6 +486,13 @@ class Plugin:
         out["agent"] = self.bz.agent_alive()
         out["settings"] = self.settings
         out["tuning"] = {"installed": bt.WpConfig.installed(), "path": bt.WpConfig.conf_path()}
+        out["power"] = {
+            "watching": bool(self.sleeper and self.sleeper.alive()),
+            "backend": (self.sleeper.backend if self.sleeper else ""),
+            "events": (self.sleeper.event_count if self.sleeper else 0),
+            "last": (self.sleeper.last_event if self.sleeper else None),
+            "module": power is not None,
+        }
         return out
 
     @_safe
