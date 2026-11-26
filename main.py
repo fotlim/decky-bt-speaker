@@ -52,6 +52,13 @@ except Exception:
     focus = None
     _FOCUS_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import silence  # type: ignore
+    _SILENCE_IMPORT_ERR = None
+except Exception:
+    silence = None
+    _SILENCE_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -95,6 +102,8 @@ class Plugin:
     wpcfg = None
     sleeper = None
     foc = None
+    guard = None
+    norm = None
     _keep_task = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
@@ -171,6 +180,9 @@ class Plugin:
         self.wp = bt.Wp()
         self.wpcfg = bt.WpConfig(self._log)
         self.foc = focus.Focus(self.wp, self._log) if focus is not None else None
+        if silence is not None:
+            self.guard = silence.SilenceGuard(self.settings.get("silence_disconnect", 0), self._log)
+            self.norm = silence.Normalizer(self._log)
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -338,10 +350,50 @@ class Plugin:
                 if info.get("powered") and not info.get("discoverable"):
                     await self.bz.set_discoverable(True)
                     self._log("保活：重新打开可被发现")
+                # 静音守卫：外部源长时间不活跃就断开（省电、避免吞通知）
+                if self.guard is not None and self.guard.enabled:
+                    await self._check_silence()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 self._log("保活循环异常：%s" % e)
+
+    # ------------------------------------------------------------------
+    # 静音守卫
+    # ------------------------------------------------------------------
+    async def _check_silence(self):
+        """检查外部源是否还在活跃；超时就断开。
+
+        活跃判定优先用 `pw-dump` 的 node.state（零额外开销），
+        拿不到就退回「有没有 bluez_input 节点」这个弱信号。
+        """
+        active = False
+        try:
+            states = await silence.read_node_states()
+            if states is not None:
+                active = any(s["active"] for s in states)
+            else:
+                text = await self.wp.status_text()
+                active = nodes is not None and nodes.has_external_source(text)
+        except Exception as e:  # noqa: BLE001
+            self._log("静音检查失败：%s" % e)
+            return
+
+        if not self.guard.observe(active):
+            return
+
+        # 超时了：断开所有已连接的设备
+        try:
+            connected = await self.bz.list_devices("Connected")
+        except Exception:
+            connected = []
+        for d in connected:
+            try:
+                await self.bz.device_action(d["mac"], "disconnect")
+                self._log("静音自动断开：%s" % d["name"])
+            except Exception as e:  # noqa: BLE001
+                self._log("静音自动断开 %s 失败：%s" % (d["mac"], e))
+        self.guard.reset()
 
     # ------------------------------------------------------------------
     # RPC：状态
@@ -378,6 +430,9 @@ class Plugin:
                         "volume": detail["volume"],
                         "muted": detail["muted"],
                     }
+                    # 音量归一化：观察是否发生大幅跳变
+                    if self.norm is not None:
+                        live["norm"] = self.norm.observe(detail["volume"])
         except Exception as e:  # noqa: BLE001
             self._log("读取音量失败：%s" % e)
 
@@ -419,6 +474,8 @@ class Plugin:
                 "label": (focus.Focus.mode_label(self.settings.get("focus_mode", "coexist"))
                           if focus is not None else ""),
             },
+            "silence": (self.guard.status() if self.guard is not None else None),
+            "normalize": (self.norm.status() if self.norm is not None else None),
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
@@ -545,6 +602,39 @@ class Plugin:
             raise bt.BtError("focus 模块未加载")
         await self.foc.set_autoswitch(bool(enabled))
         return {"ok": True, "enabled": bool(enabled)}
+
+    # ------------------------------------------------------------------
+    # RPC：静音守卫 / 音量归一化
+    # ------------------------------------------------------------------
+    @_safe
+    async def set_silence_timeout(self, seconds):
+        """设置静音多少秒后自动断开（0 = 关闭）。"""
+        if silence is None:
+            raise bt.BtError("silence 模块未加载")
+        sec = max(0, min(3600, int(seconds or 0)))
+        self.settings["silence_disconnect"] = sec
+        self._save_settings()
+        if self.guard is None:
+            self.guard = silence.SilenceGuard(sec, self._log)
+        else:
+            self.guard.configure(sec)
+        self._log("静音自动断开设为 %d 秒" % sec)
+        return {"ok": True, "timeout": sec, "enabled": sec > 0}
+
+    @_safe
+    async def set_volume_baseline(self, value):
+        """把当前外部源音量设为归一化基线（用于检测后续跳变）。"""
+        if self.norm is None:
+            raise bt.BtError("silence 模块未加载")
+        self.norm.set_baseline(value)
+        return {"ok": True, "baseline": value}
+
+    @_safe
+    async def reset_volume_baseline(self):
+        if self.norm is None:
+            raise bt.BtError("silence 模块未加载")
+        self.norm.reset()
+        return {"ok": True}
 
     @_safe
     async def set_setting(self, key, value):

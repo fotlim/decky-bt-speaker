@@ -302,6 +302,64 @@ def test_focus():
     check("None profile 不崩", focus.summarize_profile(None) == {"codec": "", "role": ""})
 
 
+def test_silence():
+    print("静音守卫 / 音量归一化")
+    import silence
+    import time as _t
+
+    # 守卫：关闭状态永不触发
+    g = silence.SilenceGuard(0)
+    g.observe(True)
+    check("关闭时不触发", g.observe(False) is False)
+    check("enabled=False", g.enabled is False)
+
+    # 守卫：超时触发
+    g2 = silence.SilenceGuard(1)
+    check("首次不触发", g2.observe(True) is False)
+    check("活跃中不触发", g2.observe(True) is False)
+    # 手动把 last_active 往前拨，模拟超时
+    g2._last_active -= 5
+    check("超时触发断开", g2.observe(False) is True)
+    check("触发后不重复", g2.observe(False) is False)
+
+    # 从未活跃过就不该触发（避免一启动就断）
+    g3 = silence.SilenceGuard(1)
+    g3._last_active -= 100
+    check("从未活跃不触发", g3.observe(False) is False)
+
+    # 节点状态解析
+    import json
+    dump = json.dumps([
+        {"id": 51, "type": "PipeWire:Interface:Node",
+         "info": {"state": "running", "props": {"node.name": "bluez_input.AA_BB_CC"}}},
+        {"id": 52, "type": "PipeWire:Interface:Node",
+         "info": {"state": "idle", "props": {"node.name": "bluez_input.BB_CC_DD"}}},
+        {"id": 48, "type": "PipeWire:Interface:Node",
+         "info": {"state": "running", "props": {"node.name": "alsa_output.speaker"}}},
+    ])
+    states = silence.parse_node_states(dump)
+    check("只取 bluez_input 节点", len(states) == 2, str(states))
+    check("running 算活跃", states[0]["active"] is True)
+    check("idle 算不活跃", states[1]["active"] is False)
+    check("坏 JSON 返回空", silence.parse_node_states("{not json") == [])
+    check("空输入返回空", silence.parse_node_states("") == [])
+    check("非数组返回空", silence.parse_node_states('{"a":1}') == [])
+
+    # 归一化
+    n = silence.Normalizer()
+    r = n.observe(0.5)
+    check("首次不告警", r["jumped"] is False)
+    check("基线被记录", n.status()["baseline"] == 0.5)
+    r = n.observe(0.52)
+    check("小变化不告警", r["jumped"] is False)
+    r = n.observe(0.95)
+    check("大幅跳变告警", r["jumped"] is True, str(r))
+    check("跳变计数 +1", n.status()["jumps"] == 1)
+    n.reset()
+    check("重置后基线清空", n.status()["baseline"] is None)
+    check("None 音量不崩", n.observe(None)["jumped"] is False)
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -335,7 +393,7 @@ def test_power_parse():
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
-               test_nodes_parse, test_focus, test_power_parse):
+               test_nodes_parse, test_focus, test_silence, test_power_parse):
         fn()
     print()
     if FAILED:

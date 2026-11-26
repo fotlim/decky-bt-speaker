@@ -27,6 +27,10 @@ export const api = {
     call<[string], { ok: boolean; mode: string; applied: string[] }>("set_focus_mode", mode),
   getAutoswitch: () => call<[], { enabled: boolean | null }>("get_autoswitch"),
   setAutoswitch: (on: boolean) => call<[boolean], { ok: boolean; enabled: boolean }>("set_autoswitch", on),
+  setSilenceTimeout: (sec: number) =>
+    call<[number], { ok: boolean; timeout: number; enabled: boolean }>("set_silence_timeout", sec),
+  setVolumeBaseline: (v: number) => call<[number], { ok: boolean }>("set_volume_baseline", v),
+  resetVolumeBaseline: () => call<[], { ok: boolean }>("reset_volume_baseline"),
   setSetting: (key: string, value: any) =>
     call<[string, any], { ok: boolean }>("set_setting", key, value),
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),
