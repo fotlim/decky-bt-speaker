@@ -135,14 +135,27 @@ export function Speaker() {
           background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0 }} />
+            <span style={{
+              width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
+              opacity: state.track?.status === "playing" ? 1 : 0.4,
+            }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                正在播放：{state.live.name}
+                {state.track?.title || `正在播放：${state.live.name}`}
               </div>
+              {state.track?.artist && (
+                <div style={{ fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {state.track.artist}{state.track.album ? ` · ${state.track.album}` : ""}
+                </div>
+              )}
             </div>
-            <Pill tone="accent">外部音源</Pill>
+            <Pill tone="accent">{state.track?.status_label || "外部音源"}</Pill>
           </div>
+          {state.track && state.track.duration_ms > 0 && (
+            <div style={{ fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }}>
+              {state.track.position} / {state.track.duration}
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Focusable
               onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted), state.live!.muted ? "已取消静音" : "已静音外部音源")}

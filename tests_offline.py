@@ -494,6 +494,53 @@ def test_output():
                 os.environ["XDG_CONFIG_HOME"] = old
 
 
+def test_metadata():
+    print("AVRCP 元数据")
+    import metadata
+
+    # 对象路径
+    p = metadata.player_path("AA:BB:CC:DD:EE:FF")
+    check("路径格式正确", p == "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/player0", p)
+    check("小写 MAC 也转大写", "AA_BB" in metadata.player_path("aa:bb:cc:dd:ee:ff"))
+    check("非法 MAC 返回空", metadata.player_path("not-a-mac") == "")
+    check("None 返回空", metadata.player_path(None) == "")
+
+    # busctl a{sv} 解析
+    raw = 'a{sv} 3 "Title" s "夜曲" "Artist" s "周杰伦" "Duration" u 210000'
+    d = metadata.parse_busctl_dict(raw)
+    check("解析出 Title", d.get("Title") == "夜曲", str(d))
+    check("解析出 Artist", d.get("Artist") == "周杰伦")
+    check("解析出 Duration", d.get("Duration") == "210000")
+    check("空输入返回空", metadata.parse_busctl_dict("") == {})
+    check("None 返回空", metadata.parse_busctl_dict(None) == {})
+
+    # parse_track
+    t = metadata.parse_track(raw)
+    check("track.title", t["title"] == "夜曲")
+    check("track.artist", t["artist"] == "周杰伦")
+    check("track.duration_ms", t["duration_ms"] == 210000)
+    check("track.duration 格式化", t["duration"] == "3:30", t["duration"])
+    check("无元数据返回 None", metadata.parse_track("") is None)
+
+    # 无 Duration 时不崩
+    t2 = metadata.parse_track('a{sv} 1 "Title" s "X"')
+    check("缺 Duration 不崩", t2["duration_ms"] == 0)
+    check("缺 Duration 时格式为 0:00", t2["duration"] == "0:00")
+
+    # 状态文案
+    check("playing -> 播放中", metadata.status_label("playing") == "播放中")
+    check("paused -> 已暂停", metadata.status_label("paused") == "已暂停")
+    check("stopped -> 已停止", metadata.status_label("stopped") == "已停止")
+    check("未知状态原样返回", metadata.status_label("weird") == "weird")
+    check("空状态不崩", metadata.status_label("") == "")
+    check("None 状态不崩", metadata.status_label(None) == "")
+
+    # 时长格式化
+    check("0ms -> 0:00", metadata._fmt_ms(0) == "0:00")
+    check("65000ms -> 1:05", metadata._fmt_ms(65000) == "1:05")
+    check("None -> 0:00", metadata._fmt_ms(None) == "0:00")
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -528,7 +575,7 @@ if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
-               test_output, test_power_parse):
+               test_output, test_metadata, test_power_parse):
         fn()
     print()
     if FAILED:

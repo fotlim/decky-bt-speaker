@@ -73,6 +73,13 @@ except Exception:
     output = None
     _OUTPUT_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import metadata  # type: ignore
+    _META_IMPORT_ERR = None
+except Exception:
+    metadata = None
+    _META_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -123,6 +130,7 @@ class Plugin:
     norm = None
     eqcfg = None
     outcfg = None
+    meta = None
     _keep_task = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
@@ -204,6 +212,7 @@ class Plugin:
             self.norm = silence.Normalizer(self._log)
         self.eqcfg = eq.EqConfig(self._log) if eq is not None else None
         self.outcfg = output.CombineConfig(self._log) if output is not None else None
+        self.meta = metadata.Metadata(self._log) if metadata is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -482,6 +491,14 @@ class Plugin:
             except Exception:
                 details.append({"mac": d["mac"], "name": d["name"], "connected": True, "paired": True, "icon": ""})
 
+        # AVRCP 元数据：手机正在放什么歌
+        track = None
+        if self.meta is not None and connected:
+            try:
+                track = await self.meta.read_first([d["mac"] for d in connected])
+            except Exception as e:  # noqa: BLE001
+                self._log("读取元数据失败：%s" % e)
+
         return {
             "ok": err is None,
             "error": err,
@@ -489,6 +506,7 @@ class Plugin:
             "volume": vol,
             "sink": sink,
             "live": live,
+            "track": track,
             "codec": codec,
             "focus": {
                 "mode": self.settings.get("focus_mode", "coexist"),

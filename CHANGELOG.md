@@ -4,6 +4,37 @@
 
 ---
 
+## [1.7.0] - 2026-11-26
+
+AVRCP 元数据 —— Deck 屏幕不再黑着。
+
+手机连上放歌后，QAM 里之前只知道「有个外部音源」。但 AVRCP 协议一直在传曲名 / 歌手 / 专辑 / 时长，BlueZ 已经解析好放在 D-Bus 上，只是没人读。
+
+### Added
+
+- **`metadata.py`**：读取 `org.bluez.MediaPlayer1` 的曲目信息
+  - 路径：`/org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX/player0`
+  - 属性：`Track`（dict）、`Position`（毫秒）、`Status`
+  - `parse_busctl_dict()` 手写 `a{sv}` 解析器（busctl 的输出格式没有现成库可用）
+- **QAM 显示**：歌名 / 歌手 / 专辑、播放位置与总时长、播放状态徽章（播放中 / 已暂停 / 已停止）
+- 状态指示点按 `playing` / 非 playing 区分明暗
+
+### Design Notes
+
+**读不到时静默降级，不报错。** 不是所有手机都实现 AVRCP 元数据（尤其部分 Android 自带播放器）。这不是错误，只是对方没提供 —— 报错反而会误导用户。
+
+`busctl` 输出 `Track` 的格式形如：
+```
+a{sv} 3 "Title" s "夜曲" "Artist" s "周杰伦" "Duration" u 210000
+```
+没有现成的 Python 库能直接解析这个文本（`dbus-python` 在 Decky 冻结环境里 import 不到），所以手写了个正则解析器，覆盖 `s`/`u`/`i`/`x`/`t`/`q`/`o`/`b`/`d` 几种类型。
+
+### Tests
+
+- 新增 27 项元数据自检（路径构造、`a{sv}` 解析、缺失字段容错、状态文案、时长格式化）
+
+---
+
 ## [1.6.0] - 2026-11-26
 
 延迟档位 + 多输出同步。
