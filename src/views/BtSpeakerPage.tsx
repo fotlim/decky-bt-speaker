@@ -129,15 +129,19 @@ function DevicesTab({
 }) {
   if (!paired.length) {
     return (
-      <div style={{ marginTop: 22 }}>
+      <div style={{ marginTop: 16 }}>
+        <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
         <Hint>
-          还没有配对过任何设备。{discoverable ? <>现在用手机或电脑的蓝牙列表搜索 <b style={{ color: COLORS.sub }}>{alias}</b>，配对一次之后就会出现在这里。</> : "先回设置里打开「可被发现」。"}
+          还没有配对过任何设备。用上面的「搜索附近设备」找到手机后点「配对」即可，
+          不用退出插件去系统蓝牙设置。
         </Hint>
       </div>
     );
   }
   return (
     <div style={{ marginTop: 16 }}>
+      <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
+
       <SectionTitle>已配对（{paired.length}）</SectionTitle>
       <Focusable flow-children="column">
         {paired.map((d) => {
@@ -191,6 +195,122 @@ function DevicesTab({
         <b style={{ color: COLORS.sub }}>配对码 / 通行密钥不正确？</b>点「修复配对」——
         它会清除 Deck 端保存的旧绑定密钥再重新配对。如果仍失败，请在手机端也「忘记」这个设备后重新搜索。
       </Hint>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 扫描面板：在插件内完成「搜索 → 配对」，不用跳系统蓝牙设置
+// ---------------------------------------------------------------------------
+function ScanPanel({ alias, discoverable, onPaired }: {
+  alias: string; discoverable: boolean; onPaired: () => void;
+}) {
+  const [scanning, setScanning] = useState(false);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [scanned, setScanned] = useState(false);
+  const [busyMac, setBusyMac] = useState<string | null>(null);
+
+  const scan = async () => {
+    if (scanning) return;
+    setScanning(true);
+    setScanned(false);
+    try {
+      const r = await api.scanDevices(20);
+      setDevices(r.devices || []);
+      setScanned(true);
+      if (!r.devices || !r.devices.length) {
+        toaster.toast({
+          title: "没搜到设备",
+          body: "确认手机蓝牙已打开、并且在可被发现状态",
+        });
+      }
+    } catch (e: any) {
+      toaster.toast({ title: "搜索失败", body: e?.message || String(e) });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const pair = async (mac: string, name: string) => {
+    if (busyMac) return;
+    setBusyMac(mac);
+    try {
+      await api.pairDeviceFull(mac);
+      toaster.toast({ title: `已配对 ${name}`, body: "" });
+      setDevices((prev) => prev.filter((d) => d.mac !== mac));
+      onPaired();
+    } catch (e: any) {
+      toaster.toast({ title: "配对失败", body: e?.message || String(e) });
+    } finally {
+      setBusyMac(null);
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <SectionTitle>搜索附近设备</SectionTitle>
+      <Hint>
+        {discoverable
+          ? "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。"
+          : "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。"}
+      </Hint>
+      <Focusable
+        onClick={scan}
+        onActivate={scan}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 8, marginTop: 8,
+          padding: "9px 18px", borderRadius: 18, cursor: scanning ? "default" : "pointer",
+          background: scanning ? "rgba(255,255,255,0.06)" : COLORS.accent,
+          color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
+        }}
+      >
+        {scanning ? "正在搜索…（约 20 秒）" : "搜索附近设备"}
+      </Focusable>
+
+      {devices.length > 0 && (
+        <Focusable flow-children="column" style={{ marginTop: 12 }}>
+          {devices.map((d) => {
+            const busy = busyMac === d.mac;
+            const isPhone = (d.icon || "").includes("phone");
+            const isComputer = (d.icon || "").includes("computer");
+            return (
+              <div key={d.mac} style={{
+                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+                borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
+              }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 20, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+                  background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+                }}>{isPhone ? "📱" : isComputer ? "💻" : "🔊"}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {d.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>{d.mac}</div>
+                </div>
+                <Focusable
+                  onClick={() => pair(d.mac, d.name)}
+                  onActivate={() => pair(d.mac, d.name)}
+                  style={{
+                    padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
+                    cursor: busy ? "default" : "pointer",
+                    background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
+                    color: busy ? COLORS.sub : "#fff",
+                  }}
+                >{busy ? "配对中…" : "配对"}</Focusable>
+              </div>
+            );
+          })}
+        </Focusable>
+      )}
+
+      {scanned && devices.length === 0 && (
+        <Hint>
+          没搜到未配对的设备。可能是：手机已经配过这台 Deck（去下面「已配对」里看）、
+          或手机蓝牙没打开、或对方不可被发现。
+        </Hint>
+      )}
     </div>
   );
 }

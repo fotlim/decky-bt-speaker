@@ -387,6 +387,103 @@ class BlueZ:
         self._show_cache = (0.0, None)
         return True
 
+    # -- 扫描 -------------------------------------------------------------
+    async def start_discovery(self, timeout=30):
+        """开始扫描附近设备。
+
+        注意：`bluetoothctl scan on` 是**阻塞的**，会一直跑直到 scan off。
+        所以这里用 `--timeout` 参数让它自动结束，避免留下僵尸进程。
+        """
+        rc, out = await self._ctl("--timeout", str(int(timeout)), "scan", "on",
+                                  timeout=float(timeout) + 5.0)
+        # scan 超时退出返回码通常非 0，这里不当作错误
+        self._show_cache = (0.0, None)
+        self._log("扫描完成（%d 秒）" % timeout)
+        return True
+
+    async def stop_discovery(self):
+        try:
+            await self._ctl("scan", "off", timeout=8.0)
+        except BtError:
+            pass
+        self._show_cache = (0.0, None)
+        return True
+
+    async def list_discovered(self, include_paired=False):
+        """列出扫描到的设备。
+
+        返回 [{'mac','name','paired','connected','icon','rssi'}]。
+        默认只返回**未配对**的（也就是「可以新配对」的设备）。
+        """
+        rc, out = await self._ctl("devices", timeout=10.0)
+        if rc != 0:
+            return []
+        devs = []
+        for line in out.splitlines():
+            m = re.match(r"^\s*Device\s+([0-9A-Fa-f:]{17})\s*(.*)$", line)
+            if not m:
+                continue
+            mac = m.group(1).upper()
+            name = (m.group(2) or "").strip() or mac
+            item = {"mac": mac, "name": name, "paired": False, "connected": False,
+                    "icon": "", "rssi": None}
+            # 逐个补详情（数量一般不多，可以接受）
+            try:
+                info = await self.info(mac)
+                item.update({
+                    "name": info.get("name") or name,
+                    "paired": info.get("paired", False),
+                    "connected": info.get("connected", False),
+                    "icon": info.get("icon", ""),
+                })
+            except BtError:
+                pass
+            if not include_paired and item["paired"]:
+                continue
+            devs.append(item)
+        # 已连接的排前面，然后按名字排序
+        devs.sort(key=lambda d: (not d["connected"], d["name"].lower()))
+        return devs
+
+    async def pair_and_trust(self, mac):
+        """配对 + 信任（信任后设备可以自动重连）。"""
+        if not is_mac(mac):
+            raise BtError("设备地址不合法：%s" % mac)
+        # 确保 agent 就绪，否则配对请求无人应答
+        if not self.agent_registered():
+            try:
+                await self.start_agent()
+            except BtError as e:
+                self._log("配对前启动 agent 失败：%s" % e)
+
+        try:
+            await self.device_action(mac, "pair")
+        except BtError as e:
+            msg = str(e).lower()
+            # 「AlreadyExists」说明本来就配过，不算失败
+            if "alreadyexists" in msg or "already exists" in msg:
+                self._log("设备已配对：%s" % mac)
+            else:
+                raise BtError(
+                    "配对失败：%s\n"
+                    "如果提示配对码/通行密钥不正确，请点「修复配对」，"
+                    "或在手机端先「忘记」这个设备再重试。" % e
+                )
+
+        try:
+            await self.device_action(mac, "trust")
+        except BtError:
+            pass
+
+        # 配对后尝试连接
+        try:
+            await self.device_action(mac, "connect")
+        except BtError as e:
+            self._log("配对成功但连接失败（可稍后手动连）：%s" % e)
+
+        self._show_cache = (0.0, None)
+        return True
+
     # -- 修复配对 ---------------------------------------------------------
     async def forget_device(self, mac):
         """彻底删除本机的该设备记录（含绑定密钥）。

@@ -633,6 +633,41 @@ class Plugin:
             pass
         return {"ok": True}
 
+    # ------------------------------------------------------------------
+    # RPC：扫描与配对（插件内完成，不用跳系统设置）
+    # ------------------------------------------------------------------
+    @_safe
+    async def scan_devices(self, timeout=20):
+        """扫描附近设备并返回未配对的列表。
+
+        这是「配对体验」的核心：不用退出插件去系统蓝牙设置里找，
+        直接在插件里看到设备并一键配对。
+        """
+        sec = max(5, min(60, int(timeout or 20)))
+        # 扫描前确保 agent 就绪，否则扫到了也配不上
+        if not self.bz.agent_registered():
+            try:
+                await self.bz.start_agent()
+            except Exception as e:  # noqa: BLE001
+                self._log("扫描前启动 agent 失败：%s" % e)
+        await self.bz.start_discovery(sec)
+        devs = await self.bz.list_discovered(include_paired=False)
+        self._log("扫描到 %d 个未配对设备" % len(devs))
+        return {"ok": True, "devices": devs, "seconds": sec}
+
+    @_safe
+    async def stop_scan(self):
+        await self.bz.stop_discovery()
+        return {"ok": True}
+
+    @_safe
+    async def pair_device_full(self, mac):
+        """一键配对：配对 + 信任 + 连接。"""
+        if not bt.is_mac(mac):
+            raise bt.BtError("设备地址不合法：%s" % mac)
+        await self.bz.pair_and_trust(mac)
+        return {"ok": True, "agent": self.bz.agent_registered()}
+
     @_safe
     async def forget_device(self, mac):
         """彻底删除设备记录（含绑定密钥），用于解决配对码不正确。"""

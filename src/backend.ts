@@ -17,6 +17,11 @@ export const api = {
   unblockRfkill: () => call<[], { ok: boolean; rfkill: any }>("unblock_rfkill"),
   restartAgent: () => call<[], { ok: boolean; agent: boolean; registered: boolean }>("restart_agent"),
   pairDevice: (mac: string) => call<[string], { ok: boolean }>("pair_device", mac),
+  scanDevices: (timeout = 20) =>
+    call<[number], { ok: boolean; devices: any[]; seconds: number }>("scan_devices", timeout),
+  stopScan: () => call<[], { ok: boolean }>("stop_scan"),
+  pairDeviceFull: (mac: string) =>
+    call<[string], { ok: boolean; agent: boolean }>("pair_device_full", mac),
   forgetDevice: (mac: string) => call<[string], { ok: boolean }>("forget_device", mac),
   repairDevice: (mac: string) => call<[string], { ok: boolean; agent: boolean }>("repair_device", mac),
   setAlias: (alias: string) => call<[string], { ok: boolean; alias: string }>("set_alias", alias),

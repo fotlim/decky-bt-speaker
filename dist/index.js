@@ -111,6 +111,9 @@ const api = {
     unblockRfkill: () => call("unblock_rfkill"),
     restartAgent: () => call("restart_agent"),
     pairDevice: (mac) => call("pair_device", mac),
+    scanDevices: (timeout = 20) => call("scan_devices", timeout),
+    stopScan: () => call("stop_scan"),
+    pairDeviceFull: (mac) => call("pair_device_full", mac),
     forgetDevice: (mac) => call("forget_device", mac),
     repairDevice: (mac) => call("repair_device", mac),
     setAlias: (alias) => call("set_alias", alias),
@@ -391,9 +394,9 @@ function BtSpeakerPage() {
 // ---------------------------------------------------------------------------
 function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
     if (!paired.length) {
-        return (SP_JSX.jsx("div", { style: { marginTop: 22 }, children: SP_JSX.jsxs(Hint, { children: ["\u8FD8\u6CA1\u6709\u914D\u5BF9\u8FC7\u4EFB\u4F55\u8BBE\u5907\u3002", discoverable ? SP_JSX.jsxs(SP_JSX.Fragment, { children: ["\u73B0\u5728\u7528\u624B\u673A\u6216\u7535\u8111\u7684\u84DD\u7259\u5217\u8868\u641C\u7D22 ", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: alias }), "\uFF0C\u914D\u5BF9\u4E00\u6B21\u4E4B\u540E\u5C31\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002"] }) : "先回设置里打开「可被发现」。"] }) }));
+        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(Hint, { children: "\u8FD8\u6CA1\u6709\u914D\u5BF9\u8FC7\u4EFB\u4F55\u8BBE\u5907\u3002\u7528\u4E0A\u9762\u7684\u300C\u641C\u7D22\u9644\u8FD1\u8BBE\u5907\u300D\u627E\u5230\u624B\u673A\u540E\u70B9\u300C\u914D\u5BF9\u300D\u5373\u53EF\uFF0C \u4E0D\u7528\u9000\u51FA\u63D2\u4EF6\u53BB\u7CFB\u7EDF\u84DD\u7259\u8BBE\u7F6E\u3002" })] }));
     }
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(SectionTitle, { children: ["\u5DF2\u914D\u5BF9\uFF08", paired.length, "\uFF09"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsxs(SectionTitle, { children: ["\u5DF2\u914D\u5BF9\uFF08", paired.length, "\uFF09"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
                     const connected = connectedMacs.has(d.mac);
                     const busy = busyMac === d.mac;
                     return (SP_JSX.jsxs("div", { style: {
@@ -411,6 +414,80 @@ function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, al
                                     background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm,
                                 }, children: "\u79FB\u9664" })] }, d.mac));
                 }) }), SP_JSX.jsxs(Hint, { children: ["\u8FDE\u63A5\u6210\u529F\u540E\u5728\u624B\u673A\u4E0A\u64AD\u653E\u97F3\u4E50\uFF0C\u58F0\u97F3\u5C31\u4F1A\u4ECE Deck \u7684\u5587\u53ED\u51FA\u6765\u3002\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u6709\u4E00\u4E2A\u6E90\u5728\u653E\uFF08\u84DD\u7259 A2DP \u7684\u9650\u5236\uFF09\u3002", SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "\u914D\u5BF9\u7801 / \u901A\u884C\u5BC6\u94A5\u4E0D\u6B63\u786E\uFF1F" }), "\u70B9\u300C\u4FEE\u590D\u914D\u5BF9\u300D\u2014\u2014 \u5B83\u4F1A\u6E05\u9664 Deck \u7AEF\u4FDD\u5B58\u7684\u65E7\u7ED1\u5B9A\u5BC6\u94A5\u518D\u91CD\u65B0\u914D\u5BF9\u3002\u5982\u679C\u4ECD\u5931\u8D25\uFF0C\u8BF7\u5728\u624B\u673A\u7AEF\u4E5F\u300C\u5FD8\u8BB0\u300D\u8FD9\u4E2A\u8BBE\u5907\u540E\u91CD\u65B0\u641C\u7D22\u3002"] })] }));
+}
+// ---------------------------------------------------------------------------
+// 扫描面板：在插件内完成「搜索 → 配对」，不用跳系统蓝牙设置
+// ---------------------------------------------------------------------------
+function ScanPanel({ alias, discoverable, onPaired }) {
+    const [scanning, setScanning] = SP_REACT.useState(false);
+    const [devices, setDevices] = SP_REACT.useState([]);
+    const [scanned, setScanned] = SP_REACT.useState(false);
+    const [busyMac, setBusyMac] = SP_REACT.useState(null);
+    const scan = async () => {
+        if (scanning)
+            return;
+        setScanning(true);
+        setScanned(false);
+        try {
+            const r = await api.scanDevices(20);
+            setDevices(r.devices || []);
+            setScanned(true);
+            if (!r.devices || !r.devices.length) {
+                toaster.toast({
+                    title: "没搜到设备",
+                    body: "确认手机蓝牙已打开、并且在可被发现状态",
+                });
+            }
+        }
+        catch (e) {
+            toaster.toast({ title: "搜索失败", body: e?.message || String(e) });
+        }
+        finally {
+            setScanning(false);
+        }
+    };
+    const pair = async (mac, name) => {
+        if (busyMac)
+            return;
+        setBusyMac(mac);
+        try {
+            await api.pairDeviceFull(mac);
+            toaster.toast({ title: `已配对 ${name}`, body: "" });
+            setDevices((prev) => prev.filter((d) => d.mac !== mac));
+            onPaired();
+        }
+        catch (e) {
+            toaster.toast({ title: "配对失败", body: e?.message || String(e) });
+        }
+        finally {
+            setBusyMac(null);
+        }
+    };
+    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u641C\u7D22\u9644\u8FD1\u8BBE\u5907" }), SP_JSX.jsx(Hint, { children: discoverable
+                    ? "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。"
+                    : "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。" }), SP_JSX.jsx(DFL.Focusable, { onClick: scan, onActivate: scan, style: {
+                    display: "inline-flex", alignItems: "center", gap: 8, marginTop: 8,
+                    padding: "9px 18px", borderRadius: 18, cursor: scanning ? "default" : "pointer",
+                    background: scanning ? "rgba(255,255,255,0.06)" : COLORS.accent,
+                    color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
+                }, children: scanning ? "正在搜索…（约 20 秒）" : "搜索附近设备" }), devices.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: devices.map((d) => {
+                    const busy = busyMac === d.mac;
+                    const isPhone = (d.icon || "").includes("phone");
+                    const isComputer = (d.icon || "").includes("computer");
+                    return (SP_JSX.jsxs("div", { style: {
+                            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
+                            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
+                        }, children: [SP_JSX.jsx("div", { style: {
+                                    width: 40, height: 40, borderRadius: 20, flexShrink: 0,
+                                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+                                    background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: d.mac })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.name), onActivate: () => pair(d.mac, d.name), style: {
+                                    padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
+                                    cursor: busy ? "default" : "pointer",
+                                    background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
+                                    color: busy ? COLORS.sub : "#fff",
+                                }, children: busy ? "配对中…" : "配对" })] }, d.mac));
+                }) })), scanned && devices.length === 0 && (SP_JSX.jsx(Hint, { children: "\u6CA1\u641C\u5230\u672A\u914D\u5BF9\u7684\u8BBE\u5907\u3002\u53EF\u80FD\u662F\uFF1A\u624B\u673A\u5DF2\u7ECF\u914D\u8FC7\u8FD9\u53F0 Deck\uFF08\u53BB\u4E0B\u9762\u300C\u5DF2\u914D\u5BF9\u300D\u91CC\u770B\uFF09\u3001 \u6216\u624B\u673A\u84DD\u7259\u6CA1\u6253\u5F00\u3001\u6216\u5BF9\u65B9\u4E0D\u53EF\u88AB\u53D1\u73B0\u3002" }))] }));
 }
 // ---------------------------------------------------------------------------
 function SettingsTab({ state, refresh }) {
