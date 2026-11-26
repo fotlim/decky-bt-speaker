@@ -128,6 +128,43 @@ export function Speaker() {
         </div>
       )}
 
+      {/* 谁在放歌：外部蓝牙源 */}
+      {state?.live && (
+        <div style={{
+          margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
+          background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                正在播放：{state.live.name}
+              </div>
+            </div>
+            <Pill tone="accent">外部音源</Pill>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Focusable
+              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted), state.live!.muted ? "已取消静音" : "已静音外部音源")}
+              onActivate={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted))}
+              style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}
+            >
+              {state.live.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
+            </Focusable>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SliderField
+                value={Math.round((state.live.volume || 0) * 100)}
+                min={0}
+                max={150}
+                step={1}
+                showValue={false}
+                onChange={(v) => { api.setSourceVolume(state.live!.id, v / 100).catch(() => {}); }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 音量 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, width: "100%" }}>
         <Focusable onClick={toggleMute} onActivate={toggleMute} style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}>

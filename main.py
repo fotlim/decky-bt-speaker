@@ -38,6 +38,13 @@ except Exception:
     power = None
     _POWER_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import nodes  # type: ignore
+    _NODES_IMPORT_ERR = None
+except Exception:
+    nodes = None
+    _NODES_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -340,9 +347,26 @@ class Plugin:
 
         vol = {"volume": 0.0, "muted": False}
         sink = ""
+        live = None
         try:
             vol = await self.wp.get_volume()
-            sink = bt.Wp.parse_default_sink(await self.wp.status_text())
+            status_text = await self.wp.status_text()
+            sink = bt.Wp.parse_default_sink(status_text)
+            # 「谁在放歌」：找出蓝牙输入节点并单独读它的音量
+            if nodes is not None:
+                src = nodes.find_bt_input(status_text)
+                if src is not None:
+                    detail = {"volume": src.get("volume"), "muted": False}
+                    try:
+                        detail = await self.wp.get_volume_of(src["id"])
+                    except Exception:
+                        pass
+                    live = {
+                        "id": src["id"],
+                        "name": src["name"],
+                        "volume": detail["volume"],
+                        "muted": detail["muted"],
+                    }
         except Exception as e:  # noqa: BLE001
             self._log("读取音量失败：%s" % e)
 
@@ -367,6 +391,7 @@ class Plugin:
             "adapter": adapter,
             "volume": vol,
             "sink": sink,
+            "live": live,
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
@@ -431,6 +456,17 @@ class Plugin:
     @_safe
     async def set_mute(self, muted):
         await self.wp.set_mute(bool(muted))
+        return {"ok": True, "muted": bool(muted)}
+
+    @_safe
+    async def set_source_volume(self, node_id, value):
+        """给外部蓝牙源节点单独调音量（不影响游戏声音）。"""
+        await self.wp.set_volume_of(node_id, value)
+        return {"ok": True, "volume": max(0.0, min(1.5, float(value)))}
+
+    @_safe
+    async def set_source_mute(self, node_id, muted):
+        await self.wp.set_mute_of(node_id, bool(muted))
         return {"ok": True, "muted": bool(muted)}
 
     @_safe

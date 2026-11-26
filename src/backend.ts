@@ -19,6 +19,10 @@ export const api = {
     call<[string, string], { ok: boolean }>("device_action", mac, action),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
   setMute: (m: boolean) => call<[boolean], { ok: boolean }>("set_mute", m),
+  setSourceVolume: (nodeId: number, v: number) =>
+    call<[number, number], { ok: boolean; volume: number }>("set_source_volume", nodeId, v),
+  setSourceMute: (nodeId: number, m: boolean) =>
+    call<[number, boolean], { ok: boolean }>("set_source_mute", nodeId, m),
   setSetting: (key: string, value: any) =>
     call<[string, any], { ok: boolean }>("set_setting", key, value),
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),
