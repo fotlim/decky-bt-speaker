@@ -4,6 +4,41 @@
 
 ---
 
+## [1.3.0] - 2026-11-26
+
+音频焦点策略 + 编码器可见性。
+
+### Added
+
+- **`focus.py`**：音频焦点策略执行器
+  - `coexist`（默认）：手机推流与游戏声音共存
+  - `receiver_first`：优先保证推流音质，自动关闭「切通话模式」
+  - `manual`：插件完全不插手
+- **编码器显示**：读 `pactl list cards` 的 `Active Profile`，翻译成「SBC / SBC-XQ / AAC / LDAC / aptX」，并标明方向（接收 / 发送 / 通话）
+- **`set_autoswitch` / `get_autoswitch`**：直接控制 `bluetooth.autoswitch-to-headset-profile`
+- **前端设置页**：三选一焦点模式（单选卡片）、编码器信息面板
+
+### Design Notes
+
+**刻意不使用 `wpctl set-default` 做自动切换。** 两个真实原因：
+
+1. `wpctl set-default` 的选择会被**永久记住**在 default-streams 状态文件里，并且在 `find-selected-default-node.lua` 里获得 `priority = 30000 + priority` 的加成，压过所有 `priority.session`。一旦设过，用户之后在系统里怎么切都会被抢回去，只有 `wpctl clear-default` 能忘掉。
+2. [GNOME #3800](https://gitlab.gnome.org/GNOME/gnome-control-center/-/work_items/3800) 就是这个机制导致的：设备移除时被改写成 fallback，之后内置扬声器永远抢不走默认。
+
+所以插件只在「外部源出现/消失」时做一次性路由修正，**不写入持久状态**，用户自己选的默认设备永远优先。
+
+### Fixed
+
+- `summarize_profile` 的两个漏判：
+  - `sbc_xq`（下划线）之前只匹配 `sbc-xq`（连字符），不同 PipeWire 版本两种写法都出现过
+  - `headset-head-unit`（PulseAudio 传统通话 profile 名）里没有 `hfp` 字样，之前翻译不出来
+
+### Tests
+
+- 新增 12 项焦点/编码器自检（含 6 种 profile 名变体）
+
+---
+
 ## [1.2.0] - 2026-11-26
 
 「谁在放歌」实时显示 + 外部音源独立音量控制。

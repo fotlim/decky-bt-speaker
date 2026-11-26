@@ -37,6 +37,19 @@ export interface Settings {
   alias: string;
   resume_restore: boolean;
   last_device: string;
+  focus_mode: "receiver_first" | "coexist" | "manual";
+  silence_disconnect: number;
+}
+
+export interface CodecInfo {
+  profile: string;
+  codec: string;
+  role: string;
+}
+
+export interface FocusInfo {
+  mode: string;
+  label: string;
 }
 
 export interface PowerInfo {
@@ -71,6 +84,8 @@ export interface SpeakerStatus {
   volume: VolumeInfo;
   sink: string;
   live: LiveSource | null;
+  codec: CodecInfo;
+  focus: FocusInfo;
   connected: BtDevice[];
   paired: BtDevice[];
   agent: boolean;

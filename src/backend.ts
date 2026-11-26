@@ -23,6 +23,10 @@ export const api = {
     call<[number, number], { ok: boolean; volume: number }>("set_source_volume", nodeId, v),
   setSourceMute: (nodeId: number, m: boolean) =>
     call<[number, boolean], { ok: boolean }>("set_source_mute", nodeId, m),
+  setFocusMode: (mode: string) =>
+    call<[string], { ok: boolean; mode: string; applied: string[] }>("set_focus_mode", mode),
+  getAutoswitch: () => call<[], { enabled: boolean | null }>("get_autoswitch"),
+  setAutoswitch: (on: boolean) => call<[boolean], { ok: boolean; enabled: boolean }>("set_autoswitch", on),
   setSetting: (key: string, value: any) =>
     call<[string, any], { ok: boolean }>("set_setting", key, value),
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),
