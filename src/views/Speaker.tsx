@@ -91,14 +91,38 @@ export function Speaker() {
 
       {/* 蓝牙本身关着时，给一个直接打开的入口 */}
       {ad && !ad.powered && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => act(() => api.setPower(true), "蓝牙已打开")}
-          >
-            打开蓝牙
-          </ButtonItem>
-        </PanelSectionRow>
+        <>
+          {/* rfkill 阻挡是最常见的原因，单独提示 */}
+          {state?.rfkill?.found && (state.rfkill.soft || state.rfkill.hard) && (
+            <div style={{
+              margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+              background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+              color: "#ffb3b3",
+            }}>
+              {state.rfkill.hard
+                ? "蓝牙被硬件开关阻挡（Hard blocked），软件解不了，请重启 Deck。"
+                : "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。"}
+            </div>
+          )}
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={() => act(() => api.setPower(true), "蓝牙已打开")}
+            >
+              打开蓝牙
+            </ButtonItem>
+          </PanelSectionRow>
+          {state?.rfkill?.soft && !state.rfkill.hard && (
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                onClick={() => act(() => api.unblockRfkill(), "已尝试解除阻挡")}
+              >
+                解除射频阻挡（需要 sudo）
+              </ButtonItem>
+            </PanelSectionRow>
+          )}
+        </>
       )}
 
       {/* 已连接设备 */}

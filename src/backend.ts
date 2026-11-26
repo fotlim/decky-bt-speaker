@@ -14,6 +14,11 @@ export const api = {
   status: () => call<[], SpeakerStatus>("status"),
   setDiscoverable: (on: boolean) => call<[boolean], { ok: boolean }>("set_discoverable", on),
   setPower: (on: boolean) => call<[boolean], { ok: boolean }>("set_power", on),
+  unblockRfkill: () => call<[], { ok: boolean; rfkill: any }>("unblock_rfkill"),
+  restartAgent: () => call<[], { ok: boolean; agent: boolean; registered: boolean }>("restart_agent"),
+  pairDevice: (mac: string) => call<[string], { ok: boolean }>("pair_device", mac),
+  forgetDevice: (mac: string) => call<[string], { ok: boolean }>("forget_device", mac),
+  repairDevice: (mac: string) => call<[string], { ok: boolean; agent: boolean }>("repair_device", mac),
   setAlias: (alias: string) => call<[string], { ok: boolean; alias: string }>("set_alias", alias),
   deviceAction: (mac: string, action: "connect" | "disconnect" | "trust" | "untrust" | "pair" | "remove") =>
     call<[string, string], { ok: boolean }>("device_action", mac, action),

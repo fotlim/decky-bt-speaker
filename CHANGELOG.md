@@ -4,6 +4,62 @@
 
 ---
 
+## [2.0.3] - 2026-11-26
+
+真机验证反馈的三个问题。
+
+### Fixed
+
+- **切换均衡器报「重启 PipeWire 失败」**
+
+  Decky 后端进程虽然以 `deck` 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**，
+  导致 `systemctl --user` 连不上会话总线（`Failed to connect to bus: No medium found`）。
+
+  修法：新增 `bt._user_session_env()`，所有 `systemctl --user` 调用都显式带上
+  `XDG_RUNTIME_DIR=/run/user/<uid>` 和 `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus`，
+  并增加 `sudo -n` 兜底；最终失败时把可直接复制的命令回传给用户。
+  PipeWire 与 WirePlumber 的重启都改用了这个方式。
+
+- **配对码 / 通行密钥不正确，无法与 Deck 配对**
+
+  这是 BlueZ 的已知 Just-Works 重配对问题（[bluez#428](https://github.com/bluez/bluez/issues/428)、
+  [bluez#798](https://github.com/bluez/bluez/issues/798)）：手机「忘记」Deck 后重新配对时，
+  Deck 端仍持有旧绑定密钥，而 BlueZ 默认 `JustWorksRepairing = never` 会**拒绝替换**，
+  于是报 `incorrect PIN or passkey` / `PIN or Key Missing (0x06)`。
+
+  修法：新增「修复配对」按钮（`repair_device` RPC）——
+  删除本机设备记录（含绑定密钥）→ 重启配对 agent → 重新配对 + 信任。
+  另有 `forget_device` 单独暴露。
+
+- **全屏页标题被 Steam 状态栏遮挡**
+
+  全屏路由页用 `position: absolute; inset: 0` 会被顶部状态栏（电量/时间）和
+  底部 A/B 提示条两头遮住。
+
+  修法：外层容器用 padding 让位（顶 58px / 底 62px，叠加 `env(safe-area-inset-*)`），
+  内层单独做滚动容器。用 padding 而非 margin，保证背景色仍铺满整屏。
+
+### Added
+
+- **rfkill 阻挡识别**：`PowerState: off-blocked` 时给出准确提示
+  （而不是笼统的「打开蓝牙失败」），QAM 里提供「解除射频阻挡」按钮
+- **配对 agent 可靠性**：改用 `bluetoothctl --agent=NoInputNoOutput` 启动参数
+  （不再依赖 stdin 命令时序），并等待 "Agent registered" 确认；
+  自动应答 Confirmation / PIN / Passkey 请求作为兜底
+- **配对状态显示**：设置页显示 agent 是否已就绪，可一键重启
+- `pair_device` RPC：反向主动配对
+
+### Notes
+
+真机验证确认的几点：
+
+- 蓝牙打不开的真因是 **rfkill 阻挡**（`PowerState: off-blocked`），
+  不是 polkit 权限问题（错误是 `org.bluez.Error.Failed` 而非 `NotAuthorized`）
+- `deck` 用户默认**没有密码**，`sudo` 全部失败，需要先 `passwd`
+- 适配器本身支持 A2DP Sink，`Class` 与 UUID 在蓝牙关闭时为空是正常现象
+
+---
+
 ## [2.0.1] - 2026-11-26
 
 **修复真机上「插件加载失败：SyntaxError: Unexpected token 'export'」**

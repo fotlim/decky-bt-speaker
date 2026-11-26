@@ -17,13 +17,17 @@ export function BtSpeakerPage() {
   const paired = state?.paired || [];
   const connectedMacs = new Set((state?.connected || []).map((d) => d.mac));
 
-  const act = async (mac: string, action: "connect" | "disconnect" | "remove", label: string) => {
+  const act = async (mac: string, action: "connect" | "disconnect" | "remove" | "repair", label: string) => {
     if (busyMac) return;
     setBusyMac(mac);
     try {
-      await api.deviceAction(mac, action);
+      if (action === "repair") {
+        await api.repairDevice(mac);
+      } else {
+        await api.deviceAction(mac, action);
+      }
       toaster.toast({ title: label, body: "" });
-      setTimeout(refresh, 600);
+      setTimeout(refresh, 800);
     } catch (e: any) {
       toaster.toast({ title: "操作失败", body: e?.message || String(e) });
     } finally {
@@ -32,10 +36,26 @@ export function BtSpeakerPage() {
   };
 
   return (
+    // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
+    // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
+    // 全屏路由页如果直接用 inset:0 会被两头遮住。
+    // 用 padding 而非 margin，保证背景色仍然铺满整屏。
     <div style={{
-      position: "absolute", inset: 0, overflowY: "auto", background: COLORS.bg,
-      padding: "18px 34px 40px", display: "flex", flexDirection: "column",
+      position: "absolute", inset: 0, background: COLORS.bg,
+      paddingTop: "calc(env(safe-area-inset-top, 0px) + 58px)",
+      paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 62px)",
+      paddingLeft: "calc(env(safe-area-inset-left, 0px) + 34px)",
+      paddingRight: "calc(env(safe-area-inset-right, 0px) + 34px)",
+      display: "flex", flexDirection: "column",
+      boxSizing: "border-box",
     }}>
+      {/* 内层：真正的滚动容器，滚动条只在内层出现 */}
+      <div style={{
+        flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
+        display: "flex", flexDirection: "column",
+        // 给滚动到底时留一点余量，最后一项不至于贴边
+        paddingBottom: 16,
+      }}>
       {/* 头部 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <div>
@@ -91,6 +111,7 @@ export function BtSpeakerPage() {
           {tab === "diag" && <DiagTab />}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -102,7 +123,7 @@ function DevicesTab({
   paired: { mac: string; name: string }[];
   connectedMacs: Set<string>;
   busyMac: string | null;
-  onAction: (mac: string, action: "connect" | "disconnect" | "remove", label: string) => void;
+  onAction: (mac: string, action: "connect" | "disconnect" | "remove" | "repair", label: string) => void;
   discoverable: boolean;
   alias: string;
 }) {
@@ -145,6 +166,14 @@ function DevicesTab({
                 }}
               >{busy ? "…" : connected ? "断开" : "连接"}</Focusable>
               <Focusable
+                onClick={() => onAction(d.mac, "repair", "正在修复配对…")}
+                onActivate={() => onAction(d.mac, "repair", "正在修复配对…")}
+                style={{
+                  padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
+                  background: "rgba(76,154,255,0.16)", color: COLORS.accent,
+                }}
+              >修复配对</Focusable>
+              <Focusable
                 onClick={() => onAction(d.mac, "remove", "已移除配对")}
                 onActivate={() => onAction(d.mac, "remove", "已移除配对")}
                 style={{
@@ -156,7 +185,12 @@ function DevicesTab({
           );
         })}
       </Focusable>
-      <Hint>连接成功后在手机上播放音乐，声音就会从 Deck 的喇叭出来。同一时间只能有一个源在放（蓝牙 A2DP 的限制）。</Hint>
+      <Hint>
+        连接成功后在手机上播放音乐，声音就会从 Deck 的喇叭出来。同一时间只能有一个源在放（蓝牙 A2DP 的限制）。
+        <br />
+        <b style={{ color: COLORS.sub }}>配对码 / 通行密钥不正确？</b>点「修复配对」——
+        它会清除 Deck 端保存的旧绑定密钥再重新配对。如果仍失败，请在手机端也「忘记」这个设备后重新搜索。
+      </Hint>
     </div>
   );
 }
@@ -264,6 +298,46 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         配置文件：<span style={{ color: COLORS.sub }}>{state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf"}</span>
         <br />连上了却没声音、或者声音变成单声道发闷时，打开它再重连一次通常就好了。
       </Hint>
+
+      <SectionTitle>配对</SectionTitle>
+      <Hint>
+        配对 agent 负责应答手机的配对请求。如果手机弹了配对码但 Deck 没反应，
+        说明 agent 没工作，点下面的按钮重启它再试。
+      </Hint>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+        <div style={{
+          width: 8, height: 8, borderRadius: 4, flexShrink: 0,
+          background: state.agent_registered ? COLORS.ok : state.agent ? "#e0a800" : COLORS.accentWarm,
+        }} />
+        <div style={{ flex: 1, fontSize: 13, color: COLORS.text }}>
+          {state.agent_registered
+            ? "配对 agent 已就绪"
+            : state.agent
+              ? "配对 agent 运行中，但未确认注册"
+              : "配对 agent 未运行"}
+        </div>
+        <Focusable
+          onClick={async () => {
+            try {
+              const r = await api.restartAgent();
+              toaster.toast({
+                title: r.registered ? "配对 agent 已重启并就绪" : "已重启，但未确认注册",
+                body: r.registered ? "" : "配对时可能需要手动确认",
+              });
+              setTimeout(refresh, 800);
+            } catch (e: any) {
+              toaster.toast({ title: "重启失败", body: e?.message || String(e) });
+            }
+          }}
+          onActivate={async () => {
+            try { await api.restartAgent(); setTimeout(refresh, 800); } catch { /* ignore */ }
+          }}
+          style={{
+            padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
+            background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
+          }}
+        >重启 agent</Focusable>
+      </div>
 
       <SectionTitle>音频焦点</SectionTitle>
       <Hint>决定「手机推流」和「Deck 游戏声音」怎么共存。不会改写你的系统默认输出。</Hint>

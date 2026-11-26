@@ -55,6 +55,34 @@ def yes(s):
     return str(s).strip().lower() in ("yes", "true", "1", "on")
 
 
+def _user_session_env():
+    """构造用户会话的环境变量。
+
+    为什么需要这个？
+    ----------------
+    Decky 后端进程虽然以 deck 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**。
+    没有它，`systemctl --user` 会报 "Failed to connect to bus: No medium found"，
+    因为 systemctl 找不到会话总线的 socket。
+
+    所有 `systemctl --user` 调用都必须带上这两个变量。
+    """
+    env = {}
+    uid = None
+    try:
+        uid = os.getuid()
+    except Exception:
+        pass
+    if uid is None:
+        try:
+            import pwd
+            uid = pwd.getpwnam(os.environ.get("USER", "deck")).pw_uid
+        except Exception:
+            uid = 1000
+    env["XDG_RUNTIME_DIR"] = "/run/user/%d" % uid
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/%d/bus" % uid
+    return env
+
+
 async def run_cmd(argv, timeout=8.0):
     """执行外部命令，返回 (returncode, 合并后的输出)。找不到命令直接抛 BtError。"""
     exe = which(argv[0])
@@ -105,6 +133,7 @@ class BlueZ:
         self.adapter_path = "/org/bluez/hci0"
         self._agent_proc = None
         self._agent_task = None
+        self._agent_ready = False
         self._show_cache = (0.0, None)
 
     # -- 基础 -------------------------------------------------------------
@@ -156,6 +185,7 @@ class BlueZ:
             "alias": kv.get("Alias") or kv.get("Name") or "Steam Deck",
             "name": kv.get("Name", ""),
             "powered": yes(kv.get("Powered", "no")),
+            "power_state": kv.get("PowerState", ""),
             "discoverable": yes(kv.get("Discoverable", "no")),
             "pairable": yes(kv.get("Pairable", "no")),
             "discovering": yes(kv.get("Discovering", "no")),
@@ -173,9 +203,91 @@ class BlueZ:
         return data
 
     async def power_on(self):
+        """打开蓝牙。
+
+        失败时区分两种原因，给出可操作的提示：
+        1. **rfkill 阻挡**（`PowerState: off-blocked`）—— 射频被禁用，
+           报错是 `org.bluez.Error.Failed`。需要 `rfkill unblock` 或用
+           Steam 自己的蓝牙开关解除。
+        2. **权限不足** —— 报错是 `org.bluez.Error.NotAuthorized`。
+           游戏模式下没有 polkit agent，需要去桌面模式授权。
+        """
         rc, out = await self._ctl("power", "on")
         if rc != 0 and "Failed" in out:
-            raise BtError("打开蓝牙失败：%s" % out.strip().splitlines()[-1])
+            raise BtError(await self._explain_power_failure(out))
+        self._show_cache = (0.0, None)
+        return True
+
+    async def _explain_power_failure(self, raw_output):
+        """把 bluetoothctl 的含糊报错翻译成能照着做的提示。"""
+        tail = (raw_output or "").strip().splitlines()
+        last = tail[-1] if tail else "未知错误"
+
+        # 先看适配器状态，判断是 rfkill 还是权限
+        state = ""
+        try:
+            info = await self.show(force=True)
+            state = (info.get("power_state") or "").lower()
+        except Exception:
+            pass
+
+        if "off-blocked" in state or "blocked" in state:
+            rf = await self.rfkill_status()
+            detail = ""
+            if rf.get("soft"):
+                detail = "软阻挡（Soft blocked）"
+            elif rf.get("hard"):
+                detail = "硬阻挡（Hard blocked）"
+            return (
+                "蓝牙被射频开关阻挡了（%s）。\n"
+                "解决办法（任选其一）：\n"
+                "  1. 游戏模式里用 Steam 自己的开关：Steam 按钮 → 设置 → 蓝牙 → 打开\n"
+                "  2. 终端执行：sudo rfkill unblock bluetooth\n"
+                "原始错误：%s" % (detail or "rfkill", last)
+            )
+
+        if "NotAuthorized" in (raw_output or "") or "not authorized" in (raw_output or "").lower():
+            return (
+                "没有权限打开蓝牙（org.bluez.Error.NotAuthorized）。\n"
+                "游戏模式下没有 polkit 授权弹窗，所以需要：\n"
+                "  1. 切到桌面模式，用 KDE 的蓝牙开关打开一次（会弹授权窗口）\n"
+                "  2. 或者终端执行：sudo bluetoothctl power on\n"
+                "原始错误：%s" % last
+            )
+
+        return "打开蓝牙失败：%s" % last
+
+    async def rfkill_status(self):
+        """读取 rfkill 的蓝牙阻挡状态。返回 {'soft': bool, 'hard': bool, 'found': bool}。"""
+        out = {"soft": False, "hard": False, "found": False}
+        try:
+            rc, text = await run_cmd(["rfkill", "list", "bluetooth"], timeout=5.0)
+        except BtError:
+            return out
+        if rc != 0:
+            return out
+        low = (text or "").lower()
+        if "bluetooth" not in low:
+            return out
+        out["found"] = True
+        out["soft"] = "soft blocked: yes" in low
+        out["hard"] = "hard blocked: yes" in low
+        return out
+
+    async def unblock_rfkill(self):
+        """解除 rfkill 软阻挡。硬阻挡需要物理开关，软件解不了。"""
+        try:
+            rc, out = await run_cmd(["rfkill", "unblock", "bluetooth"], timeout=8.0)
+        except BtError as e:
+            raise BtError("rfkill 不可用：%s" % e)
+        if rc != 0:
+            raise BtError(
+                "解除 rfkill 阻挡失败：%s\n"
+                "这需要 root 权限，请手动执行：sudo rfkill unblock bluetooth"
+                % (out or "").strip()
+            )
+        self._log("已执行 rfkill unblock bluetooth")
+        self._show_cache = (0.0, None)
         return True
 
     async def set_discoverable(self, on):
@@ -266,36 +378,162 @@ class BlueZ:
         self._show_cache = (0.0, None)
         return True
 
-    # -- 配对 agent -------------------------------------------------------
+    # -- 修复配对 ---------------------------------------------------------
+    async def forget_device(self, mac):
+        """彻底删除本机的该设备记录（含绑定密钥）。
+
+        为什么需要这个？
+        ----------------
+        BlueZ 有个已知的 Just-Works 重配对问题：
+        手机「忘记」Deck 后重新配对，Deck 端仍持有旧绑定密钥，
+        而 BlueZ 默认 `JustWorksRepairing = never` 会拒绝替换，
+        于是报 `incorrect PIN or passkey` / `PIN or Key Missing (0x06)`。
+
+        参考：bluez#428、bluez#798。
+
+        解法就是**先在本机删掉这个设备**（`bluetoothctl remove`），
+        让两端密钥状态一致，再重新配对。
+        """
+        if not is_mac(mac):
+            raise BtError("设备地址不合法：%s" % mac)
+        try:
+            await self._ctl("disconnect", mac, timeout=10.0)
+        except BtError:
+            pass
+        rc, out = await self._ctl("remove", mac, timeout=15.0)
+        self._show_cache = (0.0, None)
+        if rc != 0:
+            tail = (out or "").strip().splitlines()
+            msg = tail[-1] if tail else "未知错误"
+            if "does not exist" in msg.lower() or "not available" in msg.lower():
+                return True
+            raise BtError("删除设备记录失败：%s" % msg)
+        self._log("已删除设备记录（含绑定密钥）：%s" % mac)
+        return True
+
+    async def repair(self, mac):
+        """修复配对：删记录 → 重启 agent → 重新配对。
+
+        适用于「配对码/通行密钥不正确」这类两端密钥不一致的情况。
+        """
+        if not is_mac(mac):
+            raise BtError("设备地址不合法：%s" % mac)
+        self._log("开始修复配对：%s" % mac)
+        await self.forget_device(mac)
+        await self.stop_agent()
+        await asyncio.sleep(0.4)
+        await self.start_agent()
+        try:
+            await self.device_action(mac, "pair")
+        except BtError as e:
+            raise BtError(
+                "已清除旧记录，但重新配对失败：%s\n"
+                "请在手机端也「忘记」这个设备，然后重新搜索配对。" % e
+            )
+        try:
+            await self.device_action(mac, "trust")
+        except BtError:
+            pass
+        self._log("修复配对完成：%s" % mac)
+        return True
     async def start_agent(self):
-        """常驻一个 bluetoothctl，注册 NoInputNoOutput agent（手机连上来只需点确认）。"""
+        """常驻 bluetoothctl 注册 NoInputNoOutput agent。
+
+        为什么用命令行参数而不是 stdin 发命令？
+        ----------------------------------------
+        `bluetoothctl` 是交互式程序，用管道 stdin 写入命令时存在时序问题：
+        进程可能还没准备好接收命令，或者命令被吞掉。之前用 stdin 方式时，
+        agent 经常**根本没注册成功**，表现就是「手机弹配对码，Deck 端毫无反应」。
+
+        改用 `bluetoothctl --agent=NoInputNoOutput` 启动参数，注册在进程
+        初始化阶段完成，不依赖交互时序，可靠得多。
+
+        三级兜底：
+        1. `--agent=NoInputNoOutput`（最可靠）
+        2. 若该参数不被支持，退回 stdin 发送 `agent NoInputNoOutput`
+        3. 无论哪种，都持续读取输出，检测 "Agent registered" 确认注册成功
+        """
         if self._agent_proc is not None and self._agent_proc.returncode is None:
             return True
+
         exe = which("bluetoothctl")
         if not exe:
             raise BtError("系统里找不到 bluetoothctl")
+
+        proc = await self._spawn_agent(exe)
+        self._agent_proc = proc
+        self._agent_ready = False
+        self._agent_task = asyncio.create_task(self._pump_agent(proc))
+
+        # 等 agent 注册完成（最多 3 秒），拿到明确结果再返回
+        for _ in range(30):
+            await asyncio.sleep(0.1)
+            if self._agent_ready:
+                break
+            if proc.returncode is not None:
+                break
+
+        if self._agent_ready:
+            self._log("配对 agent 已就绪（NoInputNoOutput，已注册）")
+        else:
+            self._log("警告：配对 agent 未能确认注册，配对可能需要手动确认")
+
+        # 额外保险：把本适配器的可配对打开
+        try:
+            await self._ctl("pairable", "on")
+        except BtError:
+            pass
+
+        return True
+
+    async def _spawn_agent(self, exe):
+        """尝试用 --agent 参数启动，不支持则退回 stdin 方式。"""
+        # 方式 1：命令行参数
         try:
             proc = await asyncio.create_subprocess_exec(
-                exe,
+                exe, "--agent=NoInputNoOutput",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
+            # 给进程一点时间，如果立刻退出说明参数不被支持
+            await asyncio.sleep(0.35)
+            if proc.returncode is None:
+                return proc
+            self._log("--agent 参数不被支持（进程立即退出），退回 stdin 方式")
         except Exception as e:  # noqa: BLE001
-            raise BtError("启动配对 agent 失败：%s" % e)
-        self._agent_proc = proc
+            self._log("--agent 启动失败：%s，退回 stdin 方式" % e)
+
+        # 方式 2：stdin 发命令
+        proc = await asyncio.create_subprocess_exec(
+            exe,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
         try:
             proc.stdin.write(b"agent NoInputNoOutput\n")
             proc.stdin.write(b"default-agent\n")
             await proc.stdin.drain()
         except Exception as e:  # noqa: BLE001
-            self._log("agent 写入失败：%s" % e)
-        self._agent_task = asyncio.create_task(self._pump_agent(proc))
-        self._log("配对 agent 已启动（NoInputNoOutput）")
-        return True
+            self._log("agent 命令写入失败：%s" % e)
+        return proc
+
+    async def _reply(self, text):
+        """向 agent 进程写一行回复（用于兜底确认配对）。"""
+        proc = self._agent_proc
+        if proc is None or proc.stdin is None or proc.stdin.is_closing():
+            return False
+        try:
+            proc.stdin.write((text + "\n").encode())
+            await proc.stdin.drain()
+            return True
+        except Exception as e:  # noqa: BLE001
+            self._log("agent 回复失败：%s" % e)
+            return False
 
     async def _pump_agent(self, proc):
-        """持续读 agent 的输出（顺便把配对事件写进日志），进程退出就标记失效。"""
+        """持续读 agent 输出：确认注册状态、记录配对事件、兜底自动确认。"""
         try:
             while True:
                 line = await proc.stdout.readline()
@@ -305,17 +543,48 @@ class BlueZ:
                 if not text:
                     continue
                 low = text.lower()
-                if any(k in low for k in ("pairing successful", "pairing failed", "confirm", "authorize", "connected", "disconnected", "agent registered", "failed")):
+
+                # --- 注册状态 ---
+                if "agent registered" in low:
+                    self._agent_ready = True
+                    self._log("[agent] 已注册")
+                    continue
+
+                # --- 兜底：自动确认配对请求 ---
+                # NoInputNoOutput 理论上不需要确认，但某些手机/BlueZ 组合
+                # 仍会发出 Confirmation 请求，此时必须回复 yes，否则配对卡住。
+                if any(k in low for k in ("request confirmation", "confirm passkey",
+                                          "authorize service", "authorize")):
+                    self._log("[agent] 收到配对确认请求，自动同意：%s" % text)
+                    await self._reply("yes")
+                    continue
+                if "enter pin code" in low or "request pin" in low:
+                    self._log("[agent] 收到 PIN 请求，回复 0000：%s" % text)
+                    await self._reply("0000")
+                    continue
+                if "request passkey" in low:
+                    self._log("[agent] 收到 Passkey 请求，回复 000000：%s" % text)
+                    await self._reply("000000")
+                    continue
+
+                # --- 事件记录 ---
+                if any(k in low for k in ("pairing successful", "pairing failed",
+                                          "connected", "disconnected", "failed")):
                     self._log("[agent] %s" % text)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
             self._log("agent 读取异常：%s" % e)
         finally:
+            self._agent_ready = False
             self._log("配对 agent 已退出")
 
     def agent_alive(self):
         return self._agent_proc is not None and self._agent_proc.returncode is None
+
+    def agent_registered(self):
+        """agent 是否确认注册成功（比 agent_alive 更严格）。"""
+        return self.agent_alive() and self._agent_ready
 
     async def stop_agent(self):
         proc = self._agent_proc
@@ -552,19 +821,27 @@ class WpConfig:
         return True
 
     async def restart(self):
-        """重启用户级 WirePlumber 让配置生效（不需要 root）。"""
-        rc, out = await run_cmd(
-            ["systemctl", "--user", "restart", "wireplumber"], timeout=20.0
-        )
+        """重启用户级 WirePlumber 让配置生效（不需要 root）。
+
+        ⚠️ 必须显式传 `XDG_RUNTIME_DIR`：Decky 后端进程没继承这个变量，
+        `systemctl --user` 会连不上会话总线（"Failed to connect to bus"）。
+        """
+        env = _user_session_env()
+        argv = ["env"] + ["%s=%s" % (k, v) for k, v in env.items()] \
+            + ["systemctl", "--user", "restart", "wireplumber"]
+        rc, out = await run_cmd(argv, timeout=20.0)
         if rc != 0:
             # 有些环境里服务名带 .service
-            rc2, out2 = await run_cmd(
-                ["systemctl", "--user", "restart", "wireplumber.service"], timeout=20.0
-            )
+            argv2 = ["env"] + ["%s=%s" % (k, v) for k, v in env.items()] \
+                + ["systemctl", "--user", "restart", "wireplumber.service"]
+            rc2, out2 = await run_cmd(argv2, timeout=20.0)
             if rc2 != 0:
+                tail = (out2 or out or "").strip().splitlines()
+                uid = env.get("XDG_RUNTIME_DIR", "/run/user/1000").split("/")[-1]
                 raise BtError(
-                    "重启 WirePlumber 失败：%s"
-                    % ((out2 or out or "").strip().splitlines() or ["未知错误"])[-1]
+                    "重启 WirePlumber 失败：%s\n"
+                    "请手动执行：XDG_RUNTIME_DIR=/run/user/%s systemctl --user restart wireplumber"
+                    % (tail[-1] if tail else "未知错误", uid)
                 )
         self._log("WirePlumber 已重启")
         return True

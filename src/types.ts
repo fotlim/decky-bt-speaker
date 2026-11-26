@@ -15,6 +15,7 @@ export interface AdapterInfo {
   alias: string;
   name: string;
   powered: boolean;
+  power_state: string;
   discoverable: boolean;
   pairable: boolean;
   discovering: boolean;
@@ -146,10 +147,18 @@ export interface OutputInfo {
   sinks: SinkNode[];
 }
 
+export interface RfkillInfo {
+  soft: boolean;
+  hard: boolean;
+  found: boolean;
+}
+
 export interface SpeakerStatus {
   ok: boolean;
   error: string | null;
   adapter: AdapterInfo | null;
+  rfkill: RfkillInfo;
+  agent_registered: boolean;
   volume: VolumeInfo;
   sink: string;
   live: LiveSource | null;

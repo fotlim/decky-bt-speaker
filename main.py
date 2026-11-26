@@ -438,6 +438,14 @@ class Plugin:
         except Exception as e:  # noqa: BLE001
             err = str(e)
 
+        # rfkill 状态：蓝牙打不开时最可能的原因
+        rf = {"soft": False, "hard": False, "found": False}
+        if adapter is not None and not adapter.get("powered"):
+            try:
+                rf = await self.bz.rfkill_status()
+            except Exception:
+                pass
+
         vol = {"volume": 0.0, "muted": False}
         sink = ""
         live = None
@@ -503,6 +511,7 @@ class Plugin:
             "ok": err is None,
             "error": err,
             "adapter": adapter,
+            "rfkill": rf,
             "volume": vol,
             "sink": sink,
             "live": live,
@@ -531,6 +540,7 @@ class Plugin:
             "connected": details,
             "paired": paired,
             "agent": self.bz.agent_alive(),
+            "agent_registered": self.bz.agent_registered(),
             "settings": self.settings,
             "tuning": {"installed": bt.WpConfig.installed(), "path": bt.WpConfig.conf_path()},
             "power": {
@@ -570,6 +580,72 @@ class Plugin:
             if rc != 0:
                 raise bt.BtError("关闭蓝牙失败：%s" % (out or "").strip())
         return {"ok": True, "powered": on}
+
+    @_safe
+    async def unblock_rfkill(self):
+        """尝试解除 rfkill 软阻挡（硬阻挡需要物理开关，软件解不了）。
+
+        注意：`rfkill unblock` 通常需要 root。这里先尝试直接执行，
+        失败就把可操作的命令回传给前端，让用户手动跑。
+        """
+        rf = await self.bz.rfkill_status()
+        if rf.get("hard"):
+            raise bt.BtError(
+                "蓝牙被硬阻挡（Hard blocked），软件无法解除。\n"
+                "请检查是否有物理开关，或重启一次 Deck。"
+            )
+        await self.bz.unblock_rfkill()
+        # 解完立刻尝试上电
+        await self.bz.power_on()
+        if self.settings.get("discoverable", True):
+            await self.bz.set_discoverable(True)
+        return {"ok": True, "rfkill": await self.bz.rfkill_status()}
+
+    @_safe
+    async def restart_agent(self):
+        """重启配对 agent（配对卡住时的救命按钮）。"""
+        await self.bz.stop_agent()
+        await asyncio.sleep(0.3)
+        await self.bz.start_agent()
+        return {
+            "ok": True,
+            "agent": self.bz.agent_alive(),
+            "registered": self.bz.agent_registered(),
+        }
+
+    @_safe
+    async def pair_device(self, mac):
+        """主动向指定设备发起配对（用于手机侧发起失败时的反向配对）。"""
+        if not bt.is_mac(mac):
+            raise bt.BtError("设备地址不合法：%s" % mac)
+        if not self.bz.agent_registered():
+            try:
+                await self.bz.start_agent()
+            except Exception as e:  # noqa: BLE001
+                self._log("配对前启动 agent 失败：%s" % e)
+        await self.bz.device_action(mac, "pair")
+        try:
+            await self.bz.device_action(mac, "trust")
+        except Exception:
+            pass
+        return {"ok": True}
+
+    @_safe
+    async def forget_device(self, mac):
+        """彻底删除设备记录（含绑定密钥），用于解决配对码不正确。"""
+        await self.bz.forget_device(mac)
+        return {"ok": True}
+
+    @_safe
+    async def repair_device(self, mac):
+        """一键修复配对：清除旧密钥 → 重启 agent → 重新配对。
+
+        用于「配对码 / 通行密钥不正确，无法配对」这种情况。
+        根因是 BlueZ 的 JustWorksRepairing 默认 never，两端密钥不一致时
+        会拒绝替换旧绑定（bluez#428 / bluez#798）。
+        """
+        await self.bz.repair(mac)
+        return {"ok": True, "agent": self.bz.agent_registered()}
 
     @_safe
     async def set_alias(self, alias):
@@ -739,13 +815,49 @@ class Plugin:
         }
 
     async def _restart_pipewire(self):
-        """重启用户级 PipeWire 让 filter-chain 配置生效。"""
+        """重启用户级 PipeWire 让配置生效。
+
+        为什么不能直接 `systemctl --user restart pipewire`？
+        --------------------------------------------------
+        Decky 的后端进程虽然以 deck 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**，
+        所以 `systemctl --user` 连不上会话总线，报
+        "Failed to connect to bus: No medium found"。
+
+        正确做法是把 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS` 显式传给子进程。
+        """
+        env = bt._user_session_env()
+        env_args = ["%s=%s" % (k, v) for k, v in env.items()]
+
+        # 方案 1：带环境变量重启（最可靠）
         for unit in ("pipewire", "pipewire.service"):
-            rc, out = await bt.run_cmd(["systemctl", "--user", "restart", unit], timeout=20.0)
+            rc, out = await bt.run_cmd(
+                ["env"] + env_args + ["systemctl", "--user", "restart", unit], timeout=20.0
+            )
             if rc == 0:
-                self._log("PipeWire 已重启（%s）" % unit)
+                self._log("PipeWire 已重启（%s，带 XDG_RUNTIME_DIR）" % unit)
                 return True
-        raise bt.BtError("重启 PipeWire 失败，请手动重启或重启 Deck")
+            tail = (out or "").strip().splitlines()
+            self._log("重启 %s 失败：%s" % (unit, tail[-1] if tail else "?"))
+
+        # 方案 2：sudo -n 兜底（配了免密 sudo 才行，失败就跳过）
+        for unit in ("pipewire", "pipewire.service"):
+            try:
+                rc, out = await bt.run_cmd(
+                    ["sudo", "-n", "systemctl", "restart", unit], timeout=20.0
+                )
+                if rc == 0:
+                    self._log("PipeWire 已通过 sudo 重启（%s）" % unit)
+                    return True
+            except bt.BtError:
+                break
+
+        uid = env.get("XDG_RUNTIME_DIR", "/run/user/1000").split("/")[-1]
+        raise bt.BtError(
+            "重启 PipeWire 失败（通常是 Decky 后端缺少会话环境变量）。\n"
+            "请手动执行一次：\n"
+            "  XDG_RUNTIME_DIR=/run/user/%s systemctl --user restart pipewire\n"
+            "或者直接重启 Deck。" % uid
+        )
 
     # ------------------------------------------------------------------
     # RPC：延迟档位 / 多输出同步
