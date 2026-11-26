@@ -36,6 +36,12 @@ export const api = {
   boostVolume: (gain = 1.5) =>
     call<[number], { ok: boolean; gain: number; applied: string[] }>("boost_volume", gain),
   setAutoGain: (on: boolean) => call<[boolean], { ok: boolean; enabled: boolean }>("set_auto_gain", on),
+  diagnoseStutter: () => call<[], any>("diagnose_stutter"),
+  fixStutter: () => call<[], { ok: boolean; applied: string[] }>("fix_stutter"),
+  setCodecPreset: (preset: string) =>
+    call<[string], { ok: boolean; preset: string; label: string; active_profile: string; available: string[] }>("set_codec_preset", preset),
+  removeQuality: () => call<[], { ok: boolean; installed: boolean }>("remove_quality"),
+  getCodecInfo: () => call<[], any>("get_codec_info"),
   setFocusMode: (mode: string) =>
     call<[string], { ok: boolean; mode: string; applied: string[] }>("set_focus_mode", mode),
   getAutoswitch: () => call<[], { enabled: boolean | null }>("get_autoswitch"),

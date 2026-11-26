@@ -124,6 +124,11 @@ const api = {
     setSourceMute: (nodeId, m) => call("set_source_mute", nodeId, m),
     boostVolume: (gain = 1.5) => call("boost_volume", gain),
     setAutoGain: (on) => call("set_auto_gain", on),
+    diagnoseStutter: () => call("diagnose_stutter"),
+    fixStutter: () => call("fix_stutter"),
+    setCodecPreset: (preset) => call("set_codec_preset", preset),
+    removeQuality: () => call("remove_quality"),
+    getCodecInfo: () => call("get_codec_info"),
     setFocusMode: (mode) => call("set_focus_mode", mode),
     getAutoswitch: () => call("get_autoswitch"),
     setAutoswitch: (on) => call("set_autoswitch", on),
@@ -268,17 +273,21 @@ function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
     const [vol, setVol] = SP_REACT.useState(null);
-    // 拖动后 1.2s 内用自己的值，之后交还给后端轮询（避免轮询把滑块拽回去）
+    // 拖动中标记：拖动期间完全用本地值，防止轮询把滑块拽回去
+    const [dragging, setDragging] = SP_REACT.useState(false);
+    const dragTimer = SP_REACT.useRef(null);
     const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
+    // 松手后 3 秒内仍用本地值，给后端足够时间回传真实值
+    // （后端写 wpctl 是异步的，轮询可能早一步读到旧值）
     SP_REACT.useEffect(() => {
-        if (vol === null)
+        if (vol === null || dragging)
             return;
-        const t = setTimeout(() => setVol(null), 1200);
+        const t = setTimeout(() => setVol(null), 3000);
         return () => clearTimeout(t);
-    }, [vol]);
+    }, [vol, dragging]);
     const ad = state?.adapter;
     const connected = state?.connected || [];
-    const showVol = vol === null ? backendVol : vol;
+    const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
     const act = async (fn, okMsg) => {
         if (busy)
             return;
@@ -300,6 +309,13 @@ function Speaker() {
     };
     const changeVolume = (v) => {
         setVol(v);
+        setDragging(true);
+        // 每次拖动都重置松手定时器
+        if (dragTimer.current)
+            clearTimeout(dragTimer.current);
+        dragTimer.current = setTimeout(() => {
+            setDragging(false);
+        }, 600);
         api.setVolume(v / 100).catch(() => { });
     };
     const toggleMute = () => {
@@ -326,7 +342,14 @@ function Speaker() {
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
                                     width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
                                     opacity: state.track?.status === "playing" ? 1 : 0.4,
-                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || `正在播放：${state.live.name}` }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || "外部音源" })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), state.live.muted ? "已取消静音" : "已静音外部音源"), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => { api.setSourceVolume(state.live.id, v / 100).catch(() => { }); } }) })] })] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4, width: "100%" }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 13 }) : SP_JSX.jsx(FaVolumeUp, { size: 13 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume }) })] }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 10.5, color: COLORS.dim, marginTop: -2 }, children: [SP_JSX.jsx("span", { children: "0%" }), SP_JSX.jsxs("span", { style: { color: showVol > 100 ? COLORS.accentWarm : COLORS.dim }, children: [showVol, "%", showVol > 100 ? "（增益·可能破音）" : ""] }), SP_JSX.jsx("span", { children: "150%" })] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), "已增益到 130%"), onActivate: () => act(() => api.boostVolume(1.3), "已增益到 130%"), style: {
+                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || `正在播放：${state.live.name}` }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || "外部音源" })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), state.live.muted ? "已取消静音" : "已静音外部音源"), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => { api.setSourceVolume(state.live.id, v / 100).catch(() => { }); } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            marginBottom: 2, padding: "0 2px",
+                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: "\u97F3\u91CF" })] }), SP_JSX.jsxs("span", { style: {
+                                    fontSize: 11.5,
+                                    color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
+                                    fontVariantNumeric: "tabular-nums",
+                                }, children: [showVol, "%", showVol > 100 ? " · 可能破音" : ""] })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume })] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), "已增益到 130%"), onActivate: () => act(() => api.boostVolume(1.3), "已增益到 130%"), style: {
                     marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
@@ -592,7 +615,92 @@ function SettingsTab({ state, refresh }) {
                         }, style: {
                             padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
                             background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
-                        }, children: "\u91CD\u542F agent" })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u7126\u70B9" }), SP_JSX.jsx(Hint, { children: "\u51B3\u5B9A\u300C\u624B\u673A\u63A8\u6D41\u300D\u548C\u300CDeck \u6E38\u620F\u58F0\u97F3\u300D\u600E\u4E48\u5171\u5B58\u3002\u4E0D\u4F1A\u6539\u5199\u4F60\u7684\u7CFB\u7EDF\u9ED8\u8BA4\u8F93\u51FA\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
+                        }, children: "\u91CD\u542F agent" })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u8D28\uFF08\u7F16\u7801\u5668\uFF09" }), SP_JSX.jsxs(Hint, { children: ["\u84DD\u7259\u97F3\u8D28\u4E3B\u8981\u7531\u7F16\u7801\u5668\u51B3\u5B9A\u3002", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "SBC-XQ" }), " \u662F\u666E\u901A SBC \u7684\u9AD8\u8D28\u91CF\u53D8\u4F53\uFF0C \u7801\u7387\u4ECE 328 \u63D0\u5230\u7EA6 452 kbps\uFF0C\u517C\u5BB9\u6027\u51E0\u4E4E\u65E0\u635F\u5931\uFF0C\u662F\u6700\u5212\u7B97\u7684\u63D0\u5347\u3002"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (state.quality?.presets || []).map((p) => {
+                    const active = (s.codec_preset || "balanced") === p.key;
+                    return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
+                            try {
+                                const r = await api.setCodecPreset(p.key);
+                                toaster.toast({
+                                    title: `音质预设：${p.label}`,
+                                    body: r.active_profile ? `当前编码器：${r.active_profile}` : "WirePlumber 已重启",
+                                });
+                                setTimeout(refresh, 1500);
+                            }
+                            catch (e) {
+                                toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                            }
+                        }, onActivate: async () => {
+                            try {
+                                await api.setCodecPreset(p.key);
+                                setTimeout(refresh, 1500);
+                            }
+                            catch { /* ignore */ }
+                        }, style: {
+                            display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
+                            borderRadius: 10, cursor: "pointer",
+                            background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                            border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+                        }, children: [SP_JSX.jsx("div", { style: {
+                                    width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                                    border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["\u91CD\u91C7\u6837 ", p.resample] })] }, p.key));
+                }) }), SP_JSX.jsxs(Hint, { children: ["\u5F53\u524D\u5B9E\u9645\u7F16\u7801\u5668\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.accent }, children: state.quality?.active_profile || "未连接" }), SP_JSX.jsx("br", {}), "\u6539\u5B8C\u7F16\u7801\u5668\u540E\uFF0C", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "\u9700\u8981\u5728\u624B\u673A\u4E0A\u65AD\u5F00\u91CD\u8FDE\u4E00\u6B21" }), "\u624D\u4F1A\u91CD\u65B0\u534F\u5546\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u5361\u987F / \u97F3\u8D28" }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
+                    margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9, fontSize: 12, lineHeight: 1.7,
+                    background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+                    color: "#ffb3b3", whiteSpace: "pre-wrap",
+                }, children: [SP_JSX.jsx("b", { children: "\u26A0\uFE0F \u68C0\u6D4B\u5230 2.4GHz Wi-Fi \u5E72\u6270" }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface}（信道 ${w.channel}，${w.freq_mhz} MHz）`).join("、"), "\n", "\u84DD\u7259\u4E0E 2.4GHz Wi-Fi \u5171\u7528\u540C\u4E00\u4E2A\u5C04\u9891\uFF0C\u8FD9\u662F\u97F3\u9891\u5361\u987F\u7684\u5934\u53F7\u539F\u56E0\u3002", SP_JSX.jsx("b", { children: "\u628A Wi-Fi \u5207\u5230 5GHz \u901A\u5E38\u80FD\u7ACB\u523B\u89E3\u51B3\u3002" })] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: "Wi-Fi \u5728 5GHz \u6216\u672A\u8FDE\u63A5\uFF0C\u4E0E\u84DD\u7259\u4E0D\u51B2\u7A81\u3002" })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                            try {
+                                const r = await api.fixStutter();
+                                toaster.toast({
+                                    title: "已应用抗卡顿设置",
+                                    body: (r.applied || []).join("、"),
+                                });
+                                setTimeout(refresh, 1500);
+                            }
+                            catch (e) {
+                                toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+                            }
+                        }, onActivate: async () => {
+                            try {
+                                await api.fixStutter();
+                                setTimeout(refresh, 1500);
+                            }
+                            catch { /* ignore */ }
+                        }, style: {
+                            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+                            background: COLORS.accent, color: "#fff",
+                        }, children: "\u4E00\u952E\u6297\u5361\u987F" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                            try {
+                                const r = await api.diagnoseStutter();
+                                const lines = [];
+                                if (r.too_slow?.count > 0) {
+                                    lines.push(`PipeWire 报告 ${r.too_slow.count} 次 client too slow（带宽不足）`);
+                                }
+                                else if (r.too_slow?.checked) {
+                                    lines.push("PipeWire 日志里没有 client too slow");
+                                }
+                                if (r.codec)
+                                    lines.push(`当前编码器：${r.codec}`);
+                                if (r.wifi?.advice)
+                                    lines.push(r.wifi.advice);
+                                toaster.toast({
+                                    title: "卡顿诊断",
+                                    body: lines.join("；").slice(0, 300) || "未发现明显问题",
+                                });
+                            }
+                            catch (e) {
+                                toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+                            }
+                        }, onActivate: async () => {
+                            try {
+                                await api.diagnoseStutter();
+                            }
+                            catch { /* ignore */ }
+                        }, style: {
+                            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+                            background: "rgba(255,255,255,0.08)", color: COLORS.text,
+                        }, children: "\u8BCA\u65AD\u5361\u987F" })] }), SP_JSX.jsx(Hint, { children: "\u300C\u4E00\u952E\u6297\u5361\u987F\u300D\u4F1A\u628A\u5EF6\u8FDF\u6863\u4F4D\u5207\u5230\u6297\u5361\u987F\uFF08\u52A0\u5927\u7F13\u51B2\uFF09\u5E76\u628A\u97F3\u91CF\u62C9\u5230 100%\u3002 \u5982\u679C\u5361\u987F\u662F Wi-Fi \u5E72\u6270\u5BFC\u81F4\u7684\uFF0C\u66F4\u5F7B\u5E95\u7684\u529E\u6CD5\u662F\u628A Wi-Fi \u5207\u5230 5GHz\u3002" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u7126\u70B9" }), SP_JSX.jsx(Hint, { children: "\u51B3\u5B9A\u300C\u624B\u673A\u63A8\u6D41\u300D\u548C\u300CDeck \u6E38\u620F\u58F0\u97F3\u300D\u600E\u4E48\u5171\u5B58\u3002\u4E0D\u4F1A\u6539\u5199\u4F60\u7684\u7CFB\u7EDF\u9ED8\u8BA4\u8F93\u51FA\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
                     ["coexist", "与游戏共存", "两者都出声，互不抢占（推荐）"],
                     ["receiver_first", "接收端优先", "优先保证手机推流音质，关闭自动切通话模式"],
                     ["manual", "手动", "插件不插手，完全自己用系统音量面板调"],

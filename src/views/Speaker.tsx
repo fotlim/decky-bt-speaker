@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
 } from "@decky/ui";
@@ -13,18 +13,23 @@ export function Speaker() {
   const { state, error } = useSpeaker();
   const [busy, setBusy] = useState(false);
   const [vol, setVol] = useState<number | null>(null);
+  // 拖动中标记：拖动期间完全用本地值，防止轮询把滑块拽回去
+  const [dragging, setDragging] = useState(false);
+  const dragTimer = useRef<any>(null);
 
-  // 拖动后 1.2s 内用自己的值，之后交还给后端轮询（避免轮询把滑块拽回去）
   const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
+
+  // 松手后 3 秒内仍用本地值，给后端足够时间回传真实值
+  // （后端写 wpctl 是异步的，轮询可能早一步读到旧值）
   useEffect(() => {
-    if (vol === null) return;
-    const t = setTimeout(() => setVol(null), 1200);
+    if (vol === null || dragging) return;
+    const t = setTimeout(() => setVol(null), 3000);
     return () => clearTimeout(t);
-  }, [vol]);
+  }, [vol, dragging]);
 
   const ad = state?.adapter;
   const connected = state?.connected || [];
-  const showVol = vol === null ? backendVol : vol;
+  const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
 
   const act = async (fn: () => Promise<any>, okMsg?: string) => {
     if (busy) return;
@@ -45,6 +50,12 @@ export function Speaker() {
 
   const changeVolume = (v: number) => {
     setVol(v);
+    setDragging(true);
+    // 每次拖动都重置松手定时器
+    if (dragTimer.current) clearTimeout(dragTimer.current);
+    dragTimer.current = setTimeout(() => {
+      setDragging(false);
+    }, 600);
     api.setVolume(v / 100).catch(() => {});
   };
 
@@ -202,28 +213,36 @@ export function Speaker() {
         </div>
       )}
 
-      {/* 音量 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, width: "100%" }}>
-        <Focusable onClick={toggleMute} onActivate={toggleMute} style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}>
-          {state?.volume.muted ? <FaVolumeMute size={13} /> : <FaVolumeUp size={13} />}
-        </Focusable>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <SliderField
-            value={showVol}
-            min={0}
-            max={150}
-            step={5}
-            showValue={false}
-            onChange={changeVolume}
-          />
+      {/* 音量：数值放滑杆上方，避开 SliderField 自带的底边框 */}
+      <div style={{ width: "100%", marginTop: 6 }}>
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          marginBottom: 2, padding: "0 2px",
+        }}>
+          <Focusable
+            onClick={toggleMute}
+            onActivate={toggleMute}
+            style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }}
+          >
+            {state?.volume.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
+            <span style={{ fontSize: 12 }}>音量</span>
+          </Focusable>
+          <span style={{
+            fontSize: 11.5,
+            color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
+            fontVariantNumeric: "tabular-nums",
+          }}>
+            {showVol}%{showVol > 100 ? " · 可能破音" : ""}
+          </span>
         </div>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: COLORS.dim, marginTop: -2 }}>
-        <span>0%</span>
-        <span style={{ color: showVol > 100 ? COLORS.accentWarm : COLORS.dim }}>
-          {showVol}%{showVol > 100 ? "（增益·可能破音）" : ""}
-        </span>
-        <span>150%</span>
+        <SliderField
+          value={showVol}
+          min={0}
+          max={150}
+          step={5}
+          showValue={false}
+          onChange={changeVolume}
+        />
       </div>
 
       {/* 声音太小？一键增益到 130%（安全范围内） */}

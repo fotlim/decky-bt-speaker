@@ -459,6 +459,142 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         >重启 agent</Focusable>
       </div>
 
+      <SectionTitle>音质（编码器）</SectionTitle>
+      <Hint>
+        蓝牙音质主要由编码器决定。<b style={{ color: COLORS.sub }}>SBC-XQ</b> 是普通 SBC 的高质量变体，
+        码率从 328 提到约 452 kbps，兼容性几乎无损失，是最划算的提升。
+      </Hint>
+      <Focusable flow-children="column" style={{ marginTop: 8 }}>
+        {(state.quality?.presets || []).map((p: any) => {
+          const active = (s.codec_preset || "balanced") === p.key;
+          return (
+            <Focusable
+              key={p.key}
+              onClick={async () => {
+                try {
+                  const r = await api.setCodecPreset(p.key);
+                  toaster.toast({
+                    title: `音质预设：${p.label}`,
+                    body: r.active_profile ? `当前编码器：${r.active_profile}` : "WirePlumber 已重启",
+                  });
+                  setTimeout(refresh, 1500);
+                } catch (e: any) {
+                  toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                }
+              }}
+              onActivate={async () => {
+                try { await api.setCodecPreset(p.key); setTimeout(refresh, 1500); } catch { /* ignore */ }
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
+                borderRadius: 10, cursor: "pointer",
+                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, color: COLORS.text }}>{p.label}</div>
+                <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 2 }}>{p.desc}</div>
+              </div>
+              <Pill>重采样 {p.resample}</Pill>
+            </Focusable>
+          );
+        })}
+      </Focusable>
+      <Hint>
+        当前实际编码器：<span style={{ color: COLORS.accent }}>
+          {state.quality?.active_profile || "未连接"}
+        </span>
+        <br />
+        改完编码器后，<b style={{ color: COLORS.sub }}>需要在手机上断开重连一次</b>才会重新协商。
+      </Hint>
+
+      <SectionTitle>卡顿 / 音质</SectionTitle>
+      {/* 2.4GHz 干扰是蓝牙卡顿的头号原因，直接显示出来 */}
+      {state.wifi && state.wifi.risk === "high" && (
+        <div style={{
+          margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9, fontSize: 12, lineHeight: 1.7,
+          background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+          color: "#ffb3b3", whiteSpace: "pre-wrap",
+        }}>
+          <b>⚠️ 检测到 2.4GHz Wi-Fi 干扰</b>
+          {"\n"}
+          {state.wifi.wifi_24g.map((w: any) =>
+            `${w.ssid || w.interface}（信道 ${w.channel}，${w.freq_mhz} MHz）`).join("、")}
+          {"\n"}
+          蓝牙与 2.4GHz Wi-Fi 共用同一个射频，这是音频卡顿的头号原因。
+          <b>把 Wi-Fi 切到 5GHz 通常能立刻解决。</b>
+        </div>
+      )}
+      {state.wifi && state.wifi.risk === "none" && (
+        <Hint>
+          Wi-Fi 在 5GHz 或未连接，与蓝牙不冲突。
+        </Hint>
+      )}
+
+      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <Focusable
+          onClick={async () => {
+            try {
+              const r = await api.fixStutter();
+              toaster.toast({
+                title: "已应用抗卡顿设置",
+                body: (r.applied || []).join("、"),
+              });
+              setTimeout(refresh, 1500);
+            } catch (e: any) {
+              toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+            }
+          }}
+          onActivate={async () => {
+            try { await api.fixStutter(); setTimeout(refresh, 1500); } catch { /* ignore */ }
+          }}
+          style={{
+            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+            background: COLORS.accent, color: "#fff",
+          }}
+        >一键抗卡顿</Focusable>
+        <Focusable
+          onClick={async () => {
+            try {
+              const r = await api.diagnoseStutter();
+              const lines = [];
+              if (r.too_slow?.count > 0) {
+                lines.push(`PipeWire 报告 ${r.too_slow.count} 次 client too slow（带宽不足）`);
+              } else if (r.too_slow?.checked) {
+                lines.push("PipeWire 日志里没有 client too slow");
+              }
+              if (r.codec) lines.push(`当前编码器：${r.codec}`);
+              if (r.wifi?.advice) lines.push(r.wifi.advice);
+              toaster.toast({
+                title: "卡顿诊断",
+                body: lines.join("；").slice(0, 300) || "未发现明显问题",
+              });
+            } catch (e: any) {
+              toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+            }
+          }}
+          onActivate={async () => {
+            try { await api.diagnoseStutter(); } catch { /* ignore */ }
+          }}
+          style={{
+            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+            background: "rgba(255,255,255,0.08)", color: COLORS.text,
+          }}
+        >诊断卡顿</Focusable>
+      </Focusable>
+      <Hint>
+        「一键抗卡顿」会把延迟档位切到抗卡顿（加大缓冲）并把音量拉到 100%。
+        如果卡顿是 Wi-Fi 干扰导致的，更彻底的办法是把 Wi-Fi 切到 5GHz。
+      </Hint>
+
       <SectionTitle>音频焦点</SectionTitle>
       <Hint>决定「手机推流」和「Deck 游戏声音」怎么共存。不会改写你的系统默认输出。</Hint>
       <Focusable flow-children="column" style={{ marginTop: 8 }}>

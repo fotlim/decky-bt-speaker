@@ -80,6 +80,20 @@ except Exception:
     metadata = None
     _META_IMPORT_ERR = traceback.format_exc()
 
+try:
+    import wifi  # type: ignore
+    _WIFI_IMPORT_ERR = None
+except Exception:
+    wifi = None
+    _WIFI_IMPORT_ERR = traceback.format_exc()
+
+try:
+    import quality  # type: ignore
+    _QUALITY_IMPORT_ERR = None
+except Exception:
+    quality = None
+    _QUALITY_IMPORT_ERR = traceback.format_exc()
+
 DEFAULT_SETTINGS = {
     "auto_start": True,        # 插件加载时自动进入「可被发现」
     "discoverable": True,      # 期望的可被发现状态（用于保活）
@@ -93,9 +107,14 @@ DEFAULT_SETTINGS = {
     "latency_profile": "balanced",  # 延迟档位：low / balanced / stable
     "multi_output": False,     # 多输出同步（combine-stream）
     "auto_gain": True,         # 外部源音量偏低时自动拉满
+    "codec_preset": "balanced",  # 音质预设：balanced / quality / stable
 }
 
 _ERR = "__bt_error__"
+
+# 用户手动调音量后的「保护期」（秒）。
+# 这段时间内自动增益不干预，避免滑杆刚拖动就被拽回去。
+MANUAL_GRACE = 90
 
 
 def _safe(fn):
@@ -132,7 +151,9 @@ class Plugin:
     eqcfg = None
     outcfg = None
     meta = None
+    qcfg = None
     _keep_task = None
+    _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
     # ------------------------------------------------------------------
@@ -214,6 +235,7 @@ class Plugin:
         self.eqcfg = eq.EqConfig(self._log) if eq is not None else None
         self.outcfg = output.CombineConfig(self._log) if output is not None else None
         self.meta = metadata.Metadata(self._log) if metadata is not None else None
+        self.qcfg = quality.QualityConfig(self._log) if quality is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -527,6 +549,13 @@ class Plugin:
             },
             "silence": (self.guard.status() if self.guard is not None else None),
             "normalize": (self.norm.status() if self.norm is not None else None),
+            "wifi": (await wifi.detect() if wifi is not None else None),
+            "quality": {
+                "preset": self.settings.get("codec_preset", "balanced"),
+                "presets": (quality.codec_list() if quality is not None else []),
+                "installed": (quality.QualityConfig.installed() if quality is not None else False),
+                "active_profile": codec.get("profile", "") if codec else "",
+            },
             "eq": {
                 "installed": (eq.EqConfig.installed() if eq is not None else False),
                 "preset": self.settings.get("eq_preset", "flat"),
@@ -700,8 +729,10 @@ class Plugin:
 
     @_safe
     async def set_volume(self, value):
+        # 记录手动调节时间，自动增益在保护期内不再覆盖
+        self._last_manual_volume = time.time()
         await self.wp.set_volume(value)
-        return {"ok": True, "volume": max(0.0, min(1.5, float(value)))}
+        return {"ok": True, "volume": max(0.0, min(bt.MAX_GAIN, float(value)))}
 
     @_safe
     async def set_mute(self, muted):
@@ -711,8 +742,9 @@ class Plugin:
     @_safe
     async def set_source_volume(self, node_id, value):
         """给外部蓝牙源节点单独调音量（不影响游戏声音）。"""
+        self._last_manual_volume = time.time()
         await self.wp.set_volume_of(node_id, value)
-        return {"ok": True, "volume": max(0.0, min(1.5, float(value)))}
+        return {"ok": True, "volume": max(0.0, min(bt.MAX_GAIN, float(value)))}
 
     @_safe
     async def set_source_mute(self, node_id, muted):
@@ -784,24 +816,150 @@ class Plugin:
 
     @_safe
     async def set_auto_gain(self, enabled):
-        """自动增益：外部源音量低于阈值时自动拉高（每次 status 轮询时检查）。"""
+        """自动增益：音量低于阈值时自动拉高（每次 status 轮询时检查）。"""
         self.settings["auto_gain"] = bool(enabled)
         self._save_settings()
         return {"ok": True, "enabled": bool(enabled)}
 
+    # ------------------------------------------------------------------
+    # RPC：卡顿诊断与一键抗卡顿
+    # ------------------------------------------------------------------
+    @_safe
+    async def diagnose_stutter(self):
+        """诊断卡顿：查 Wi-Fi 频段 + PipeWire 的 client too slow。"""
+        result = {
+            "wifi": (await wifi.detect() if wifi is not None else None),
+            "too_slow": (await wifi.check_too_slow() if wifi is not None else None),
+            "latency_profile": self.settings.get("latency_profile", "balanced"),
+            "codec": "",
+        }
+        if self.foc is not None:
+            try:
+                result["codec"] = await self.foc.get_active_profile()
+            except Exception:
+                pass
+        return result
+
+    @_safe
+    async def fix_stutter(self):
+        """一键抗卡顿：切到「抗卡顿」档位 + 拉满音量。
+
+        针对 2.4GHz 干扰导致的 client too slow：
+        - 加大 PipeWire 缓冲（抗卡顿档位）
+        - 音量拉到 100%（避免用户以为「卡顿=没声音」）
+        """
+        if output is None:
+            raise bt.BtError("output 模块未加载")
+        applied = []
+
+        # 1. 抗卡顿延迟档位
+        self.outcfg.apply_latency("stable")
+        self.settings["latency_profile"] = "stable"
+        self._save_settings()
+        applied.append("延迟档位 -> 抗卡顿（缓冲加大）")
+
+        # 2. 音量拉满
+        try:
+            await self.wp.set_volume(1.0)
+            applied.append("总音量 -> 100%")
+        except Exception as e:  # noqa: BLE001
+            self._log("抗卡顿：设置音量失败 %s" % e)
+
+        # 3. 生效
+        await self.wpcfg.restart()
+        applied.append("WirePlumber 已重启")
+
+        self._log("一键抗卡顿：%s" % "、".join(applied))
+        return {"ok": True, "applied": applied}
+
+    # ------------------------------------------------------------------
+    # RPC：音质优化
+    # ------------------------------------------------------------------
+    @_safe
+    async def set_codec_preset(self, preset):
+        """切换编码器 / 重采样质量预设。
+
+        这是音质提升最直接的手段：
+        - SBC-XQ 相比普通 SBC 码率从 328 提到 452 kbps，听感明显更好
+        - resample.quality 提到 10 能改善 44.1→48 的重采样劣化
+        """
+        if quality is None:
+            raise bt.BtError("quality 模块未加载")
+        if preset not in quality.CODEC_PRESETS:
+            raise bt.BtError("未知音质预设：%s" % preset)
+
+        self.qcfg.apply(preset)
+        self.settings["codec_preset"] = preset
+        self._save_settings()
+        await self.wpcfg.restart()
+
+        info = await quality.read_card_info()
+        return {
+            "ok": True,
+            "preset": preset,
+            "label": quality.CODEC_PRESETS[preset]["label"],
+            "active_profile": info.get("active"),
+            "available": info.get("available", []),
+        }
+
+    @_safe
+    async def remove_quality(self):
+        """移除音质优化配置，恢复系统默认。"""
+        if quality is None:
+            raise bt.BtError("quality 模块未加载")
+        self.qcfg.remove()
+        self.settings["codec_preset"] = ""
+        self._save_settings()
+        await self.wpcfg.restart()
+        return {"ok": True, "installed": False}
+
+    @_safe
+    async def get_codec_info(self):
+        """读取当前实际生效的编码器与可用列表。"""
+        if quality is None:
+            raise bt.BtError("quality 模块未加载")
+        info = await quality.read_card_info()
+        summary = quality.parse_active_profile(info.get("raw", ""))
+        return {
+            "active_profile": info.get("active", ""),
+            "available": info.get("available", []),
+            "summary": quality.codec_list(),
+        }
+
     async def _apply_auto_gain(self, source_id, current_volume):
-        """如果开着自动增益且外部源偏轻，就拉高。"""
+        """自动增益：音量偏轻时拉高。
+
+        ⚠️ 关键约束：**用户手动调过音量后就不再自动覆盖**。
+        早期版本每 4 秒轮询都强行拉满，导致滑杆刚拖动就被拽回去
+        （真机反馈「音量条和实际音量不同步」就是这么来的）。
+
+        做法：记录用户最后一次手动调节的时间戳，`MANUAL_GRACE` 秒内不自动干预；
+        并且只在「从没手动调过」或「确实偏轻且用户没在调」时才动作。
+        """
         if not self.settings.get("auto_gain", False):
             return
-        if source_id is None or current_volume is None:
+
+        # 用户刚手动调过 -> 尊重用户选择
+        if (time.time() - self._last_manual_volume) < MANUAL_GRACE:
             return
-        if current_volume >= bt.LOW_VOLUME_THRESHOLD:
-            return
+
+        # 1. 外部源
+        if source_id is not None and current_volume is not None:
+            if current_volume < bt.LOW_VOLUME_THRESHOLD:
+                try:
+                    await self.wp.set_volume_of(source_id, 1.0)
+                    self._log("自动增益：外部源 %.0f%% -> 100%%" % (current_volume * 100))
+                except Exception as e:  # noqa: BLE001
+                    self._log("自动增益（外部源）失败：%s" % e)
+
+        # 2. 默认 sink
         try:
-            await self.wp.set_volume_of(source_id, 1.0)
-            self._log("自动增益：外部源 %.0f%% -> 100%%" % (current_volume * 100))
+            cur = await self.wp.get_volume()
+            if cur["volume"] < bt.LOW_VOLUME_THRESHOLD and not cur["muted"]:
+                await self.wp.set_volume(1.0)
+                self._log("自动增益：总音量 %.0f%% -> 100%%" % (cur["volume"] * 100))
         except Exception as e:  # noqa: BLE001
-            self._log("自动增益失败：%s" % e)
+            self._log("自动增益（总音量）失败：%s" % e)
 
     # ------------------------------------------------------------------
     # RPC：音频焦点

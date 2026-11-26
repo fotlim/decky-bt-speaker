@@ -1,0 +1,201 @@
+"""
+音质优化：编码器协商、重采样质量、采样率。
+
+蓝牙 A2DP 接收端的音质由三层决定，本模块管前两层（第三层是 EQ，在 eq.py）：
+
+**第 1 层：编码器**（影响最大）
+- SBC：强制基线，码率约 328 kbps，音质一般
+- **SBC-XQ**：SBC 的高质量变体，码率 ~452 kbps，**音质明显好于 SBC**，
+  且几乎所有设备都兼容（因为仍是 SBC 家族）—— 这是最划算的提升
+- AAC：手机端支持好，码率 ~256 kbps，但 Linux 端解码质量有争议
+- LDAC / aptX HD：高码率，但需要对方支持，且链路差时反而卡顿
+
+**第 2 层：重采样质量**（容易被忽略）
+PipeWire 的 `resample.quality` 默认值在不同版本差异很大：
+- 1.4 及更早：默认 4（较低，44.1k↔48k 转换会有可闻劣化）
+- 1.6+：默认提到 7
+蓝牙 A2DP 通常协商到 48kHz，而手机音源多是 44.1kHz，
+**几乎必然发生 44.1→48 的重采样**，所以这个参数直接影响听感。
+
+本模块把 `resample.quality` 提到 10（音质与 CPU 的平衡点；
+10 与 15 听感差异极小但 CPU 翻倍，见 ArchWiki）。
+
+**第 3 层：EQ**（见 eq.py，可选）
+"""
+
+import os
+import re
+
+from bt import BtError, run_cmd, which
+
+QUALITY_CONF_NAME = "55-bt-speaker-quality.conf"
+
+# 编码器预设。
+# `codecs` 是要在 bluez5.codecs 里启用的列表（按优先级从高到低）。
+CODEC_PRESETS = {
+    "balanced": {
+        "label": "均衡（推荐）",
+        "desc": "SBC-XQ + AAC，音质与兼容性兼顾",
+        "codecs": ["sbc_xq", "aac", "sbc"],
+        "resample": 10,
+    },
+    "quality": {
+        "label": "音质优先",
+        "desc": "优先高码率编码器（LDAC / aptX HD / AAC），链路差时可能卡顿",
+        "codecs": ["ldac", "aptx_hd", "aac", "sbc_xq", "sbc"],
+        "resample": 15,
+    },
+    "stable": {
+        "label": "稳定优先",
+        "desc": "只用 SBC，码率低抗干扰强，音质一般",
+        "codecs": ["sbc"],
+        "resample": 10,
+    },
+}
+
+DEFAULT_CODEC = "balanced"
+
+
+def codec_list():
+    return [
+        {"key": k, "label": v["label"], "desc": v["desc"], "resample": v["resample"]}
+        for k, v in CODEC_PRESETS.items()
+    ]
+
+
+def build_quality_conf(preset_key):
+    """生成编码器 + 重采样质量的 WirePlumber / PipeWire 配置。
+
+    注意分两段写：
+    - `monitor.bluez.properties` 是 WirePlumber 的蓝牙监控配置
+    - `wireplumber.settings` 里的 resample 由 PipeWire 读取
+    """
+    resolved = preset_key if preset_key in CODEC_PRESETS else DEFAULT_CODEC
+    p = CODEC_PRESETS[resolved]
+    codecs = " ".join(p["codecs"])
+    return """# 由「蓝牙音箱」Decky 插件生成 —— 音质优化
+# 位置：~/.config/wireplumber/wireplumber.conf.d/{name}
+# 预设：{resolved}（{label}）
+# 删除本文件并重启 WirePlumber 即可恢复默认。
+
+monitor.bluez.properties = {{
+  # 编码器优先级：列表里靠前的优先协商
+  bluez5.codecs = [ {codecs} ]
+  # SBC-XQ：SBC 的高质量变体，码率约 452 kbps，兼容性几乎无损失
+  bluez5.enable-sbc-xq = true
+  # 硬件音量：接收端也启用，音量调节更细腻
+  bluez5.hw-volume = [ a2dp_sink a2dp_source ]
+}}
+
+# 重采样质量。
+# 蓝牙通常协商 48kHz，而手机音源多为 44.1kHz，几乎必然重采样。
+# PipeWire 1.4 默认 4（偏低，44.1↔48 会有可闻劣化），1.6 提到 7。
+# 这里用 {resample}：10 是音质与 CPU 的平衡点（10 与 15 听感差异极小但 CPU 翻倍）。
+context.properties = {{
+  default.clock.rate = 48000
+  resample.quality = {resample}
+}}
+""".format(
+        name=QUALITY_CONF_NAME,
+        resolved=resolved,
+        label=p["label"],
+        codecs=codecs,
+        resample=p["resample"],
+    )
+
+
+class QualityConfig:
+    """管理音质优化配置。"""
+
+    def __init__(self, log=None):
+        self._log = log or (lambda *_: None)
+
+    @staticmethod
+    def _cfg_base():
+        return os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+
+    @classmethod
+    def conf_path(cls):
+        return os.path.join(cls._cfg_base(), "wireplumber", "wireplumber.conf.d", QUALITY_CONF_NAME)
+
+    @classmethod
+    def installed(cls):
+        try:
+            return os.path.isfile(cls.conf_path())
+        except Exception:
+            return False
+
+    def apply(self, preset_key):
+        path = self.conf_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(build_quality_conf(preset_key))
+            os.replace(tmp, path)
+        except Exception as e:  # noqa: BLE001
+            raise BtError("写入音质配置失败：%s" % e)
+        self._log("已写入音质配置（%s）：%s" % (preset_key, path))
+        return path
+
+    def remove(self):
+        path = self.conf_path()
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                self._log("已删除音质配置：%s" % path)
+        except Exception as e:  # noqa: BLE001
+            raise BtError("删除音质配置失败：%s" % e)
+        return True
+
+    def current(self):
+        path = self.conf_path()
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception:
+            return None
+        m = re.search(r"预设：(\w+)", text)
+        return m.group(1) if m and m.group(1) in CODEC_PRESETS else None
+
+
+# ---------------------------------------------------------------------------
+# 读取实际生效的编码器
+# ---------------------------------------------------------------------------
+def parse_active_profile(pactl_cards_text):
+    """从 `pactl list cards` 输出里取 Active Profile。"""
+    if not pactl_cards_text:
+        return ""
+    m = re.search(r"Active Profile:\s*(\S+)", pactl_cards_text)
+    return m.group(1) if m else ""
+
+
+def parse_codec_capabilities(pactl_cards_text):
+    """提取蓝牙卡支持的编码器 profile 列表（用于告诉用户「能选什么」）。"""
+    if not pactl_cards_text:
+        return []
+    out = []
+    for m in re.finditer(r"(a2dp-sink-[\w-]+|a2dp-source-[\w-]+)", pactl_cards_text):
+        name = m.group(1)
+        if name not in out:
+            out.append(name)
+    return out
+
+
+async def read_card_info():
+    """读取蓝牙卡的 profile 信息。"""
+    if not which("pactl"):
+        return {"active": "", "available": [], "raw": ""}
+    try:
+        rc, out = await run_cmd(["pactl", "list", "cards"], timeout=10.0)
+    except BtError:
+        return {"active": "", "available": [], "raw": ""}
+    if rc != 0:
+        return {"active": "", "available": [], "raw": ""}
+    return {
+        "active": parse_active_profile(out),
+        "available": parse_codec_capabilities(out),
+        "raw": out,
+    }

@@ -154,6 +154,37 @@ export interface RfkillInfo {
   found: boolean;
 }
 
+export interface WifiInterface {
+  interface: string;
+  ssid: string;
+  channel: number | null;
+  freq_mhz: number | null;
+  width: string;
+}
+
+export interface WifiInfo {
+  available: boolean;
+  risk: "none" | "high" | "unknown";
+  advice: string;
+  wifi_24g: WifiInterface[];
+  wifi_5g: WifiInterface[];
+  interfaces: WifiInterface[];
+}
+
+export interface CodecPreset {
+  key: string;
+  label: string;
+  desc: string;
+  resample: number;
+}
+
+export interface QualityInfo {
+  preset: string;
+  presets: CodecPreset[];
+  installed: boolean;
+  active_profile: string;
+}
+
 export interface SpeakerStatus {
   ok: boolean;
   error: string | null;
@@ -168,6 +199,8 @@ export interface SpeakerStatus {
   focus: FocusInfo;
   silence: SilenceInfo | null;
   normalize: NormalizeInfo | null;
+  wifi: WifiInfo | null;
+  quality: QualityInfo;
   eq: EqInfo;
   output: OutputInfo;
   connected: BtDevice[];

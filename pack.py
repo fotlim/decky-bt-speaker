@@ -1,4 +1,4 @@
-"""
+﻿"""
 把插件打包成 Decky 可安装的 zip。
 
 Decky 要求：zip 里恰好有一个 depth==1 的 plugin.json，即
@@ -44,6 +44,8 @@ INCLUDE_FILES = [
     "eq.py",
     "output.py",
     "metadata.py",
+    "wifi.py",
+    "quality.py",
     "dist/index.js",
     "README.md",
     "CHANGELOG.md",

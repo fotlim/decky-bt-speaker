@@ -556,6 +556,107 @@ def test_metadata():
     check("None -> 0:00", metadata._fmt_ms(None) == "0:00")
 
 
+def test_quality():
+    print("音质 / 编码器")
+    import quality
+    import tempfile
+
+    check("有 3 个音质预设", len(quality.CODEC_PRESETS) == 3)
+    check("默认 balanced", quality.DEFAULT_CODEC == "balanced")
+    ql = quality.codec_list()
+    check("codec_list 3 条", len(ql) == 3)
+    check("每条有 resample", all("resample" in x for x in ql))
+
+    # balanced 必须包含 sbc_xq（音质提升的关键）
+    check("balanced 含 sbc_xq", "sbc_xq" in quality.CODEC_PRESETS["balanced"]["codecs"])
+    # stable 只应有 sbc
+    check("stable 只有 sbc", quality.CODEC_PRESETS["stable"]["codecs"] == ["sbc"])
+    # quality 应优先 ldac
+    check("quality 首选 ldac", quality.CODEC_PRESETS["quality"]["codecs"][0] == "ldac")
+
+    conf = quality.build_quality_conf("balanced")
+    check("配置含 bluez5.codecs", "bluez5.codecs" in conf)
+    check("配置含 enable-sbc-xq", "bluez5.enable-sbc-xq = true" in conf)
+    check("配置含 resample.quality", "resample.quality = 10" in conf)
+    check("配置含 hw-volume", "bluez5.hw-volume" in conf)
+    check("占位符已替换", "{name}" not in conf and "{codecs}" not in conf)
+    check("预设名写进注释", "预设：balanced" in conf)
+
+    qconf = quality.build_quality_conf("quality")
+    check("quality 预设重采样 15", "resample.quality = 15" in qconf)
+    check("未知预设回退 balanced", "预设：balanced" in quality.build_quality_conf("xxx"))
+
+    # pactl 解析
+    pactl_out = """Card #2
+	Name: bluez_card.AA_BB_CC_DD_EE_FF
+	Profiles:
+		a2dp-sink-sbc: High Fidelity Playback (A2DP Sink, codec SBC)
+		a2dp-sink-sbc_xq: High Fidelity Playback (A2DP Sink, codec SBC-XQ)
+		a2dp-sink-aac: High Fidelity Playback (A2DP Sink, codec AAC)
+		off: Off
+	Active Profile: a2dp-sink-sbc_xq
+"""
+    check("解析 Active Profile", quality.parse_active_profile(pactl_out) == "a2dp-sink-sbc_xq")
+    avail = quality.parse_codec_capabilities(pactl_out)
+    check("解析出 3 个编码器", len(avail) == 3, str(avail))
+    check("含 sbc_xq", "a2dp-sink-sbc_xq" in avail)
+    check("空输入返回空", quality.parse_active_profile("") == "")
+    check("None 返回空", quality.parse_codec_capabilities(None) == [])
+
+    # 配置生命周期
+    old = os.environ.get("XDG_CONFIG_HOME")
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["XDG_CONFIG_HOME"] = td
+        try:
+            cfg = quality.QualityConfig()
+            path = cfg.apply("quality")
+            check("音质配置已写入", os.path.isfile(path))
+            check("installed() 为真", quality.QualityConfig.installed())
+            check("current() 反推出 quality", cfg.current() == "quality")
+            cfg.remove()
+            check("删除后 installed() 为假", not quality.QualityConfig.installed())
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
+
+
+def test_wifi():
+    print("Wi-Fi 干扰检测")
+    import wifi
+
+    iw_out = """phy#0
+	Interface wlan0
+		ifindex 3
+		ssid MyWiFi
+		type managed
+		channel 11 (2462 MHz), width: 20 MHz, center1: 2462 MHz
+"""
+    ifaces = wifi.parse_iw_dev(iw_out)
+    check("解析出 1 个接口", len(ifaces) == 1, str(ifaces))
+    check("SSID 正确", ifaces[0]["ssid"] == "MyWiFi")
+    check("信道 11", ifaces[0]["channel"] == 11)
+    check("频率 2462", ifaces[0]["freq_mhz"] == 2462)
+
+    r = wifi.analyze(ifaces)
+    check("2.4G 判定为 high risk", r["risk"] == "high")
+    check("识别为 2.4G", len(r["wifi_24g"]) == 1)
+    check("建议含 5GHz", "5GHz" in r["advice"])
+
+    iw_5g = """phy#0
+	Interface wlan0
+		ssid MyWiFi5G
+		channel 149 (5745 MHz), width: 80 MHz
+"""
+    r5 = wifi.analyze(wifi.parse_iw_dev(iw_5g))
+    check("5G 判定为 none", r5["risk"] == "none")
+    check("5G 识别正确", len(r5["wifi_5g"]) == 1)
+
+    check("空输入不崩", wifi.parse_iw_dev("") == [])
+    check("None 不崩", wifi.analyze([])["risk"] == "none")
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -590,7 +691,7 @@ if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
-               test_output, test_metadata, test_power_parse):
+               test_output, test_metadata, test_quality, test_wifi, test_power_parse):
         fn()
     print()
     if FAILED:
