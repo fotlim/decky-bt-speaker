@@ -75,6 +75,21 @@ export interface LiveSource {
   name: string;
   volume: number;
   muted: boolean;
+  norm?: { jumped: boolean; baseline: number | null; delta: number };
+}
+
+export interface SilenceInfo {
+  enabled: boolean;
+  timeout: number;
+  idle_sec: number;
+  was_active: boolean;
+  remaining: number | null;
+}
+
+export interface NormalizeInfo {
+  baseline: number | null;
+  last: number | null;
+  jumps: number;
 }
 
 export interface SpeakerStatus {
@@ -86,6 +101,8 @@ export interface SpeakerStatus {
   live: LiveSource | null;
   codec: CodecInfo;
   focus: FocusInfo;
+  silence: SilenceInfo | null;
+  normalize: NormalizeInfo | null;
   connected: BtDevice[];
   paired: BtDevice[];
   agent: boolean;

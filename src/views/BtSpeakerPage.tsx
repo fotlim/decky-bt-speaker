@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Focusable } from "@decky/ui";
+import { Focusable, SliderField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../backend";
 import { useSpeaker } from "../store";
@@ -189,6 +189,15 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     }
   };
 
+  const setSilence = async (sec: number) => {
+    try {
+      await api.setSilenceTimeout(sec);
+      refresh();
+    } catch (e: any) {
+      toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+    }
+  };
+
   const applyAlias = async () => {
     const v = alias.trim();
     if (!v || busy) return;
@@ -289,6 +298,64 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             </Focusable>
           );
         })}
+      </Focusable>
+
+      <SectionTitle>省电</SectionTitle>
+      <Hint>手机放完歌常忘了断开，A2DP 链路会一直占着蓝牙射频。这里可以自动收尾。</Hint>
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 13.5, color: COLORS.text, marginBottom: 6 }}>
+          静音多久后自动断开
+          {state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
+            ? `（还有 ${state.silence.remaining} 秒）`
+            : ""}
+        </div>
+        <SliderField
+          value={s.silence_disconnect ?? 0}
+          min={0}
+          max={600}
+          step={30}
+          showValue={false}
+          onChange={(v) => { setSilence(v); }}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }}>
+          <span>关闭</span><span>5 分钟</span><span>10 分钟</span>
+        </div>
+      </div>
+
+      <SectionTitle>音量归一化</SectionTitle>
+      <Hint>
+        手机切歌时音量忽大忽小很常见。这里记录一个基线，跳变超过 25% 会提示。
+        当前基线：{state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : "未设置"}
+        {state.normalize?.jumps ? ` · 已检测到 ${state.normalize.jumps} 次跳变` : ""}
+      </Hint>
+      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <Focusable
+          onClick={async () => {
+            try {
+              await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
+              toaster.toast({ title: "已把当前音量设为基线", body: "" });
+              refresh();
+            } catch (e: any) {
+              toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+            }
+          }}
+          onActivate={async () => {
+            try {
+              await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
+              refresh();
+            } catch { /* ignore */ }
+          }}
+          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}
+        >以当前音量为准</Focusable>
+        <Focusable
+          onClick={async () => {
+            try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
+          }}
+          onActivate={async () => {
+            try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
+          }}
+          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }}
+        >重置</Focusable>
       </Focusable>
 
       <SectionTitle>编码器</SectionTitle>
