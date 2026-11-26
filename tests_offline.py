@@ -217,9 +217,39 @@ def test_wp_config():
                 os.environ["XDG_CONFIG_HOME"] = old
 
 
+def test_power_parse():
+    print("睡眠信号解析")
+    import power
+
+    # busctl 输出（跨行）
+    busctl_sleep = (
+        "\u2023 Type=signal Interface=org.freedesktop.login1.Manager "
+        "Member=PrepareForSleep Path=/org/freedesktop/login1 "
+        "Signature=b STRING \"\" BOOLEAN true;"
+    )
+    check("busctl 睡眠=true", power.SleepWatcher.parse_sleep_state(busctl_sleep) is True)
+    busctl_wake = busctl_sleep.replace("BOOLEAN true", "BOOLEAN false")
+    check("busctl 唤醒=false", power.SleepWatcher.parse_sleep_state(busctl_wake) is False)
+
+    # gdbus 输出
+    gdbus_sleep = "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (true,)"
+    check("gdbus 睡眠=true", power.SleepWatcher.parse_sleep_state(gdbus_sleep) is True)
+    gdbus_wake = gdbus_sleep.replace("(true,)", "(false,)")
+    check("gdbus 唤醒=false", power.SleepWatcher.parse_sleep_state(gdbus_wake) is False)
+
+    # 非目标信号
+    check("无关信号返回 None", power.SleepWatcher.parse_sleep_state("Member=PropertiesChanged") is None)
+    check("空输入返回 None", power.SleepWatcher.parse_sleep_state("") is None)
+    check("None 输入", power.SleepWatcher.parse_sleep_state(None) is None)
+
+    # 只有 member 没有布尔值
+    check("缺布尔值返回 None",
+          power.SleepWatcher.parse_sleep_state("Member=PrepareForSleep") is None)
+
+
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
-               test_sink, test_adapter_flags, test_edge, test_wp_config):
+               test_sink, test_adapter_flags, test_edge, test_wp_config, test_power_parse):
         fn()
     print()
     if FAILED:

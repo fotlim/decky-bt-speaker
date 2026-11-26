@@ -22,8 +22,10 @@ INCLUDE_FILES = [
     "plugin.json",
     "main.py",
     "bt.py",
+    "power.py",
     "dist/index.js",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
 ]
 INCLUDE_DIRS: list[str] = ["docs"]
@@ -58,12 +60,24 @@ def main():
                     zf.write(src, "%s/%s" % (PLUGIN_DIR_NAME, relp))
                     count += 1
 
-    # 自检：必须恰好一个 depth==1 的 plugin.json
+    # 自检 1：必须恰好一个 depth==1 的 plugin.json
     with zipfile.ZipFile(OUT_ZIP) as zf:
         names = zf.namelist()
     roots = [n for n in names if n.count("/") == 1 and n.endswith("plugin.json")]
     if len(roots) != 1:
         print("自检失败：depth==1 的 plugin.json 数量 = %d" % len(roots))
+        return 1
+
+    # 自检 2：目录里所有 .py（除测试/打包脚本）都必须进包，防止新增模块漏打
+    packaged = set(n.split("/", 1)[1] for n in names if n.count("/") >= 1)
+    skip = {"pack.py", "tests_offline.py"}
+    missing_modules = []
+    for fn in os.listdir(ROOT):
+        if fn.endswith(".py") and fn not in skip and fn not in packaged:
+            missing_modules.append(fn)
+    if missing_modules:
+        print("自检失败：这些 Python 模块没打进包里：%s" % ", ".join(missing_modules))
+        print("请把它们加到 INCLUDE_FILES")
         return 1
 
     size = os.path.getsize(OUT_ZIP)
