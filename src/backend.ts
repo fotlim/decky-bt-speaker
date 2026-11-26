@@ -31,6 +31,11 @@ export const api = {
     call<[number], { ok: boolean; timeout: number; enabled: boolean }>("set_silence_timeout", sec),
   setVolumeBaseline: (v: number) => call<[number], { ok: boolean }>("set_volume_baseline", v),
   resetVolumeBaseline: () => call<[], { ok: boolean }>("reset_volume_baseline"),
+  setEqPreset: (preset: string) =>
+    call<[string], { ok: boolean; preset: string; label: string }>("set_eq_preset", preset),
+  removeEq: () => call<[], { ok: boolean; installed: boolean }>("remove_eq"),
+  importAutoeq: (text: string) =>
+    call<[string], { ok: boolean; bands: number; preamp: number; skipped: number }>("import_autoeq", text),
   setSetting: (key: string, value: any) =>
     call<[string, any], { ok: boolean }>("set_setting", key, value),
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),

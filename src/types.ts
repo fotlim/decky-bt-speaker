@@ -86,10 +86,24 @@ export interface SilenceInfo {
   remaining: number | null;
 }
 
+export interface EqPreset {
+  key: string;
+  label: string;
+  desc: string;
+  bands: number;
+}
+
 export interface NormalizeInfo {
   baseline: number | null;
   last: number | null;
   jumps: number;
+}
+
+export interface EqInfo {
+  installed: boolean;
+  preset: string;
+  presets: EqPreset[];
+  path: string;
 }
 
 export interface SpeakerStatus {
@@ -103,6 +117,7 @@ export interface SpeakerStatus {
   focus: FocusInfo;
   silence: SilenceInfo | null;
   normalize: NormalizeInfo | null;
+  eq: EqInfo;
   connected: BtDevice[];
   paired: BtDevice[];
   agent: boolean;
