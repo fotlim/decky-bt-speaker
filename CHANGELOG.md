@@ -4,6 +4,37 @@
 
 ---
 
+## [1.2.0] - 2026-11-26
+
+「谁在放歌」实时显示 + 外部音源独立音量控制。
+
+之前连上手机后 QAM 里一片空白——不知道谁在放、音量多大、能不能单独调。
+这个版本把这条链路补完了。
+
+### Added
+
+- **`nodes.py`**：PipeWire 节点图解析
+  - 从 `wpctl status` 解析出 Sinks / Sources / Streams / Devices / Clients 五节
+  - `find_bt_input()` 认出 `bluez_input.<MAC>` 节点（外部设备推流进 Deck）
+  - 正确跳过 Streams 里的端口子行（`61. output_FL > ...`）
+  - 正确处理 `wpctl status` 的 box-drawing 前缀（`│ ├ └ ─`）与默认节点 `*` 标记
+- **QAM「正在播放」卡片**：显示外部音源设备名 + 绿点脉冲 + 「外部音源」徽章
+- **外部音源独立音量**：`wpctl set-volume <节点id>` 单独调节，**不影响游戏声音**
+- **外部音源独立静音**：`set_source_mute`
+- 新增 RPC：`set_source_volume` / `set_source_mute`
+- `bt.py` 新增 `get_volume_of` / `set_volume_of` / `set_mute_of`（按节点 id 操作）
+
+### Fixed
+
+- **`pack.py` 漏包自检**：v1.1.0 漏打了 `power.py`，这次加的自检立刻抓到了 `nodes.py` 漏打
+- **`package.json` BOM**：PowerShell `Set-Content -Encoding UTF8` 会写入 BOM，导致 rollup 报 `Unexpected token '\ufeff'`
+
+### Tests
+
+- 新增 13 项节点解析自检（真实 `wpctl status` 格式，含 box-drawing 与端口子行）
+
+---
+
 ## [1.1.0] - 2026-11-26
 
 跨睡眠保活与自动重连 —— 掌机独有的场景，桌面软件不需要处理，因此没有现成方案可抄。

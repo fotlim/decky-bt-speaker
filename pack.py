@@ -23,6 +23,7 @@ INCLUDE_FILES = [
     "main.py",
     "bt.py",
     "power.py",
+    "nodes.py",
     "dist/index.js",
     "README.md",
     "CHANGELOG.md",

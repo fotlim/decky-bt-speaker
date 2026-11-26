@@ -1,0 +1,129 @@
+"""
+PipeWire 节点图解析：找出「谁在往 Deck 里放歌」并单独控制它的音量。
+
+为什么需要这个模块
+------------------
+v1.0.0 只能调 `@DEFAULT_AUDIO_SINK@`（总音量）。但手机通过 A2DP 推流进来时，
+PipeWire 里会出现一个独立的 `bluez_input.<MAC>` 节点 —— 它是一个 **source**
+（外部设备作为捕获源），WirePlumber 再把它接到本机 sink 播放。
+
+问题在于：手机推流常常偏响或偏轻，而总音量一调就影响游戏声音。
+所以要能**单独**给这个外部源调音量，就需要：
+1. 从 `wpctl status` 里认出哪个节点是蓝牙输入
+2. 拿到它的数字 id
+3. 用 `wpctl set-volume <id>` 单独调
+
+wpctl status 的结构（节选）
+--------------------------
+    PipeWire 'pipewire-0' [1.6.8, deck@steamdeck, cookie:123]
+     ├─ Clients:
+     │      31. WirePlumber
+     │
+     ├─ Devices:
+     │      44. Built-in Audio
+     │
+     ├─ Sinks:
+     │  *   48. Built-in Audio Speaker [vol: 0.65]
+     │
+     ├─ Sources:
+     │  *   49. Built-in Audio Microphone [vol: 1.00]
+     │      51. Pixel 8 [vol: 0.80]        <- 蓝牙输入（手机推流）
+     │
+     └─ Streams:
+            60. Spotify
+                 61. output_FL  >  ...
+"""
+
+import re
+
+# 节点 id + 名字，例如 "    51. Pixel 8 [vol: 0.80]"
+# 允许行首有 box-drawing 前缀（│ ├ └ ─ 等）与焦点标记 *
+_NODE_RE = re.compile(r"^\s*[\u2502\u251c\u2514\u2500\u250c\u2510\u252c\u2534\u253c*\s]*(\d+)\.\s+(.+?)\s*(?:\[vol:\s*([0-9.]+)\])?\s*$")
+# 分节标题，例如 " ├─ Sinks:"
+_SECTION_RE = re.compile(r"[\u2502\u251c\u2514\u2500\u250c\u2510\u252c\u2534\u253c\s]*([A-Za-z][A-Za-z ]*):\s*$")
+
+SECTION_KEYS = {
+    "Sinks": "sinks",
+    "Sources": "sources",
+    "Streams": "streams",
+    "Devices": "devices",
+    "Clients": "clients",
+}
+
+
+def parse_status(text):
+    """把 `wpctl status` 输出解析成 {sinks: [...], sources: [...], ...}。
+
+    每个节点是 dict：{id, name, volume, default}
+    """
+    out = {"sinks": [], "sources": [], "streams": [], "devices": [], "clients": []}
+    current = None
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        m = _SECTION_RE.match(line)
+        if m:
+            key = SECTION_KEYS.get(m.group(1).strip())
+            if key:
+                current = key
+                continue
+        if current is None:
+            continue
+        n = _NODE_RE.match(line)
+        if not n:
+            continue
+        # 默认节点在 wpctl status 里用行首的 "*" 标记（星号出现在数字 id 之前）
+        prefix = line[:line.rfind(n.group(1) + ".")] if (n.group(1) + ".") in line else ""
+        node = {
+            "default": "*" in prefix,
+            "id": int(n.group(1)),
+            "name": n.group(2).strip(),
+            "volume": float(n.group(3)) if n.group(3) else None,
+        }
+        # Streams 里的子行（"61. output_FL > ..."）也符合节点正则，
+        # 但它们没有 [vol:]，用 name 里是否含 ">" 排除掉
+        if current == "streams" and ">" in node["name"]:
+            continue
+        out[current].append(node)
+    return out
+
+
+def find_bt_input(status_text):
+    """找出蓝牙 A2DP 输入节点（外部设备推流进 Deck）。
+
+    判定依据（按可靠度排序）：
+    1. 节点名里带 `bluez_input`（PipeWire 的标准命名）
+    2. 节点名匹配一个设备别名且不是内置声卡（兜底）
+
+    返回 dict 或 None。
+    """
+    parsed = parse_status(status_text)
+    for node in parsed["sources"]:
+        if re.search(r"bluez_input", node["name"], re.I):
+            node["kind"] = "bluez"
+            return node
+    return None
+
+
+def find_bt_output(status_text):
+    """找出蓝牙输出节点（Deck 往耳机推流时出现）。"""
+    parsed = parse_status(status_text)
+    for node in parsed["sinks"]:
+        if re.search(r"bluez_output", node["name"], re.I):
+            node["kind"] = "bluez"
+            return node
+    return None
+
+
+def find_default_sink(status_text):
+    parsed = parse_status(status_text)
+    for node in parsed["sinks"]:
+        if node["default"]:
+            return node
+    return parsed["sinks"][0] if parsed["sinks"] else None
+
+
+def has_external_source(status_text):
+    """有没有外部设备正在往 Deck 推流。"""
+    return find_bt_input(status_text) is not None

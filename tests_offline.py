@@ -217,6 +217,64 @@ def test_wp_config():
                 os.environ["XDG_CONFIG_HOME"] = old
 
 
+WP_STATUS_WITH_BT = """PipeWire 'pipewire-0' [1.6.8, deck@steamdeck, cookie:1234]
+ \u251c\u2500 Clients:
+ \u2502      31. WirePlumber
+ \u2502
+ \u251c\u2500 Devices:
+ \u2502      44. Built-in Audio
+ \u2502      52. Pixel 8
+ \u2502
+ \u251c\u2500 Sinks:
+ \u2502  *   48. Built-in Audio Speaker [vol: 0.65]
+ \u2502
+ \u251c\u2500 Sources:
+ \u2502  *   49. Built-in Audio Microphone [vol: 1.00]
+ \u2502      51. bluez_input.AA_BB_CC_DD_EE_FF.0 [vol: 0.80]
+ \u2502
+ \u2514\u2500 Streams:
+        60. Spotify
+             61. output_FL  > Built-in Audio Speaker:playback_FL
+"""
+
+WP_STATUS_NO_BT = """PipeWire 'pipewire-0' [1.6.8, deck@steamdeck, cookie:1234]
+ \u251c\u2500 Sinks:
+ \u2502  *   48. Built-in Audio Speaker [vol: 0.65]
+ \u251c\u2500 Sources:
+ \u2502  *   49. Built-in Audio Microphone [vol: 1.00]
+"""
+
+
+def test_nodes_parse():
+    print("PipeWire 节点解析")
+    import nodes
+
+    p = nodes.parse_status(WP_STATUS_WITH_BT)
+    check("解析出 1 个 sink", len(p["sinks"]) == 1, str(p["sinks"]))
+    check("解析出 2 个 source", len(p["sources"]) == 2, str(len(p["sources"])))
+    check("默认 sink 标记正确", p["sinks"][0]["default"] is True)
+    check("sink 音量 0.65", abs(p["sinks"][0]["volume"] - 0.65) < 1e-6)
+    check("sink id = 48", p["sinks"][0]["id"] == 48)
+
+    bt = nodes.find_bt_input(WP_STATUS_WITH_BT)
+    check("找到蓝牙输入节点", bt is not None)
+    check("蓝牙节点 id = 51", bt and bt["id"] == 51, str(bt))
+    check("蓝牙节点音量 0.80", bt and abs(bt["volume"] - 0.80) < 1e-6)
+
+    check("无蓝牙时返回 None", nodes.find_bt_input(WP_STATUS_NO_BT) is None)
+    check("has_external_source 正确", nodes.has_external_source(WP_STATUS_WITH_BT) is True)
+    check("无外部源判定", nodes.has_external_source(WP_STATUS_NO_BT) is False)
+
+    # Streams 子行（带 > 的端口行）不该被当成节点
+    check("streams 不含端口子行", all(">" not in s["name"] for s in p["streams"]), str(p["streams"]))
+
+    d = nodes.find_default_sink(WP_STATUS_WITH_BT)
+    check("默认 sink 名字含 Speaker", d and "Speaker" in d["name"])
+
+    check("空输入不崩", nodes.parse_status("")["sinks"] == [])
+    check("None 不崩", nodes.parse_status(None)["sources"] == [])
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -249,7 +307,8 @@ def test_power_parse():
 
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
-               test_sink, test_adapter_flags, test_edge, test_wp_config, test_power_parse):
+               test_sink, test_adapter_flags, test_edge, test_wp_config,
+               test_nodes_parse, test_power_parse):
         fn()
     print()
     if FAILED:

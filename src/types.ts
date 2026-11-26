@@ -57,12 +57,20 @@ export interface TuningInfo {
   path: string;
 }
 
+export interface LiveSource {
+  id: number;
+  name: string;
+  volume: number;
+  muted: boolean;
+}
+
 export interface SpeakerStatus {
   ok: boolean;
   error: string | null;
   adapter: AdapterInfo | null;
   volume: VolumeInfo;
   sink: string;
+  live: LiveSource | null;
   connected: BtDevice[];
   paired: BtDevice[];
   agent: boolean;

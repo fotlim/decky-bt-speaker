@@ -379,6 +379,35 @@ class Wp:
             raise BtError("设置静音失败：%s" % (out or "").strip())
         return True
 
+    async def get_volume_of(self, node_id):
+        """读取指定节点（数字 id）的音量。"""
+        rc, out = await run_cmd(["wpctl", "get-volume", str(int(node_id))], timeout=5.0)
+        if rc != 0:
+            raise BtError("读取节点 %s 音量失败：%s" % (node_id, (out or "").strip()))
+        m = re.search(r"Volume:\s*([0-9.]+)", out)
+        return {
+            "volume": float(m.group(1)) if m else 0.0,
+            "muted": "MUTED" in out.upper(),
+        }
+
+    async def set_volume_of(self, node_id, value):
+        """给指定节点单独设音量（不影响其他节点）。"""
+        value = max(0.0, min(1.5, float(value)))
+        rc, out = await run_cmd(
+            ["wpctl", "set-volume", str(int(node_id)), "%.2f" % value], timeout=5.0
+        )
+        if rc != 0:
+            raise BtError("设置节点 %s 音量失败：%s" % (node_id, (out or "").strip()))
+        return True
+
+    async def set_mute_of(self, node_id, muted):
+        rc, out = await run_cmd(
+            ["wpctl", "set-mute", str(int(node_id)), "1" if muted else "0"], timeout=5.0
+        )
+        if rc != 0:
+            raise BtError("设置节点 %s 静音失败：%s" % (node_id, (out or "").strip()))
+        return True
+
     async def status_text(self):
         rc, out = await run_cmd(["wpctl", "status"], timeout=6.0)
         return out if rc == 0 else ""
