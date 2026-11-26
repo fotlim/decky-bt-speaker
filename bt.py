@@ -20,6 +20,15 @@ A2DP_SOURCE_UUID = "0000110a"
 HFP_AG_UUID = "0000111f"
 HFP_HF_UUID = "0000111e"
 
+# 音量增益上限。
+# PipeWire 的软件音量可以超过 100%（wpctl 手册：「Volume percentages can exceed
+# 100% unless limited」）。蓝牙接收场景下手机推流常常偏轻，需要额外增益。
+# 300% 是实测比较安全的上限：再高容易削波失真。
+MAX_GAIN = 3.0
+
+# 「自动增益」触发阈值：外部源音量低于这个值就认为偏小
+LOW_VOLUME_THRESHOLD = 0.75
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _MAC_RE = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.I)
 
@@ -631,10 +640,11 @@ class Wp:
             raise BtError("读取音量失败：%s" % (out or "").strip())
         m = re.search(r"Volume:\s*([0-9.]+)", out)
         vol = float(m.group(1)) if m else 0.0
-        return {"volume": max(0.0, min(1.5, vol)), "muted": "MUTED" in out.upper()}
+        # 允许超过 1.0（增益增强），但读回时不裁剪，交给前端决定显示
+        return {"volume": max(0.0, min(MAX_GAIN, vol)), "muted": "MUTED" in out.upper()}
 
     async def set_volume(self, value):
-        value = max(0.0, min(1.5, float(value)))
+        value = max(0.0, min(MAX_GAIN, float(value)))
         rc, out = await run_cmd(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "%.2f" % value], timeout=5.0)
         if rc != 0:
             raise BtError("设置音量失败：%s" % (out or "").strip())
@@ -661,7 +671,7 @@ class Wp:
 
     async def set_volume_of(self, node_id, value):
         """给指定节点单独设音量（不影响其他节点）。"""
-        value = max(0.0, min(1.5, float(value)))
+        value = max(0.0, min(MAX_GAIN, float(value)))
         rc, out = await run_cmd(
             ["wpctl", "set-volume", str(int(node_id)), "%.2f" % value], timeout=5.0
         )

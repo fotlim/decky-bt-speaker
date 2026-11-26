@@ -28,6 +28,9 @@ export const api = {
     call<[number, number], { ok: boolean; volume: number }>("set_source_volume", nodeId, v),
   setSourceMute: (nodeId: number, m: boolean) =>
     call<[number, boolean], { ok: boolean }>("set_source_mute", nodeId, m),
+  boostVolume: (gain = 1.5) =>
+    call<[number], { ok: boolean; gain: number; applied: string[] }>("boost_volume", gain),
+  setAutoGain: (on: boolean) => call<[boolean], { ok: boolean; enabled: boolean }>("set_auto_gain", on),
   setFocusMode: (mode: string) =>
     call<[string], { ok: boolean; mode: string; applied: string[] }>("set_focus_mode", mode),
   getAutoswitch: () => call<[], { enabled: boolean | null }>("get_autoswitch"),

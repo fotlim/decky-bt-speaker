@@ -92,6 +92,7 @@ DEFAULT_SETTINGS = {
     "eq_preset": "flat",       # 均衡器预设
     "latency_profile": "balanced",  # 延迟档位：low / balanced / stable
     "multi_output": False,     # 多输出同步（combine-stream）
+    "auto_gain": True,         # 外部源音量偏低时自动拉满
 }
 
 _ERR = "__bt_error__"
@@ -468,6 +469,8 @@ class Plugin:
                         "volume": detail["volume"],
                         "muted": detail["muted"],
                     }
+                    # 自动增益：外部源偏轻就拉满
+                    await self._apply_auto_gain(src["id"], detail["volume"])
                     # 音量归一化：观察是否发生大幅跳变
                     if self.norm is not None:
                         live["norm"] = self.norm.observe(detail["volume"])
@@ -680,6 +683,80 @@ class Plugin:
     async def set_source_mute(self, node_id, muted):
         await self.wp.set_mute_of(node_id, bool(muted))
         return {"ok": True, "muted": bool(muted)}
+
+    # ------------------------------------------------------------------
+    # RPC：音量增益
+    # ------------------------------------------------------------------
+    @_safe
+    async def boost_volume(self, gain=1.5):
+        """一键增益：把总音量和外部源音量同时拉高。
+
+        蓝牙接收场景声音偏小的两个原因：
+        1. 手机推流进来的 `bluez_input` 节点音量默认只有 70~80%
+        2. Deck 自己的 sink 音量可能也不是满的
+
+        两者叠加就明显偏轻。这里一次性把两处都拉到指定倍数。
+        PipeWire 的软件音量可以超过 100%，所以能真正变响。
+        """
+        try:
+            g = max(1.0, min(bt.MAX_GAIN, float(gain)))
+        except (TypeError, ValueError):
+            g = 1.5
+
+        applied = []
+
+        # 1. 总音量（默认 sink）
+        try:
+            cur = await self.wp.get_volume()
+            target = max(cur["volume"], g)
+            await self.wp.set_volume(target)
+            applied.append("总音量 -> %d%%" % round(target * 100))
+        except Exception as e:  # noqa: BLE001
+            self._log("增益：设置总音量失败 %s" % e)
+
+        # 2. 外部源节点（手机推流）
+        src_id = None
+        try:
+            text = await self.wp.status_text()
+            if nodes is not None:
+                src = nodes.find_bt_input(text)
+                if src:
+                    src_id = src["id"]
+        except Exception:
+            pass
+
+        if src_id is not None:
+            try:
+                cur2 = await self.wp.get_volume_of(src_id)
+                target2 = max(cur2["volume"], g)
+                await self.wp.set_volume_of(src_id, target2)
+                applied.append("外部音源 -> %d%%" % round(target2 * 100))
+            except Exception as e:  # noqa: BLE001
+                self._log("增益：设置外部源音量失败 %s" % e)
+
+        self._log("一键增益 %s：%s" % (g, "、".join(applied) or "无操作"))
+        return {"ok": True, "gain": g, "applied": applied}
+
+    @_safe
+    async def set_auto_gain(self, enabled):
+        """自动增益：外部源音量低于阈值时自动拉高（每次 status 轮询时检查）。"""
+        self.settings["auto_gain"] = bool(enabled)
+        self._save_settings()
+        return {"ok": True, "enabled": bool(enabled)}
+
+    async def _apply_auto_gain(self, source_id, current_volume):
+        """如果开着自动增益且外部源偏轻，就拉高。"""
+        if not self.settings.get("auto_gain", False):
+            return
+        if source_id is None or current_volume is None:
+            return
+        if current_volume >= bt.LOW_VOLUME_THRESHOLD:
+            return
+        try:
+            await self.wp.set_volume_of(source_id, 1.0)
+            self._log("自动增益：外部源 %.0f%% -> 100%%" % (current_volume * 100))
+        except Exception as e:  # noqa: BLE001
+            self._log("自动增益失败：%s" % e)
 
     # ------------------------------------------------------------------
     # RPC：音频焦点

@@ -43,6 +43,7 @@ export interface Settings {
   eq_preset: string;
   latency_profile: string;
   multi_output: boolean;
+  auto_gain: boolean;
 }
 
 export interface CodecInfo {
