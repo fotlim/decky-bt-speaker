@@ -6,20 +6,35 @@ Decky 要求：zip 里恰好有一个 depth==1 的 plugin.json，即
     decky-bt-speaker/main.py
     decky-bt-speaker/dist/index.js
 
+⚠️ 重要：**必须包含 package.json，且其中 `type` 必须是 `module`。**
+Decky Loader 靠这个字段决定前端加载方式（loader.py / plugin.py）：
+  - 有 package.json 且 type == "module" → 按 ESM 加载（`import(url)`）
+  - 没有 package.json（或 type 不是 module）→ 按旧版 IIFE 加载，
+    用 `eval()` 执行 —— 而我们的产物是 ESM，eval 会直接抛
+    `SyntaxError: Unexpected token 'export'`，表现为插件加载失败。
+
+⚠️ 另一个重要点：**不要**把中文文件名打进安装包。
+Decky 后端解压 zip 时按 ASCII 处理文件名，含非 ASCII 字符的路径会解压失败，
+表现为「安装无反应 / 装完看不到插件」。文档类文件请留在仓库里，不要进 zip。
+
 用法：python pack.py
 """
 
 import os
 import sys
+import json
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_DIR_NAME = "decky-bt-speaker"
 OUT_ZIP = os.path.join(os.path.dirname(ROOT), PLUGIN_DIR_NAME + ".zip")
 
-# 只带这些文件（白名单），避免把 node_modules / 源码 / 测试塞进包里
+# 只带这些文件（白名单），避免把 node_modules / 源码 / 测试塞进包里。
+# 刻意不含 docs/：那里有中文文件名，会触发 Decky 解压问题。
+# package.json 是**必需**的 —— 见上面说明，缺了会按 IIFE 加载导致 export 报错。
 INCLUDE_FILES = [
     "plugin.json",
+    "package.json",
     "main.py",
     "bt.py",
     "power.py",
@@ -34,7 +49,7 @@ INCLUDE_FILES = [
     "CHANGELOG.md",
     "LICENSE",
 ]
-INCLUDE_DIRS: list[str] = ["docs"]
+INCLUDE_DIRS: list[str] = []
 
 def main():
     missing = []
@@ -84,6 +99,57 @@ def main():
         print("自检失败：这些 Python 模块没打进包里：%s" % ", ".join(missing_modules))
         print("请把它们加到 INCLUDE_FILES")
         return 1
+
+    # 自检 3：文件名必须是纯 ASCII。
+    # Decky 解压时按 ASCII 处理路径，含中文的条目会失败 ——
+    # 表现为「安装无反应」或「装完看不到插件」，而且没有任何报错提示。
+    bad_names = [n for n in names if any(ord(c) > 127 for c in n)]
+    if bad_names:
+        print("自检失败：zip 里有非 ASCII 文件名，Decky 会解压失败：")
+        for n in bad_names:
+            print("  " + n)
+        print("请把这些文件移出安装包（或改成英文名）。")
+        return 1
+
+    # 自检 4：必须包含后端入口与前端产物
+    required = [
+        "%s/main.py" % PLUGIN_DIR_NAME,
+        "%s/dist/index.js" % PLUGIN_DIR_NAME,
+        "%s/plugin.json" % PLUGIN_DIR_NAME,
+    ]
+    missing_required = [r for r in required if r not in names]
+    if missing_required:
+        print("自检失败：缺少必需文件：%s" % ", ".join(missing_required))
+        return 1
+
+    # 自检 5（关键）：package.json 必须存在，且 type == "module"。
+    # 缺了它 Decky 会按旧版 IIFE 用 eval() 加载 ESM 产物，直接抛
+    # "SyntaxError: Unexpected token 'export'"，插件在 QAM 里显示加载错误。
+    pkg_entry = "%s/package.json" % PLUGIN_DIR_NAME
+    if pkg_entry not in names:
+        print("自检失败：zip 里没有 package.json")
+        print("  Decky 靠 package.json 的 type 字段决定加载方式：")
+        print("    有 package.json + type=module -> ESM 加载（import）")
+        print("    没有 -> 旧版 IIFE 加载（eval），ESM 产物会报 Unexpected token 'export'")
+        return 1
+    with zipfile.ZipFile(OUT_ZIP) as zf:
+        try:
+            pkg = json.loads(zf.read(pkg_entry).decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            print("自检失败：package.json 解析不了：%s" % e)
+            return 1
+    if pkg.get("type") != "module":
+        print("自检失败：package.json 的 type 必须是 \"module\"，当前是 %r"
+              % pkg.get("type"))
+        print("  否则 Decky 会走 IIFE 加载，ESM 产物会报 Unexpected token 'export'")
+        return 1
+
+    # 自检 6：dist/index.js 必须是 ESM（以 import/export 结尾而非 IIFE 包装）
+    with zipfile.ZipFile(OUT_ZIP) as zf:
+        dist_src = zf.read("%s/dist/index.js" % PLUGIN_DIR_NAME).decode("utf-8", "replace")
+    if "export {" not in dist_src and "export default" not in dist_src:
+        print("警告：dist/index.js 看起来不是 ESM 产物（没有 export 语句）")
+        print("  如果它是 IIFE，package.json 的 type=module 反而不对，请检查 rollup 配置")
 
     size = os.path.getsize(OUT_ZIP)
     print("已生成 %s" % OUT_ZIP)

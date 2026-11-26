@@ -4,6 +4,51 @@
 
 ---
 
+## [2.0.1] - 2026-11-26
+
+**修复真机上「插件加载失败：SyntaxError: Unexpected token 'export'」**
+
+这是 v2.0.0 及之前所有版本的致命打包缺陷 —— 插件能装进 Deck，但一加载就报错。
+
+### Fixed
+
+- **`pack.py` 漏打 `package.json`**
+
+  Decky Loader 靠 `package.json` 的 `type` 字段决定前端加载方式
+  （`loader.py` / `plugin.py`）：
+
+  | 条件 | 加载方式 | 结果 |
+  |---|---|---|
+  | 有 `package.json` 且 `type == "module"` | ESM：`import(url)` | ✅ 正常 |
+  | 没有 `package.json` | 旧版 IIFE：`eval(源码)` | ❌ ESM 产物直接抛 `Unexpected token 'export'` |
+
+  我们的 rollup 产物是 ESM（`@decky/rollup` 默认 `format: 'esm'`），
+  但 zip 里没有 `package.json`，于是 Decky 走了 `eval()` 路径，在 QAM 里显示：
+  ```
+  SyntaxError: Unexpected token 'export'
+    at PluginLoader.importReactPlugin
+  ```
+
+  **对比验证**：`decky-netease-music.zip` 里有 `package.json` + `type: module`，所以能正常加载；
+  `decky-bt-speaker.zip` 没有，所以失败。两个包的 `dist/index.js` 结尾格式完全一致，
+  差异只在 `package.json` 的有无。
+
+- **`pack.py` 新增 3 项自检**，让这类问题不可能再漏：
+  - `package.json` 必须存在
+  - `package.json` 的 `type` 必须是 `"module"`
+  - `dist/index.js` 必须含 `export` 语句（确认是 ESM 产物）
+
+- **`install.sh`** 同步加入 `package.json` 存在性与 `type` 校验
+
+### Notes
+
+同时确认了另外两个**不是**本次故障原因的点（排除掉，避免误判）：
+
+- **zip 层级**：`depth==1` 的 `plugin.json` 恰好 1 个，结构正确
+- **中文文件名**：已从安装包移除 `docs/`（含中文名），当前包内文件名全 ASCII
+
+---
+
 ## [2.0.0] - 2026-11-26
 
 综合打磨：诊断完善、报告导出、文档重写。
