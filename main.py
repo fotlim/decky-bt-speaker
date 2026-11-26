@@ -846,7 +846,11 @@ class Plugin:
     # ------------------------------------------------------------------
     @_safe
     async def set_eq_preset(self, preset):
-        """切换 EQ 预设。会写配置并重启 PipeWire 让它生效。"""
+        """切换 EQ 预设。会写配置并重启 PipeWire 让它生效。
+
+        注意：「平直」模式会直接删除配置文件、卸载虚拟 sink，
+        避免所有音频多绕一级虚拟设备（真机反馈声音偏小的问题）。
+        """
         if eq is None:
             raise bt.BtError("eq 模块未加载")
         if preset not in eq.PRESETS:
@@ -855,7 +859,12 @@ class Plugin:
         self.settings["eq_preset"] = preset
         self._save_settings()
         await self._restart_pipewire()
-        return {"ok": True, "preset": preset, "label": eq.PRESETS[preset]["label"]}
+        return {
+            "ok": True,
+            "preset": preset,
+            "label": eq.PRESETS[preset]["label"],
+            "installed": eq.EqConfig.installed(),
+        }
 
     @_safe
     async def remove_eq(self):

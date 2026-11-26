@@ -261,7 +261,24 @@ class EqConfig:
             return False
 
     def apply(self, preset_key=DEFAULT_PRESET):
+        """应用 EQ 预设。
+
+        ⚠️ 「平直」模式**直接删除配置文件**，不创建虚拟 sink。
+        早期版本即使平直也挂一个空的 filter-chain 节点，导致所有音频多绕一级
+        虚拟设备，音量和音质都受影响（真机反馈「声音偏小」）。
+        """
         path = self.conf_path()
+
+        # 平直 = 不需要 EQ，直接移除节点
+        if preset_key == "flat":
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    self._log("平直模式：已移除 EQ 节点（不创建虚拟 sink）")
+            except Exception as e:  # noqa: BLE001
+                raise BtError("移除 EQ 配置失败：%s" % e)
+            return path
+
         try:
             os.makedirs(self.conf_dir(), exist_ok=True)
             tmp = path + ".tmp"

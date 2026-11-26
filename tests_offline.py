@@ -424,6 +424,12 @@ Filter 4: OFF PK Fc 500 Hz Gain 3.0 dB Q 1.000
             check("落在 pipewire.conf.d", "pipewire.conf.d" in path)
             check("installed() 为真", eq.EqConfig.installed())
             check("current_preset 反推出 vocal", cfg.current_preset() == "vocal")
+
+            # 关键：切到 flat 必须删除文件、不加载虚拟 sink
+            cfg.apply("flat")
+            check("flat 模式移除配置（不创建虚拟 sink）", not eq.EqConfig.installed())
+            check("flat 后文件确实不存在", not os.path.exists(path))
+
             cfg.remove()
             check("删除后 installed() 为假", not eq.EqConfig.installed())
         finally:
