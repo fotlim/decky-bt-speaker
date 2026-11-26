@@ -360,6 +360,61 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         >重置</Focusable>
       </Focusable>
 
+      <SectionTitle>延迟档位</SectionTitle>
+      <Hint>蓝牙 A2DP 的延迟取决于编码器与缓冲。这里是「省电 / 低延迟 / 抗卡顿」的取舍。</Hint>
+      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+        {(state.output?.latency_profiles || []).map((p: any) => {
+          const active = (s.latency_profile || "balanced") === p.key;
+          return (
+            <Focusable
+              key={p.key}
+              onClick={async () => {
+                try {
+                  await api.setLatencyProfile(p.key);
+                  toaster.toast({ title: `延迟档位：${p.label}`, body: "WirePlumber 已重启" });
+                  setTimeout(refresh, 1200);
+                } catch (e: any) {
+                  toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                }
+              }}
+              onActivate={async () => {
+                try { await api.setLatencyProfile(p.key); setTimeout(refresh, 1200); } catch { /* ignore */ }
+              }}
+              style={{
+                flex: "1 1 180px", padding: "11px 14px", borderRadius: 10, cursor: "pointer",
+                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
+                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
+              }}
+            >
+              <div style={{ fontSize: 13.5, color: COLORS.text }}>{p.label}</div>
+              <div style={{ fontSize: 11, color: COLORS.accent, marginTop: 2 }}>约 {p.latency_ms}ms</div>
+              <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>
+            </Focusable>
+          );
+        })}
+      </Focusable>
+
+      <SectionTitle>多输出同步</SectionTitle>
+      <ToggleRow
+        label="创建一个「Deck 多输出」设备"
+        desc="声音同时送到内置喇叭 + 蓝牙耳机 + 有线耳机。开启后在系统音量里把输出切到「Deck 多输出（同步）」。"
+        checked={!!s.multi_output}
+        onChange={async (v) => {
+          try {
+            await api.setMultiOutput(v);
+            toaster.toast({ title: v ? "已开启多输出同步" : "已关闭多输出同步", body: "PipeWire 已重启" });
+            setTimeout(refresh, 1500);
+          } catch (e: any) {
+            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+          }
+        }}
+      />
+      <Hint>
+        当前输出设备：{(state.output?.sinks || []).map((k: any) => k.name).join(" · ") || "读取中…"}
+        <br />
+        ⚠️ 反方向做不到：受 AVDTP 协议限制（v1.3 §5.3），同一适配器同一时刻只能有一个蓝牙 A2DP 源设备连进来。
+      </Hint>
+
       <SectionTitle>编码器</SectionTitle>
       <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
         <div>当前编码：{state.codec?.codec || "未连接"}</div>

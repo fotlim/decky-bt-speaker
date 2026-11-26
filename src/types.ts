@@ -39,6 +39,9 @@ export interface Settings {
   last_device: string;
   focus_mode: "receiver_first" | "coexist" | "manual";
   silence_disconnect: number;
+  eq_preset: string;
+  latency_profile: string;
+  multi_output: boolean;
 }
 
 export interface CodecInfo {
@@ -93,17 +96,38 @@ export interface EqPreset {
   bands: number;
 }
 
+export interface EqInfo {
+  installed: boolean;
+  preset: string;
+  presets: EqPreset[];
+  path: string;
+}
+
 export interface NormalizeInfo {
   baseline: number | null;
   last: number | null;
   jumps: number;
 }
 
-export interface EqInfo {
+export interface LatencyProfile {
+  key: string;
+  label: string;
+  desc: string;
+  latency_ms: number;
+}
+
+export interface SinkNode {
+  id: number;
+  name: string;
+  default: boolean;
+}
+
+export interface OutputInfo {
+  multi: boolean;
   installed: boolean;
-  preset: string;
-  presets: EqPreset[];
-  path: string;
+  latency: string;
+  latency_profiles: LatencyProfile[];
+  sinks: SinkNode[];
 }
 
 export interface SpeakerStatus {
@@ -118,6 +142,7 @@ export interface SpeakerStatus {
   silence: SilenceInfo | null;
   normalize: NormalizeInfo | null;
   eq: EqInfo;
+  output: OutputInfo;
   connected: BtDevice[];
   paired: BtDevice[];
   agent: boolean;

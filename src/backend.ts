@@ -36,6 +36,11 @@ export const api = {
   removeEq: () => call<[], { ok: boolean; installed: boolean }>("remove_eq"),
   importAutoeq: (text: string) =>
     call<[string], { ok: boolean; bands: number; preamp: number; skipped: number }>("import_autoeq", text),
+  setLatencyProfile: (profile: string) =>
+    call<[string], { ok: boolean; profile: string; label: string; latency_ms: number }>("set_latency_profile", profile),
+  setMultiOutput: (on: boolean) =>
+    call<[boolean], { ok: boolean; enabled: boolean }>("set_multi_output", on),
+  listOutputs: () => call<[], { sinks: any[] }>("list_outputs"),
   setSetting: (key: string, value: any) =>
     call<[string, any], { ok: boolean }>("set_setting", key, value),
   applyTuning: () => call<[], { ok: boolean; installed: boolean; path: string }>("apply_tuning"),

@@ -433,6 +433,67 @@ Filter 4: OFF PK Fc 500 Hz Gain 3.0 dB Q 1.000
                 os.environ["XDG_CONFIG_HOME"] = old
 
 
+def test_output():
+    print("延迟档位 / 多输出同步")
+    import output
+    import tempfile
+
+    # 延迟档位
+    check("有 3 个档位", len(output.LATENCY_PROFILES) == 3, str(list(output.LATENCY_PROFILES)))
+    check("默认 balanced", output.DEFAULT_LATENCY == "balanced")
+    ll = output.latency_list()
+    check("latency_list 3 条", len(ll) == 3)
+    check("每条有 latency_ms", all("latency_ms" in x for x in ll))
+    check("低延迟 < 均衡 < 抗卡顿",
+          output.LATENCY_PROFILES["low"]["latency_ms"] <
+          output.LATENCY_PROFILES["balanced"]["latency_ms"] <
+          output.LATENCY_PROFILES["stable"]["latency_ms"])
+
+    conf = output.build_latency_conf("low")
+    check("延迟配置含 bluez_input 匹配", "bluez_input" in conf)
+    check("延迟配置含 node.latency", "node.latency" in conf)
+    check("延迟配置含 decode-buffer", "bluez5.decode-buffer.latency" in conf)
+    check("档位名写进注释", "档位：low" in conf)
+    check("未知档位回退 balanced", "档位：balanced" in output.build_latency_conf("xxx"))
+
+    # combine-stream
+    on = output.build_combine_conf(True)
+    check("开启时含 combine-stream", "libpipewire-module-combine-stream" in on)
+    check("combine.mode = sink", "combine.mode = sink" in on)
+    check("有 latency-compensate", "latency-compensate = true" in on)
+    check("节点名正确", "combine_sink.deck_multi" in on)
+    check("有 Audio/Sink 匹配", "Audio/Sink" in on)
+
+    named = output.build_combine_conf(True, ["alsa_output.speaker", "bluez_output.headset"])
+    check("指定 sink 时含名字", "alsa_output.speaker" in named and "bluez_output.headset" in named)
+
+    off = output.build_combine_conf(False)
+    check("关闭时不含模块加载", "libpipewire-module-combine-stream" not in off)
+    check("关闭时标注已关闭", "已关闭" in off)
+
+    # 配置生命周期
+    old = os.environ.get("XDG_CONFIG_HOME")
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["XDG_CONFIG_HOME"] = td
+        try:
+            cfg = output.CombineConfig()
+            p1 = cfg.apply(True)
+            check("多输出配置已写入", os.path.isfile(p1))
+            check("installed() 为真", output.CombineConfig.installed())
+            p2 = cfg.apply_latency("stable")
+            check("延迟配置已写入", os.path.isfile(p2))
+            check("current_latency 反推出 stable", cfg.current_latency() == "stable")
+            cfg.remove()
+            check("删除多输出后 installed() 为假", not output.CombineConfig.installed())
+            cfg.remove_latency()
+            check("删除延迟后 current_latency 为 None", cfg.current_latency() is None)
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -466,7 +527,8 @@ def test_power_parse():
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
-               test_nodes_parse, test_focus, test_silence, test_eq, test_power_parse):
+               test_nodes_parse, test_focus, test_silence, test_eq,
+               test_output, test_power_parse):
         fn()
     print()
     if FAILED:
