@@ -652,6 +652,7 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
 function DiagTab() {
   const [data, setData] = useState<any>(null);
   const [log, setLog] = useState<{ path: string; text: string } | null>(null);
+  const [report, setReport] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
@@ -690,10 +691,62 @@ function DiagTab() {
         <Focusable onClick={loadLog} onActivate={loadLog} style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}>
           查看日志
         </Focusable>
+        <Focusable
+          onClick={async () => {
+            try {
+              const r = await api.report();
+              setReport(r.text);
+              try {
+                await navigator.clipboard.writeText(r.text);
+                toaster.toast({ title: "诊断报告已复制", body: "直接粘贴给作者即可" });
+              } catch {
+                toaster.toast({ title: "报告已生成", body: "下面可手动选中复制" });
+              }
+            } catch (e: any) {
+              toaster.toast({ title: "生成失败", body: e?.message || String(e) });
+            }
+          }}
+          onActivate={async () => {
+            try { const r = await api.report(); setReport(r.text); } catch { /* ignore */ }
+          }}
+          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }}
+        >复制诊断报告</Focusable>
       </Focusable>
+
+      {report && (
+        <>
+          <SectionTitle>完整报告</SectionTitle>
+          <div style={box}>{report}</div>
+        </>
+      )}
 
       {data && (
         <>
+          <SectionTitle>自检</SectionTitle>
+          <Focusable flow-children="column" style={{ marginTop: 8 }}>
+            {(data.checks || []).map((c: any, i: number) => (
+              <div key={i} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6,
+                borderRadius: 8, fontSize: 13,
+                background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
+                border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
+              }}>
+                <span style={{ color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }}>
+                  {c.ok ? "✓" : "✕"}
+                </span>
+                <span style={{ flex: 1, color: COLORS.text }}>{c.name}</span>
+                {c.detail && <span style={{ fontSize: 11, color: COLORS.dim }}>{c.detail}</span>}
+              </div>
+            ))}
+          </Focusable>
+
+          <SectionTitle>后端模块</SectionTitle>
+          <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
+            {Object.entries(data.modules || {}).map(([k, v]: any) => (
+              <div key={k}>{v ? "✅" : "❌"} {k}.py</div>
+            ))}
+          </div>
+
           <SectionTitle>命令可用性</SectionTitle>
           <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
             {Object.entries(data.tools || {}).map(([k, v]: any) => (

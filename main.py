@@ -827,18 +827,38 @@ class Plugin:
     @_safe
     async def diagnose(self):
         """把排查用的原始信息一次性打包，方便贴给作者。"""
-        out = {"tools": {}, "adapter_raw": "", "wp_status": "", "versions": {}, "agent": False}
-        for name in ("bluetoothctl", "busctl", "wpctl", "pipewire", "wireplumber"):
+        out = {
+            "tools": {}, "adapter_raw": "", "wp_status": "", "versions": {},
+            "agent": False, "settings": {}, "tuning": {}, "power": {},
+            "checks": [], "modules": {},
+        }
+        for name in ("bluetoothctl", "busctl", "wpctl", "pipewire", "wireplumber",
+                     "pactl", "pw-dump", "pw-link", "gdbus"):
             out["tools"][name] = bt.which(name)
+
+        # 各功能模块是否加载成功（排查「某个功能整块不工作」时最有用）
+        out["modules"] = {
+            "bt": bt is not None,
+            "power": power is not None,
+            "nodes": nodes is not None,
+            "focus": focus is not None,
+            "silence": silence is not None,
+            "eq": eq is not None,
+            "output": output is not None,
+            "metadata": metadata is not None,
+        }
+
         try:
             info = await self.bz.show(force=True)
             out["adapter_raw"] = info.get("raw", "")
         except Exception as e:  # noqa: BLE001
             out["adapter_raw"] = "读取失败：%s" % e
+
         try:
             out["wp_status"] = await self.wp.status_text()
         except Exception as e:  # noqa: BLE001
             out["wp_status"] = "读取失败：%s" % e
+
         out["versions"] = await bt.versions()
         out["agent"] = self.bz.agent_alive()
         out["settings"] = self.settings
@@ -850,7 +870,82 @@ class Plugin:
             "last": (self.sleeper.last_event if self.sleeper else None),
             "module": power is not None,
         }
+
+        # 逐项自检：把「能不能用」变成明确的 ✅/❌ 而不是让用户猜
+        out["checks"] = self._run_checks(out)
         return out
+
+    def _run_checks(self, d):
+        """生成一组可读的自检项。"""
+        checks = []
+
+        def add(name, ok, detail=""):
+            checks.append({"name": name, "ok": bool(ok), "detail": detail})
+
+        tools = d.get("tools") or {}
+        add("bluetoothctl 可用", tools.get("bluetoothctl"), "bluez-utils")
+        add("busctl 可用", tools.get("busctl"), "systemd")
+        add("wpctl 可用", tools.get("wpctl"), "wireplumber")
+
+        raw = d.get("adapter_raw") or ""
+        add("检测到蓝牙适配器", "Controller" in raw, "bluetoothctl show")
+        add("适配器支持 A2DP Sink", bt.A2DP_SINK_UUID in raw.lower(),
+            "UUID 0000110b（当音箱的必要条件）")
+        add("蓝牙已上电", "Powered: yes" in raw)
+        add("配对 agent 在运行", d.get("agent"), "NoInputNoOutput")
+        add("可被发现", "Discoverable: yes" in raw, "BlueZ 默认 180 秒超时")
+
+        wp = d.get("wp_status") or ""
+        add("PipeWire 有音频输出", "Sinks:" in wp, "wpctl status")
+
+        vers = d.get("versions") or {}
+        add("PipeWire 版本可读", bool(vers.get("pipewire")), vers.get("pipewire", ""))
+        add("WirePlumber 版本可读", bool(vers.get("wireplumber")), vers.get("wireplumber", ""))
+
+        mods = d.get("modules") or {}
+        bad = [k for k, v in mods.items() if not v]
+        add("后端模块全部加载", not bad, ("缺失：" + ", ".join(bad)) if bad else "8/8")
+
+        return checks
+
+    @_safe
+    async def report(self):
+        """生成一份可直接粘贴的纯文本诊断报告。"""
+        d = await self.diagnose()
+        if isinstance(d, dict) and _ERR in d:
+            return d
+        lines = []
+        lines.append("=== 蓝牙音箱插件诊断报告 ===")
+        lines.append("时间：%s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+        v = d.get("versions") or {}
+        lines.append("PipeWire %s / WirePlumber %s / BlueZ %s"
+                     % (v.get("pipewire", "?"), v.get("wireplumber", "?"), v.get("bluez", "?")))
+        lines.append("")
+        lines.append("--- 自检 ---")
+        for c in d.get("checks") or []:
+            lines.append("%s %s%s" % (
+                "✅" if c["ok"] else "❌", c["name"],
+                ("（%s）" % c["detail"]) if c.get("detail") else "",
+            ))
+        lines.append("")
+        lines.append("--- 工具 ---")
+        for k, val in (d.get("tools") or {}).items():
+            lines.append("%s %s" % ("✅" if val else "❌", k))
+        lines.append("")
+        lines.append("--- 模块 ---")
+        for k, val in (d.get("modules") or {}).items():
+            lines.append("%s %s" % ("✅" if val else "❌", k))
+        lines.append("")
+        lines.append("--- 设置 ---")
+        for k, val in (d.get("settings") or {}).items():
+            lines.append("%s = %s" % (k, val))
+        lines.append("")
+        lines.append("--- bluetoothctl show ---")
+        lines.append(d.get("adapter_raw") or "（空）")
+        lines.append("")
+        lines.append("--- wpctl status ---")
+        lines.append(d.get("wp_status") or "（空）")
+        return {"text": "\n".join(lines)}
 
     @_safe
     async def get_log(self, tail=200):

@@ -130,6 +130,7 @@ const api = {
     applyTuning: () => call("apply_tuning"),
     removeTuning: () => call("remove_tuning"),
     diagnose: () => call("diagnose"),
+    report: () => call("report"),
     getLog: (tail = 200) => call("get_log", tail),
 };
 
@@ -627,6 +628,7 @@ function EqTab({ state, refresh }) {
 function DiagTab() {
     const [data, setData] = SP_REACT.useState(null);
     const [log, setLog] = SP_REACT.useState(null);
+    const [report, setReport] = SP_REACT.useState("");
     const [loading, setLoading] = SP_REACT.useState(false);
     const load = async () => {
         setLoading(true);
@@ -654,7 +656,33 @@ function DiagTab() {
         fontSize: 11.5, color: COLORS.sub, fontFamily: "monospace", whiteSpace: "pre-wrap",
         maxHeight: 340, overflowY: "auto", lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? "读取中…" : "重新读取" }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: "\u67E5\u770B\u65E5\u5FD7" })] }), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u547D\u4EE4\u53EF\u7528\u6027" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " \u914D\u5BF9 agent"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u9002\u914D\u5668\u539F\u59CB\u4FE1\u606F" }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u72B6\u6001" }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: "\u63D2\u4EF6\u65E5\u5FD7" }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? "读取中…" : "重新读取" }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: "\u67E5\u770B\u65E5\u5FD7" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                            try {
+                                const r = await api.report();
+                                setReport(r.text);
+                                try {
+                                    await navigator.clipboard.writeText(r.text);
+                                    toaster.toast({ title: "诊断报告已复制", body: "直接粘贴给作者即可" });
+                                }
+                                catch {
+                                    toaster.toast({ title: "报告已生成", body: "下面可手动选中复制" });
+                                }
+                            }
+                            catch (e) {
+                                toaster.toast({ title: "生成失败", body: e?.message || String(e) });
+                            }
+                        }, onActivate: async () => {
+                            try {
+                                const r = await api.report();
+                                setReport(r.text);
+                            }
+                            catch { /* ignore */ }
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }, children: "\u590D\u5236\u8BCA\u65AD\u62A5\u544A" })] }), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u5B8C\u6574\u62A5\u544A" }), SP_JSX.jsx("div", { style: box, children: report })] })), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u81EA\u68C0" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (data.checks || []).map((c, i) => (SP_JSX.jsxs("div", { style: {
+                                display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6,
+                                borderRadius: 8, fontSize: 13,
+                                background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
+                                border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
+                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: "\u540E\u7AEF\u6A21\u5757" }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: "\u547D\u4EE4\u53EF\u7528\u6027" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " \u914D\u5BF9 agent"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u9002\u914D\u5668\u539F\u59CB\u4FE1\u606F" }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u72B6\u6001" }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: "\u63D2\u4EF6\u65E5\u5FD7" }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
 }
 
 var index = definePlugin(() => {
