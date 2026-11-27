@@ -105,6 +105,51 @@
 
 ---
 
+## [2.8.1] - 2026-11-27
+
+**删掉一个「照着做也没用」的误导入口**
+
+### 问题
+
+v2.7.1 在 QAM 里加了一个「修复权限」按钮，让用户执行
+`sudo chmod a+w /sys/class/backlight/amdgpu_bl0/bl_power`，
+并配了红框警告「屏幕只是变暗，因为 bl_power 是 root 只读」。
+
+但真机实测早就证明：**chmod 之后写进去，这台 Deck 的驱动也完全不理**，
+屏幕照旧亮着。所以这个按钮让用户照着做一件注定没用的事 ——
+比不给指引更糟，因为它会让人以为「再折腾一下就能关屏」。
+
+### Removed
+
+- `fix_screen_permission` RPC
+- `screen.ensure_permission()` / `screen._sudo_chmod()`
+- `screen.diagnose()` 的 `can_turn_off` / `manual_command` 两个字段
+- QAM 的「背光没能完全关闭」红框警告与「修复权限」按钮
+- 6 条对应 i18n 文案（`qam.dimPartial` / `dimPartialBody` / `dimNeedFix` /
+  `fixPermission` / `fixOk` / `fixOkBody` / `fixManual`）
+
+### Changed
+
+- **「背光没能完全关掉」从故障降级为正常现象**
+
+  不再弹红框、不再提示修复。`screen.Dimmer.dim()` 的返回值里
+  `backlight_off` 保留，但只作为**事实汇报**（诊断页会显示），
+  不再驱动任何「请修复」的交互。
+
+  关屏的实际手段是上层 `DimOverlay` 的纯黑遮罩 —— OLED 上黑像素不发光，
+  等效于关屏。背光归 0 只是顺手省一点电，能关就关，关不掉不报错。
+
+- `screen.py` 顶部文档重写：把「这台机器上没有任何 sysfs 途径能真正关屏」
+  这个结论写在最前面，并说明 `bl_power` 即使可写也被驱动忽略。
+
+### 测试
+
+新增 4 项**回归测试**，锁住这条死路不要被加回来：
+`ensure_permission` / `_sudo_chmod` 不存在、`diagnose()` 不再返回
+`can_turn_off` / `manual_command`。
+
+---
+
 ## [2.8.0] - 2026-11-27
 
 **修复真机反馈：息屏后蓝牙自动断连（疑似进入休眠）**
@@ -180,6 +225,22 @@ Steam 客户端有**自己的**电源计时器（设置 > 电源 > 闲置后休�
 - **`chk.modules` 的详情硬编码成 `"8/8"`**
 
   新增模块后这个数字就永远是错的。改成按实际数量计算。
+
+- **删掉「修复 bl_power 权限」这个误导入口**
+
+  v2.7.1 加了一个「修复权限」按钮，让用户执行 `sudo chmod a+w bl_power`。
+  但真机实测已经证明：**chmod 之后写进去，这台 Deck 的驱动也完全不理**，
+  屏幕照旧亮着。让用户照着做一件注定没用的事，比不给指引更糟。
+
+  删掉的东西：`fix_screen_permission` RPC、`screen.ensure_permission`、
+  `screen._sudo_chmod`、`diagnose()` 的 `can_turn_off` / `manual_command`、
+  QAM 的红框警告和按钮、对应的 6 条 i18n 文案。
+
+  「背光没能完全关掉」也从**故障**降级为**正常现象**：不再弹红框、
+  不再提示修复。关屏的实际手段是上层黑遮罩（OLED 上黑像素不发光）。
+
+  同时在 `screen.py` 顶部把这个结论写成文档，并加了 4 项回归测试锁住，
+  防止以后又把这条死路加回来。
 
 ### Changed
 
@@ -274,6 +335,9 @@ Steam 客户端有**自己的**电源计时器（设置 > 电源 > 闲置后休�
 - 实测 `sudo chmod a+w bl_power` + `echo 1 > bl_power` **依然不能关屏** ——
   该驱动根本不理 `bl_power`。所以「修复权限」这条路在这台机器上无效，
   真正管用的是 v2.8.0 的 `UIComposition` 遮罩
+
+> 这条结论后来变成了 v2.8.0 的一个修复项：既然路走不通，就把那个
+> 「修复权限」入口整个删掉（见 v2.8.0 的对应条目）。
 
 ---
 

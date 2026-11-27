@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
+  PanelSection, PanelSectionRow, ButtonItem, ToggleField, Navigation, Focusable,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
@@ -49,8 +49,6 @@ export function Speaker() {
 
   // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
   const [dimmed, setDimmed] = useState(false);
-  // 背光没能真正关掉（bl_power 是 root 只读）时，显示「修复权限」入口
-  const [needFix, setNeedFix] = useState(false);
   const dimTimer = useRef<any>(null);
 
   // 组件卸载时一定恢复背光，避免留下黑屏
@@ -65,16 +63,6 @@ export function Speaker() {
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
       dimTimer.current = setTimeout(() => { exitDim(); }, secs);
-      // 背光没真正关掉就明确告诉用户，并提示可一键修复
-      if (r.backlight_off === false) {
-        setNeedFix(true);
-        toaster.toast({
-          title: t("qam.dimPartial"),
-          body: t("qam.dimPartialBody"),
-        });
-      } else {
-        setNeedFix(false);
-      }
       // ⚠️ 休眠抑制没拿到 = 息屏后蓝牙一定会断（系统会自己睡下去）。
       //    必须单独提示，否则用户只会看到「放一会儿歌就断了」的怪现象。
       if (r.inhibit && r.inhibit.ok === false) {
@@ -85,24 +73,6 @@ export function Speaker() {
       }
     } catch (e) {
       toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
-    }
-  };
-
-  const fixPermission = async () => {
-    try {
-      const r = await api.fixScreenPermission();
-      if (r.ok) {
-        setNeedFix(false);
-        toaster.toast({ title: t("qam.fixOk"), body: t("qam.fixOkBody") });
-      } else {
-        // 免密 sudo 不可用 —— 把确切命令告诉用户
-        toaster.toast({
-          title: t("qam.fixManual"),
-          body: r.command || r.reason || "",
-        });
-      }
-    } catch (e) {
-      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     }
   };
 
@@ -409,26 +379,6 @@ export function Speaker() {
       )}
 
       {/* 背光只变暗（bl_power 是 root 只读）时，给一键修复入口 */}
-      {needFix && (
-        <div style={{
-          marginTop: 8, padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
-          background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
-          color: "#ffb3b3",
-        }}>
-          {t("qam.dimNeedFix")}
-          <Focusable
-            onClick={fixPermission}
-            onActivate={fixPermission}
-            style={{
-              marginTop: 8, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(236,65,65,0.18)", fontSize: 12, color: "#fff",
-            }}
-          >
-            {t("qam.fixPermission")}
-          </Focusable>
-        </div>
-      )}
 
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => Navigation.Navigate(ROUTE)}>

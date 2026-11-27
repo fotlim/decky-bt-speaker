@@ -133,8 +133,6 @@ const api = {
     getInhibit: () => call("get_inhibit"),
     /** 息屏能力诊断 */
     getScreenDiag: () => call("get_screen_diag"),
-    /** 尝试给 bl_power 加写权限（免密 sudo） */
-    fixScreenPermission: () => call("fix_screen_permission"),
     setVolume: (v) => call("set_volume", v),
     /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
     stepVolume: (delta) => call("step_volume", delta),
@@ -446,18 +444,11 @@ const EN = {
     "qam.manage": "Devices / Settings",
     "qam.dimScreen": "Turn off screen (keep playing)",
     "qam.dimHint": "Tap anywhere or press any key to wake",
-    "qam.dimPartial": "Backlight not fully off",
-    "qam.dimPartialBody": "Screen is dim but still lit. Tap below to fix permissions.",
     "qam.dimFailed": "Cannot turn off screen",
     "qam.inhibitFailed": "Bluetooth may drop while screen is off",
     "qam.inhibitFailedBody": "The plugin could not stop the system from auto-suspending. Your Deck will sleep on the idle timer and the audio link drops. Turn off \"sleep after idle\" in Steam > Settings > Power, or check systemd-inhibit permissions.",
     "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
     "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
-    "qam.dimNeedFix": "The screen only dimmed because bl_power is root-only (0444). The plugin needs write access to turn the backlight off completely.",
-    "qam.fixPermission": "Fix permission",
-    "qam.fixOk": "Permission fixed",
-    "qam.fixOkBody": "Now try turning off the screen again",
-    "qam.fixManual": "Manual step needed",
     "qam.playingLabel": "Playing",
     // 全屏页
     "page.title": "Bluetooth Speaker",
@@ -669,18 +660,11 @@ const ZH = {
     "qam.manage": "设备管理 / 设置",
     "qam.dimScreen": "息屏当音箱（继续播放）",
     "qam.dimHint": "触摸屏幕或按任意键唤醒",
-    "qam.dimPartial": "背光没能完全关闭",
-    "qam.dimPartialBody": "屏幕只是变暗但仍然发亮。点下方按钮可修复权限。",
     "qam.dimFailed": "无法关闭屏幕",
     "qam.inhibitFailed": "息屏期间蓝牙可能会断",
     "qam.inhibitFailedBody": "插件没能阻止系统自动休眠。闲置计时器走完 Deck 会睡下去，音频链路随之断开。请在 Steam > 设置 > 电源 里关掉「闲置后休眠」，或检查 systemd-inhibit 权限。",
     "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
     "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
-    "qam.dimNeedFix": "屏幕只是变暗，因为 bl_power 是 root 只读（0444）。插件需要写权限才能真正切断背光。",
-    "qam.fixPermission": "修复权限",
-    "qam.fixOk": "权限已修复",
-    "qam.fixOkBody": "现在再试一次息屏",
-    "qam.fixManual": "需要手动执行",
     "qam.playingLabel": "正在播放",
     "page.title": "蓝牙音箱",
     "page.readingAdapter": "正在读取蓝牙适配器…",
@@ -1098,8 +1082,6 @@ function Speaker() {
     }, []);
     // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
     const [dimmed, setDimmed] = SP_REACT.useState(false);
-    // 背光没能真正关掉（bl_power 是 root 只读）时，显示「修复权限」入口
-    const [needFix, setNeedFix] = SP_REACT.useState(false);
     const dimTimer = SP_REACT.useRef(null);
     // 组件卸载时一定恢复背光，避免留下黑屏
     SP_REACT.useEffect(() => () => {
@@ -1114,17 +1096,6 @@ function Speaker() {
             if (dimTimer.current)
                 clearTimeout(dimTimer.current);
             dimTimer.current = setTimeout(() => { exitDim(); }, secs);
-            // 背光没真正关掉就明确告诉用户，并提示可一键修复
-            if (r.backlight_off === false) {
-                setNeedFix(true);
-                toaster.toast({
-                    title: t("qam.dimPartial"),
-                    body: t("qam.dimPartialBody"),
-                });
-            }
-            else {
-                setNeedFix(false);
-            }
             // ⚠️ 休眠抑制没拿到 = 息屏后蓝牙一定会断（系统会自己睡下去）。
             //    必须单独提示，否则用户只会看到「放一会儿歌就断了」的怪现象。
             if (r.inhibit && r.inhibit.ok === false) {
@@ -1136,25 +1107,6 @@ function Speaker() {
         }
         catch (e) {
             toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
-        }
-    };
-    const fixPermission = async () => {
-        try {
-            const r = await api.fixScreenPermission();
-            if (r.ok) {
-                setNeedFix(false);
-                toaster.toast({ title: t("qam.fixOk"), body: t("qam.fixOkBody") });
-            }
-            else {
-                // 免密 sudo 不可用 —— 把确切命令告诉用户
-                toaster.toast({
-                    title: t("qam.fixManual"),
-                    body: r.command || r.reason || "",
-                });
-            }
-        }
-        catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
     };
     const exitDim = async () => {
@@ -1276,15 +1228,7 @@ function Speaker() {
                             ? t("qam.dimKeepAwake")
                             : (state.screen.inhibit_available === false
                                 ? t("qam.inhibitFailedBody")
-                                : t("qam.dimScreenHint")) })] })), needFix && (SP_JSX.jsxs("div", { style: {
-                    marginTop: 8, padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
-                    background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
-                    color: "#ffb3b3",
-                }, children: [t("qam.dimNeedFix"), SP_JSX.jsx(DFL.Focusable, { onClick: fixPermission, onActivate: fixPermission, style: {
-                            marginTop: 8, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            background: "rgba(236,65,65,0.18)", fontSize: 12, color: "#fff",
-                        }, children: t("qam.fixPermission") })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && SP_JSX.jsx(DimOverlay, { onWake: exitDim, hint: t("qam.dimHint") })] }));
+                                : t("qam.dimScreenHint")) })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && SP_JSX.jsx(DimOverlay, { onWake: exitDim, hint: t("qam.dimHint") })] }));
 }
 
 function BtSpeakerPage() {

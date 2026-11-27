@@ -478,7 +478,13 @@ class Plugin:
 
     @_safe
     async def get_screen_diag(self):
-        """息屏能力诊断：每个环节的真实结果。"""
+        """息屏能力诊断：把每个环节的真实结果都报出来。
+
+        ⚠️ 这里只**汇报事实**，不提供「修复 bl_power 权限」的入口 ——
+        真机实测证明：即使 `sudo chmod a+w bl_power` 之后写进去，
+        这台 Deck 的驱动也**完全不理**，屏幕照旧亮着。所以那条路是走不通的，
+        留着按钮只会让用户白折腾（详见 screen.Dimmer.dim 的说明）。
+        """
         if screen is None:
             return {_ERR: "screen 模块未加载"}
         d = screen.diagnose()
@@ -486,18 +492,6 @@ class Plugin:
             d["dimmed"] = self.dimmer.dimmed
             d["saved"] = self.dimmer._saved
         return d
-
-    @_safe
-    async def fix_screen_permission(self):
-        """尝试给 bl_power 加写权限（用免密 sudo）。
-
-        bl_power 默认是 0444（root 只读），deck 用户写不了，
-        而 SteamOS 的 polkit 助手只白名单了 brightness，不含 bl_power。
-        所以只能靠 sudo。有免密 sudo 就自动修好，没有就返回要手动执行的命令。
-        """
-        if screen is None:
-            return {_ERR: "screen 模块未加载"}
-        return await screen.ensure_permission()
 
     @_safe
     async def undim_screen(self):

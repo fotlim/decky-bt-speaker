@@ -2,24 +2,29 @@
 
 设计要点
 --------
-**为什么不能只叠一层黑？**
-MagicBlack 这类插件是往界面上盖一层纯黑。OLED 机型上黑像素不发光，等于关了；
-但 **LCD 机型（初代 Deck）背光仍然全亮**，该费的电一点没省，还照样发热。
+**真机上确认的事实（先看这段，避免重复踩坑）**
+
+在这台 Steam Deck OLED 上，**没有任何 sysfs 途径能真正关掉屏幕**：
+
+- `brightness = 0` 会被内核**钳制**到最小值，屏幕仍微微发亮
+  （真机反馈「很低亮度，但能看到 Steam 头像和菜单」）
+  OLED 的亮度是「硬件背光 + gamma 混合」实现的
+  （kernel commit 44b0fed0），所以写 0 并不等于关屏
+- `bl_power` 是 `-r--r--r-- root root`（0444），deck 用户写不了
+- 但**即使 `sudo chmod a+w bl_power` 之后写进去，驱动也完全不理** ——
+  用户实测确认，屏幕照旧亮着
+
+所以本模块只负责「把背光尽力调到最低」，
+**真正让屏幕黑掉的是上层 `DimOverlay` 的纯黑遮罩** ——
+OLED 上黑像素不发光，等效于关屏。两者叠加使用。
 
 **为什么不用 `xset dpms force off`？**
 Deck 跑在 gamescope（Wayland 合成器）上，X11 的 DPMS 命令对它无效
 （[ArchWiki](https://wiki.archlinux.org/title/Display_Power_Management_Signaling)：
 「Wayland 下由合成器控制屏幕」）。
 
-**本插件的做法**：直接写背光 sysfs，把亮度置 0。
-- 这是**真正的硬件级关屏**，LCD / OLED 都有效，能省电、能防烧屏
-- SteamOS 提供 `/usr/bin/steamos-polkit-helpers/steamos-priv-write`
-  这个 polkit 助手，**无需 root 密码**就能写 `/sys/class/backlight/*/brightness`
-  （Steam 自己的亮度滑块走的就是这条路径）
-- 该助手写完还会 `chmod a+w`，之后普通用户可以直接写，不必每次走 pkexec
-
 **安全边界（最关键的部分）**
-背光归 0 后屏幕全黑，如果唤醒失败用户只能硬重启。所以做了三重保护：
+背光调到最低 + 黑遮罩之后，如果唤醒失败用户只能硬重启。所以做了三重保护：
 
 1. **超时兜底**：息屏后最多 `MAX_DIM_SECONDS`（默认 5 分钟）自动恢复，
    即使所有输入监听都失效也不会永久黑屏
@@ -101,15 +106,18 @@ def _safe_sysfs_path(p):
 async def _sudo_write(path, value):
     """用 `sudo -n`（无密码模式）写 sysfs。失败返回 False。
 
-    为什么需要这条路径？
-    ------------------
+    为什么还需要这条路径？
+    --------------------
     `bl_power` 的权限是 **0444（root 只读）**，deck 用户写不了
     （真机实测：`-r--r--r-- root root bl_power`，写入报「权限不够」）。
     而 SteamOS 的 `steamos-priv-write` 助手只把 `brightness` 加进了
     白名单，**不包括 bl_power**，所以走 polkit 也不行。
 
-    唯一不破坏系统的办法就是 sudo。`-n` 表示非交互：
-    有免密 sudo 就成功，没有就立刻失败（不会卡住等密码）。
+    ⚠️ 但请注意：**即使这里成功了，这台 Deck 的驱动也不会真的关屏**。
+    用户实测确认 `sudo chmod a+w bl_power` + `echo 1 > bl_power` 之后
+    屏幕依然亮着。所以 `write_bl_power` 成功只代表「写进去了」，
+    不代表「背光关了」—— 真正的关屏靠上层黑遮罩。这条路径留着是因为
+    在别的机型 / 内核版本上它确实有效，且成本极低。
     """
     if not _safe_sysfs_path(path):
         return False
@@ -118,17 +126,6 @@ async def _sudo_write(path, value):
             ["sudo", "-n", "sh", "-c", 'printf "%s" "$1" > "$2"', "_", str(value), path],
             timeout=10.0,
         )
-        return rc == 0
-    except BtError:
-        return False
-
-
-async def _sudo_chmod(path):
-    """用 `sudo -n` 给 sysfs 文件加写权限。"""
-    if not _safe_sysfs_path(path):
-        return False
-    try:
-        rc, _ = await run_cmd(["sudo", "-n", "chmod", "a+w", path], timeout=10.0)
         return rc == 0
     except BtError:
         return False
@@ -165,34 +162,6 @@ async def write_bl_power(on, dev=None):
         return True, "sudo"
 
     return False, "read-only"
-
-
-async def ensure_permission(dev=None):
-    """尝试让 bl_power 变得可写（用免密 sudo chmod）。
-
-    返回 {"ok": bool, "method": str, "command": str}
-    `command` 是给用户看的、需要手动执行的命令（sudo 不可用时）。
-    """
-    dev = dev or find_backlight()
-    if not dev:
-        return {"ok": False, "method": "none", "command": "", "reason": "no backlight device"}
-    p = os.path.join(dev, "bl_power")
-    if not os.path.exists(p):
-        return {"ok": False, "method": "none", "command": "",
-                "reason": "this driver has no bl_power node"}
-    if _writable(p):
-        return {"ok": True, "method": "already-writable", "command": ""}
-
-    if await _sudo_chmod(p):
-        return {"ok": True, "method": "sudo-chmod", "command": ""}
-
-    # 免密 sudo 不可用 —— 给用户确切命令
-    return {
-        "ok": False,
-        "method": "manual",
-        "command": "sudo chmod a+w %s" % p,
-        "reason": "bl_power is root-only (0444) and passwordless sudo is unavailable",
-    }
 
 
 def read_brightness(dev=None):
@@ -311,12 +280,12 @@ def diagnose():
     except OSError:
         pass
     info["available"] = bool(dev) and (info["writable"] or info["priv_write_exists"])
-    # 能不能真正关掉背光：只有 bl_power 可写才行
-    info["can_turn_off"] = bool(dev) and info["bl_power_writable"]
-    info["manual_command"] = (
-        "sudo chmod a+w %s" % info["bl_power_path"]
-        if dev and info["bl_power_supported"] and not info["bl_power_writable"] else ""
-    )
+    # ⚠️ 不再提供 can_turn_off / manual_command。
+    #
+    # 早期这里会算「bl_power 可写吗」，不可写就让用户去 sudo chmod a+w。
+    # 真机实测证明这条路在这台 Deck 上**完全无效** —— chmod 之后写进去，
+    # 驱动也照样不关屏。给用户一条「照着做也没用」的指引比不给更糟，
+    # 所以这里只汇报事实，把「关屏靠遮罩」写在上面几个字段里。
     return info
 
 
@@ -362,14 +331,25 @@ class Dimmer:
         }
 
     async def dim(self):
-        """息屏（背光归 0）。
+        """息屏：先尝试关背光，再交由上层叠遮罩。
 
         返回 dict：
           {"ok": bool, "backlight_off": bool, "actual": int, "reason": str}
 
-        `backlight_off=False` 表示背光没能真正关掉（被内核钳制或写入失败），
-        此时**不能假装成功** —— 真机上用户会看到「屏幕还亮着」。
-        上层据此决定是提示用户还是继续用遮罩层兜着。
+        ⚠️ **`backlight_off=False` 不是故障，不要当成需要修复的错误。**
+
+        真机上已经证明：这台 Deck 的 `bl_power` 是 root 只读（0444），
+        而**即使 `chmod a+w` 之后写进去，驱动也完全不理**（用户实测确认）。
+        `brightness=0` 也会被内核钳制到最小值。也就是说 —— 在 Deck OLED 上
+        **没有任何 sysfs 途径能真正关掉背光**，这不是权限问题，是驱动行为。
+
+        所以本插件对「关屏」的实际方案是**两层叠加**：
+          1. 背光尽力调到最低（省一点电）
+          2. 上层 `DimOverlay` 用 Steam 的 `UIComposition` 铺满纯黑 ——
+             OLED 上黑像素不发光，等效于关屏；这是真正起作用的那一层
+
+        `backlight_off` 只作为**事实汇报**（诊断页会显示），
+        不再驱动「请去修复权限」这类提示 —— 那条路已经验证走不通。
         """
         if self.dimmed:
             return {"ok": True, "backlight_off": True, "actual": 0, "reason": "already dimmed"}
@@ -389,20 +369,16 @@ class Dimmer:
         self._saved = cur if cur > 0 else max(1, (mx or 100) // 4)
         self._dev = dev
 
-        # 优先用 bl_power 真正切断背光电源。
-        #
-        # 为什么不能只写 brightness=0？
-        # 很多驱动会把 0 钳制到最小值，屏幕仍然微微发亮
-        # （真机反馈「很低亮度，但能看到 Steam 头像和菜单」正是这个）。
-        # bl_power=1 是直接关电源，屏幕彻底黑。
+        # 优先尝试 bl_power（在部分机型/内核版本上确实能真正切断背光电源）。
+        # 失败很正常 —— 见上面 docstring，Deck OLED 的驱动不理这个节点。
         power_cut, method = await write_bl_power(False, dev)
 
         if power_cut:
             actual = 0
             off = True
-            hint = ""
         else:
-            # bl_power 不可用（权限不足 / 节点不存在），降级到 brightness=0
+            # bl_power 不可用（权限不足 / 驱动忽略），降级到 brightness=0。
+            # 这里**不再**因为「没关干净」而报错或提示用户去改权限。
             try:
                 actual = await write_brightness(0, dev)
             except BtError as e:
@@ -410,15 +386,11 @@ class Dimmer:
                 return {"ok": False, "backlight_off": False, "actual": cur,
                         "reason": str(e), "method": "failed"}
             off = (actual == 0)
-            hint = "" if off else (
-                "bl_power 是 root 只读（0444），插件无法切断背光电源，"
-                "只能把亮度调到最低。执行一次 sudo chmod a+w 即可修复。"
-            )
 
         self.dimmed = True
         self._bl_power_cut = power_cut
         self._since = asyncio.get_event_loop().time()
-        self._log("息屏：原亮度 %s/%s，bl_power=%s(%s)，brightness 实测 %s（彻底黑=%s）"
+        self._log("息屏：原亮度 %s/%s，bl_power=%s(%s)，brightness 实测 %s（背光彻底关=%s）"
                   % (self._saved, mx, "已切断" if power_cut else "未切断",
                      method, actual, off))
         return {
@@ -428,8 +400,12 @@ class Dimmer:
             "saved": self._saved,
             "max": mx,
             "method": method if power_cut else "brightness",
-            "hint": hint,
-            "reason": "" if off else "backlight clamped to %s (kernel refused 0)" % actual,
+            # 不再返回「请修复权限」类 hint —— 那条路验证无效
+            "hint": "",
+            "reason": "" if off else (
+                "backlight clamped by the driver; the black overlay is what turns "
+                "the screen off on OLED"
+            ),
         }
 
     async def restore(self, reason=""):

@@ -768,6 +768,17 @@ def test_screen():
               "bl_power_writable", "priv_write_exists", "available", "candidates"]:
         check("diagnose 有 %s" % k, k in diag)
 
+    # ⚠️ 回归检查：不许再提供「修复 bl_power 权限」的误导指引。
+    #
+    # 真机实测：sudo chmod a+w bl_power 之后写进去，驱动也完全不理，
+    # 屏幕照旧亮着。给用户一条「照着做也没用」的指引比不给更糟，
+    # 所以 ensure_permission / _sudo_chmod / can_turn_off / manual_command
+    # 全部删掉了。这里锁住，防止以后又被加回来。
+    check("不再有 ensure_permission", not hasattr(screen, "ensure_permission"))
+    check("不再有 _sudo_chmod", not hasattr(screen, "_sudo_chmod"))
+    check("diagnose 不再给 can_turn_off", "can_turn_off" not in diag)
+    check("diagnose 不再给 manual_command", "manual_command" not in diag)
+
 
 def test_wp_kernel():
     print("音量统一内核（消除 10 处重复的 wpctl 调用）")

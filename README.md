@@ -54,6 +54,14 @@ This plugin fills that gap.
   - Second line of defence: while the screen is off, the connected device is checked every 15s and reconnected if it dropped
   - Three ways to wake: any key / touch / **gamepad** (Steam routes gamepad input through `NavigationManager`, not DOM events)
   - Auto-restore after 5 minutes no matter what, plus restore-on-unload
+  - **How the screen actually goes dark**: on the Deck OLED there is **no sysfs way
+    to truly turn the panel off**. `brightness = 0` is clamped by the kernel, and
+    `bl_power` is root-only *and ignored by the driver even after `chmod a+w`*
+    (verified on hardware). So the plugin dims the backlight as far as it goes and
+    paints a full-black overlay lifted into Steam's `UIComposition` layer — on OLED
+    black pixels emit nothing, which is equivalent to off. An earlier version
+    offered a "fix permission" button for `bl_power`; it was removed in v2.8.1
+    because following it could never work.
 
 ### Audio experience
 
@@ -283,7 +291,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.1**.
 
 | Version | Contents |
 |---|---|
@@ -321,6 +329,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.0**.
 | 2.7.1 | `bl_power` first with read-back verify; overlay covers full screen |
 | 2.7.2 | Streaming scan; unnamed-device toggle; backend i18n cleanup |
 | 2.8.0 | **Screen-off no longer drops Bluetooth** — logind suspend inhibitor + link watchdog; `UIComposition` overlay; gamepad wake |
+| 2.8.1 | Removed the misleading "fix bl_power permission" button (the driver ignores it anyway) |
 
 ---
 
@@ -397,6 +406,12 @@ MIT © 大肥鱼 (BigFatFish)
   - 第二道防线：息屏期间每 15 秒检查一次已连接设备，掉了就自动重连
   - 三种唤醒方式：任意按键 / 触摸 / **手柄**（Steam 的手柄事件走 `NavigationManager`，不产生 DOM 事件）
   - 无论如何 5 分钟后自动恢复；插件卸载时也会恢复
+  - **屏幕到底是怎么黑的**：Deck OLED 上**没有任何 sysfs 途径能真正关屏**。
+    `brightness = 0` 会被内核钳制；`bl_power` 是 root 只读，而且
+    **即使 `chmod a+w` 之后写进去，驱动也完全不理**（真机验证过）。
+    所以插件的做法是「背光尽力调到最低 + 铺一层纯黑遮罩并提升到 Steam 的
+    `UIComposition` 合成层」—— OLED 上黑像素不发光，等效于关屏。
+    v2.8.1 删掉了早期那个「修复 `bl_power` 权限」按钮，因为照着做也不可能生效。
 
 ### 音频体验
 
@@ -632,7 +647,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.0**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.1**。
 
 | 版本 | 内容 |
 |---|---|
@@ -670,6 +685,7 @@ python pack.py          # 打包 zip
 | 2.7.1 | 优先 `bl_power` + 回读验证；遮罩铺满全屏 |
 | 2.7.2 | 流式扫描；无名称设备开关；后端英文化收尾 |
 | 2.8.0 | **息屏后蓝牙不再断** —— logind 休眠抑制锁 + 链路看护；`UIComposition` 遮罩；手柄唤醒 |
+| 2.8.1 | 删掉误导性的「修复 bl_power 权限」按钮（驱动根本不认它） |
 
 ---
 

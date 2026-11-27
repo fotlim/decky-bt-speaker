@@ -47,9 +47,6 @@ export const api = {
   getInhibit: () => call<[], InhibitInfo>("get_inhibit"),
   /** 息屏能力诊断 */
   getScreenDiag: () => call<[], any>("get_screen_diag"),
-  /** 尝试给 bl_power 加写权限（免密 sudo） */
-  fixScreenPermission: () =>
-    call<[], { ok: boolean; method: string; command?: string; reason?: string }>("fix_screen_permission"),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
   /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
   stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),
