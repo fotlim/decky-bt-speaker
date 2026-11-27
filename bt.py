@@ -858,7 +858,15 @@ class BlueZ:
         """agent 是否确认注册成功（比 agent_alive 更严格）。"""
         return self.agent_alive() and self._agent_ready
 
-    async def stop_agent(self):
+    async def stop_agent(self, quick=False):
+        """停止配对 agent。
+
+        `quick=True` 用于插件卸载场景：**不做任何等待**，直接 kill。
+        为什么？卸载时 Decky 会等 `_unload` 返回，而这里原本有
+        `await asyncio.wait_for(proc.wait(), 3.0)` —— 最坏等 3 秒，
+        用户感受就是「卸载好慢」。
+        子进程被 kill 后由系统回收，不需要我们等它退出。
+        """
         proc = self._agent_proc
         self._agent_proc = None
         if self._agent_task is not None:
@@ -869,6 +877,17 @@ class BlueZ:
             self._agent_task = None
         if proc is None:
             return
+
+        if quick:
+            # 快速路径：直接 kill，不等
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self._log("配对 agent 已强制结束（快速卸载）")
+            return
+
+        # 正常路径：礼貌地请它退出，最多等 1.5 秒
         try:
             if proc.stdin and not proc.stdin.is_closing():
                 proc.stdin.write(b"quit\n")
@@ -877,7 +896,7 @@ class BlueZ:
         except Exception:
             pass
         try:
-            await asyncio.wait_for(proc.wait(), 3.0)
+            await asyncio.wait_for(proc.wait(), 1.5)
         except Exception:
             try:
                 proc.kill()

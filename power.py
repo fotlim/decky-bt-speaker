@@ -99,7 +99,14 @@ class SleepWatcher:
         self._log("睡眠监听已启动（%s）" % backend)
         return True
 
-    async def stop(self):
+    async def stop(self, quick=False):
+        """停止睡眠监听。
+
+        `quick=True` 用于插件卸载：kill 后**不等子进程退出**。
+        原本这里 `await asyncio.wait_for(proc.wait(), 2.0)` 最坏等 2 秒，
+        加上配对 agent 的等待，卸载会卡好几秒。
+        子进程被 kill 后由系统回收，不需要我们等。
+        """
         self._stop = True
         if self._task is not None:
             try:
@@ -114,10 +121,11 @@ class SleepWatcher:
                 proc.kill()
             except Exception:
                 pass
-            try:
-                await asyncio.wait_for(proc.wait(), 2.0)
-            except Exception:
-                pass
+            if not quick:
+                try:
+                    await asyncio.wait_for(proc.wait(), 1.0)
+                except Exception:
+                    pass
         self._log("睡眠监听已停止")
 
     def alive(self):

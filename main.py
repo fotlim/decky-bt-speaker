@@ -335,22 +335,44 @@ class Plugin:
                 self.sleeper = None
 
     async def _unload(self):
+        """卸载清理。
+
+        ⚠️ 必须**尽快返回** —— Decky 会等这个方法结束后才完成卸载，
+        用户感受就是「卸载好慢」。原本这里有 3 + 2 = 5 秒的等待
+        （等 agent 进程退出 + 等睡眠监听退出）。
+
+        现在：
+        - 所有清理都走 quick 路径（kill 后不等子进程退出）
+        - 整体包一个 2 秒超时兜底，万一某个清理卡住也不会拖住卸载
+        - 子进程被 kill 后由系统回收，不需要我们等它
+        """
+        try:
+            await asyncio.wait_for(self._do_unload(), timeout=2.0)
+        except asyncio.TimeoutError:
+            self._log("卸载清理超时（已强制继续）")
+        except Exception as e:  # noqa: BLE001
+            self._log("卸载清理异常：%s" % e)
+
+    async def _do_unload(self):
         self._log("插件卸载")
+        # 1. 停后台任务（不 await，避免拖慢）
         if self._keep_task is not None:
             try:
                 self._keep_task.cancel()
             except Exception:
                 pass
             self._keep_task = None
+        # 2. 停睡眠监听（快速路径，不等进程退出）
         if self.sleeper is not None:
             try:
-                await self.sleeper.stop()
+                await self.sleeper.stop(quick=True)
             except Exception:
                 pass
             self.sleeper = None
+        # 3. 停配对 agent（快速路径）
         if self.bz is not None:
             try:
-                await self.bz.stop_agent()
+                await self.bz.stop_agent(quick=True)
             except Exception:
                 pass
 
