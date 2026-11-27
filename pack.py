@@ -96,7 +96,7 @@ def main():
 
     # 自检 2：目录里所有 .py（除测试/打包脚本）都必须进包，防止新增模块漏打
     packaged = set(n.split("/", 1)[1] for n in names if n.count("/") >= 1)
-    skip = {"pack.py", "tests_offline.py", "tests_i18n.py"}
+    skip = {"pack.py", "tests_offline.py", "tests_i18n.py", "tests_bundle.py"}
     missing_modules = []
     for fn in os.listdir(ROOT):
         if fn.endswith(".py") and fn not in skip and fn not in packaged:
@@ -207,6 +207,37 @@ def main():
         print("    const fn = (DFL as any)[\"findVar\"];")
         print("    if (typeof fn === \"function\") { ... }")
         return 1
+
+    # 自检 9：版本号必须真的注入进产物。
+    #
+    # 为什么检查这个？—— 排查「装了新版还报旧错」时，界面上显示的版本号
+    # 是唯一可靠的判断依据。如果注入插件失效，界面上就没有版本号，
+    # 用户和作者都只能靠猜（这正是 v2.8.2 排查时踩的坑）。
+    pkg_ver = ""
+    try:
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as f:
+            pkg_ver = json.load(f).get("version", "")
+    except Exception:  # noqa: BLE001
+        pass
+    meta_m = re.search(r'__BT_META__\s*=\s*(\{[^}]*\})', dist_src)
+    if not meta_m:
+        print("自检失败：产物里没有 __BT_META__，版本号注入失效")
+        print("  检查 rollup.config.js 里的 injectMeta 插件是否还在")
+        return 1
+    try:
+        meta = json.loads(meta_m.group(1))
+    except Exception as e:  # noqa: BLE001
+        print("自检失败：__BT_META__ 不是合法 JSON：%s" % e)
+        return 1
+    if pkg_ver and meta.get("version") != pkg_ver:
+        print("自检失败：注入的版本号 %r 与 package.json 的 %r 不一致"
+              % (meta.get("version"), pkg_ver))
+        print("  先跑 `pnpm run build` 重新生成 dist/index.js")
+        return 1
+    if not meta.get("build"):
+        print("自检失败：__BT_META__ 里没有 build 时间")
+        return 1
+    print("  版本号注入：v%s（构建 %s）" % (meta.get("version"), meta.get("build")))
 
     # 自检 7：plugin.json 的 name 不能含「会破坏 URL 的字符」。
     #

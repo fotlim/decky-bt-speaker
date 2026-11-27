@@ -10,6 +10,7 @@ import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
 import { subscribeDim, setDimmed as setDimState } from "../dimState";
+import { versionLabel } from "../version";
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
@@ -398,6 +399,19 @@ export function Speaker() {
           </div>
         </ButtonItem>
       </PanelSectionRow>
+
+      {/* 版本号 + 构建时间。
+          排查「装了新版还报旧错」时，这行是唯一可靠的判断依据 ——
+          如果这里显示的不是最新版本，说明装的是旧包或 CEF 缓存了旧 index.js，
+          而不是代码没修好。 */}
+      {versionLabel() && (
+        <div style={{
+          fontSize: 10, color: COLORS.dim, textAlign: "center",
+          marginTop: 6, letterSpacing: 0.3, userSelect: "text",
+        }}>
+          {versionLabel()}
+        </div>
+      )}
 
       {/* 息屏遮罩**不在这里渲染** —— 它挂在全局组件上（见 index.tsx），
           因为 QAM 面板的 DOM 被 Steam 容器包着且带 transform，

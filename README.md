@@ -292,7 +292,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.2**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.3**.
 
 | Version | Contents |
 |---|---|
@@ -332,6 +332,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.2**.
 | 2.8.0 | **Screen-off no longer drops Bluetooth** — logind suspend inhibitor + link watchdog; `UIComposition` overlay; gamepad wake |
 | 2.8.1 | Removed the misleading "fix bl_power permission" button (the driver ignores it anyway) |
 | 2.8.2 | **Fix plugin failing to load at all** — never call host APIs at module top level (DFL.findVar); overlay now a global component |
+| 2.8.3 | Version + build time shown in QAM (so you can tell which build is running); tests_bundle.py loads the real bundle against a mock old loader |
 
 ---
 
@@ -650,7 +651,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.2**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.3**。
 
 | 版本 | 内容 |
 |---|---|
@@ -690,6 +691,7 @@ python pack.py          # 打包 zip
 | 2.8.0 | **息屏后蓝牙不再断** —— logind 休眠抑制锁 + 链路看护；`UIComposition` 遮罩；手柄唤醒 |
 | 2.8.1 | 删掉误导性的「修复 bl_power 权限」按钮（驱动根本不认它） |
 | 2.8.2 | **修复插件完全无法加载** —— 禁止在模块顶层调宿主 API（DFL.findVar）；遮罩改挂全局组件 |
+| 2.8.3 | QAM 底部显示版本号+构建时间（一眼看出跑的是哪一版）；新增 tests_bundle.py 用假旧版 loader 真实加载产物 |
 
 ---
 
