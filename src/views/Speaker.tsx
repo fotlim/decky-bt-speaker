@@ -296,19 +296,18 @@ export function Speaker() {
         </Focusable>
       </div>
 
-      {/* 声音太小？一键增益到 130%（安全范围内） */}
-      <Focusable
-        onClick={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
-        onActivate={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
-        style={{
-          marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
-          fontSize: 12.5, color: COLORS.accent,
-        }}
-      >
-        <FaVolumeUp size={11} /> {t("qam.boost")}
-      </Focusable>
+      {/* 声音小：直接设绝对音量，不依赖读取当前值 */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }}>
+          {t("qam.boostHint")}
+        </div>
+        <Focusable flow-children="row" style={{ display: "flex", gap: 8 }}>
+          <VolBtn onClick={() => act(() => api.boostVolume(1.0), t("qam.boosted100"))} label="100%" />
+          <VolBtn onClick={() => act(() => api.boostVolume(1.3), t("qam.boosted130"))} label="130%" />
+          <VolBtn onClick={() => act(() => api.boostVolume(1.5), t("qam.boosted150"))} label="150%" />
+          <VolBtn onClick={() => act(() => api.boostVolume(2.0), t("qam.boosted200"))} label="200%" />
+        </Focusable>
+      </div>
 
       {connected.length === 0 && ad?.discoverable && (
         <div style={{ fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>

@@ -401,7 +401,12 @@ const EN = {
     "qam.unmute": "Unmute",
     "qam.clipping": "may clip",
     "qam.boost": "Too quiet? Boost to 130%",
+    "qam.boostHint": "Set absolute volume (no read-back needed):",
     "qam.boosted": "Boosted to 130%",
+    "qam.boosted100": "Volume set to 100%",
+    "qam.boosted130": "Volume set to 130%",
+    "qam.boosted150": "Volume set to 150%",
+    "qam.boosted200": "Volume set to 200% (may clip)",
     "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
     "qam.manage": "Devices / Settings",
     "qam.playingLabel": "Playing",
@@ -604,7 +609,12 @@ const ZH = {
     "qam.unmute": "取消静音",
     "qam.clipping": "可能破音",
     "qam.boost": "声音太小？增强到 130%",
+    "qam.boostHint": "直接设置绝对音量（不需要读取当前值）：",
     "qam.boosted": "已增益到 130%",
+    "qam.boosted100": "音量已设为 100%",
+    "qam.boosted130": "音量已设为 130%",
+    "qam.boosted150": "音量已设为 150%",
+    "qam.boosted200": "音量已设为 200%（可能破音）",
     "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
     "qam.manage": "设备管理 / 设置",
     "qam.playingLabel": "正在播放",
@@ -956,12 +966,7 @@ function Speaker() {
                                 } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
-                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
-                    marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                    background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
-                    fontSize: 12.5, color: COLORS.accent,
-                }, children: [SP_JSX.jsx(FaVolumeUp, { size: 11 }), " ", t("qam.boost")] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
+                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
 }
 
 function BtSpeakerPage() {

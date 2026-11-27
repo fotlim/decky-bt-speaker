@@ -888,16 +888,22 @@ class Plugin:
     # ------------------------------------------------------------------
     @_safe
     async def boost_volume(self, gain=1.3):
-        """一键增益：把总音量和外部源音量同时拉高。
+        """一键增益：把总音量和外部源音量同时拉到指定水平。
 
         蓝牙接收场景声音偏小的两个原因：
         1. 手机推流进来的 `bluez_input` 节点音量默认只有 70~80%
         2. Deck 自己的 sink 音量可能也不是满的
 
-        ⚠️ 超过 100% 会削波（爆音），所以：
-        - 默认只增益到 130%（SAFE_GAIN 内）
-        - 上限硬限制在 MAX_GAIN（200%）
-        - 返回值里带上 `clipping_warning`，让前端提示用户
+        ⚠️ 关键改动（真机反馈「声音小」的修复）
+        ------------------------------------
+        早期实现用 `wpctl get-volume` 先读当前值再算目标值，但真机上
+        **读取一直不可靠**（返回 0 或失败）。结果 `max(cur, g)` 里的 cur
+        是 0，虽然逻辑上会设成 g，但一旦读取抛异常整段就被跳过 ——
+        用户点「一键增益」后毫无变化。
+
+        现在改成 **直接设置绝对值**，完全不读：
+          `wpctl set-volume @DEFAULT_AUDIO_SINK@ 130%`
+        这样无论当前是多少，都能确保到达目标音量。
         """
         try:
             g = max(1.0, min(bt.MAX_GAIN, float(gain)))
@@ -906,16 +912,14 @@ class Plugin:
 
         applied = []
 
-        # 1. 总音量（默认 sink）
+        # 1. 总音量（默认 sink）—— 直接设绝对值，不读当前值
         try:
-            cur = await self.wp.get_volume()
-            target = max(cur["volume"], g)
-            await self.wp.set_volume(target)
-            applied.append("总音量 -> %d%%" % round(target * 100))
+            await self.wp.set_volume(g)
+            applied.append("总音量 -> %d%%" % round(g * 100))
         except Exception as e:  # noqa: BLE001
             self._log("增益：设置总音量失败 %s" % e)
 
-        # 2. 外部源节点（手机推流）
+        # 2. 外部源节点（手机推流）—— 同样直接设绝对值
         src_id = None
         try:
             text = await self.wp.status_text()
@@ -928,10 +932,8 @@ class Plugin:
 
         if src_id is not None:
             try:
-                cur2 = await self.wp.get_volume_of(src_id)
-                target2 = max(cur2["volume"], g)
-                await self.wp.set_volume_of(src_id, target2)
-                applied.append("外部音源 -> %d%%" % round(target2 * 100))
+                await self.wp.set_volume_of(src_id, g)
+                applied.append("外部音源 -> %d%%" % round(g * 100))
             except Exception as e:  # noqa: BLE001
                 self._log("增益：设置外部源音量失败 %s" % e)
 
