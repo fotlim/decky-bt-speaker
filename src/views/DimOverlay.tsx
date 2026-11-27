@@ -68,8 +68,20 @@ export function DimOverlay() {
     return subscribeDim((v) => setVisible(v));
   }, []);
 
-  // 提升到 Steam 的 Overlay 合成层（拿不到就静默降级）
-  useUIComposition(UIComposition.Overlay);
+  // 提升到 Steam 的 **OverlayQAM** 合成层。
+  //
+  // 为什么是 OverlayQAM 而不是 Overlay？
+  // ---------------------------------
+  // 真机反馈「可以息屏，但是会显示一个 QAM 面板」—— QAM 面板在 Steam 的
+  // `OverlayQAM` 层（枚举值 5），比 `Overlay`（2）更高。只提到 Overlay
+  // 的话，遮罩会被 QAM 压住。
+  //
+  // 虽然 `enterDim` 里已经先调 `Navigation.CloseSideMenus()` 把 QAM 收起来，
+  // 但那是「尽量」—— 用户可能在遮罩显示后又按 QAM 键。提到同层
+  // （OverlayQAM）能保证即使 QAM 又弹出来，遮罩也不会被它盖住。
+  //
+  // 拿不到 hook 就静默降级（见 uiComposition.ts），不会崩。
+  useUIComposition(UIComposition.OverlayQAM);
 
   // 聚焦遮罩，让键盘事件能落到这里
   useEffect(() => {

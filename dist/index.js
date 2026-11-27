@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"2.9.1","build":"11-27 22:24"};
+var __BT_META__ = {"version":"2.9.3","build":"11-27 22:32"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -1044,8 +1044,25 @@ function Speaker() {
     }, []);
     const enterDim = async () => {
         try {
+            // ⚠️ 第一步：先关掉 QAM 侧边菜单，再让遮罩接管。
+            //
+            // 真机反馈「可以息屏，但是会显示一个 QAM 面板」—— 根因是
+            // QAM 面板在**更高的合成层**，而遮罩挂在全局组件里，压不住它。
+            // 光靠 z-index 或 UIComposition.Overlay 都不够，因为 QAM 是 Steam
+            // 自己的 OverlayQAM 层。
+            //
+            // 正确做法是先把 QAM 收起来（`Navigation.CloseSideMenus()`，
+            // MagicBlack 也是这么干的），这样屏幕上只剩游戏画面，
+            // 遮罩就能完整盖住。用户想看插件面板时按 QAM 键，
+            // 那时会触发输入 → 自动唤醒 → 遮罩消失。
+            try {
+                DFL.Navigation.CloseSideMenus();
+            }
+            catch {
+                /* 老版本没有这个 API，忽略 */
+            }
             const r = await api.dimScreen();
-            // 先通知全局遮罩显示，再更新本地按钮状态
+            // 通知全局遮罩显示，再更新本地按钮状态
             setDimmed(true);
             setDimmedState(true);
             const secs = (r.max_seconds || 300) * 1000;
@@ -2086,8 +2103,20 @@ function DimOverlay() {
     SP_REACT.useEffect(() => {
         return subscribeDim((v) => setVisible(v));
     }, []);
-    // 提升到 Steam 的 Overlay 合成层（拿不到就静默降级）
-    useUIComposition(UIComposition.Overlay);
+    // 提升到 Steam 的 **OverlayQAM** 合成层。
+    //
+    // 为什么是 OverlayQAM 而不是 Overlay？
+    // ---------------------------------
+    // 真机反馈「可以息屏，但是会显示一个 QAM 面板」—— QAM 面板在 Steam 的
+    // `OverlayQAM` 层（枚举值 5），比 `Overlay`（2）更高。只提到 Overlay
+    // 的话，遮罩会被 QAM 压住。
+    //
+    // 虽然 `enterDim` 里已经先调 `Navigation.CloseSideMenus()` 把 QAM 收起来，
+    // 但那是「尽量」—— 用户可能在遮罩显示后又按 QAM 键。提到同层
+    // （OverlayQAM）能保证即使 QAM 又弹出来，遮罩也不会被它盖住。
+    //
+    // 拿不到 hook 就静默降级（见 uiComposition.ts），不会崩。
+    useUIComposition(UIComposition.OverlayQAM);
     // 聚焦遮罩，让键盘事件能落到这里
     SP_REACT.useEffect(() => {
         if (!visible)

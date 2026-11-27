@@ -876,8 +876,15 @@ class Plugin:
         # 就说明音频链路真的通了 —— 那是流真的建起来才会有的东西，
         # 比 profile 名可靠得多。两个判据任一成立就算就绪。
         #
-        # 开销：一次 `pactl list cards`，已随 status 的其它命令一起轮询，
-        # 且只在「有设备已连接」时才跑，空闲时不产生额外进程。
+        # ⚠️ 注意：这个判据**不能用 `live is not None`** 代替。
+        #    `live` 依赖 `nodes.find_bt_input()`，那个函数在 `wpctl status`
+        #    的 Sources 分节里搜 `bluez_input` —— 但 wpctl 显示的是节点的
+        #    **友好名**（如 `51. Ciallo`），根本没有 `bluez_input` 字样，
+        #    所以它一直是 None。真正的 `node.name` 只能从 `pw-dump` 拿。
+        #    （v2.9.1 就是这么错的，界面永远说「正在协商」。）
+        #
+        # 开销：一次 `pactl list cards` + 一次 `pw-dump`，且只在
+        # 「有设备已连接」时才跑，空闲时不产生额外进程。
         a2dp_state = {"ready": False, "profile": "", "available": [], "reason": ""}
         if a2dp is not None and connected:
             try:
@@ -885,7 +892,7 @@ class Plugin:
                 card = a2dp.find_sink_card(cards, connected[0].get("mac"))
                 by_profile = a2dp.sink_ready(card)
                 # 强判据：有 bluez_input 节点 = 音频链路真的通了
-                by_node = live is not None
+                by_node = await a2dp.has_input_node(connected[0].get("mac"))
                 ready = by_profile or by_node
                 a2dp_state = {
                     "ready": ready,

@@ -1134,28 +1134,49 @@ Card #53
 
     # ---- 强判据：bluez_input 节点（真机反馈「能接音频了却还说协商中」的修复）----
     #
-    # 有些对端协商完成后 pactl 的 Active Profile 仍显示成别的名字，
-    # 光看 profile 会误判成「没就绪」。而 bluez_input 节点是 A2DP 流
-    # 真的建起来才会出现的，用它当判据几乎不会误判。
-    WPCTL = """PipeWire 'pipewire-0' [1.6.8]
- \u251c\u2500 Sinks:
- \u2502  *   48. Built-in Audio Speaker [vol: 0.65]
+    # ⚠️ 这里的关键教训：`wpctl status` 里**看不到 bluez_input 字样**！
+    #    它的 Sources 分节显示的是节点**友好名**（如 "51. Ciallo"），
+    #    真正带 bluez_input.<MAC> 的是 node.name，只能从 pw-dump 拿。
+    #    v2.9.1 就是在 wpctl status 里搜，永远 False，界面永远说「正在协商」。
+    NODES = [
+        {"id": 49, "name": "alsa_input.pci-0000_04_00.6.analog-stereo",
+         "state": "suspended"},
+        {"id": 51, "name": "bluez_input.CC_42_10_8A_70_42", "state": "running"},
+    ]
+    check("识别 bluez_input 节点", a2dp._has_bluez_input(NODES))
+    check("只有内置设备时返回 False",
+          not a2dp._has_bluez_input([NODES[0]]))
+    check("空列表返回 False", not a2dp._has_bluez_input([]))
+    check("None 返回 False", not a2dp._has_bluez_input(None))
+    # 按 MAC 过滤
+    check("MAC 匹配时返回 True", a2dp._has_bluez_input(NODES, "CC:42:10:8A:70:42"))
+    check("MAC 不匹配时返回 False", not a2dp._has_bluez_input(NODES, "AA:BB:CC:DD:EE:FF"))
+    check("不传 MAC 时任何 bluez_input 都算", a2dp._has_bluez_input(NODES))
+    check("横线 MAC 也能匹配节点", a2dp._has_bluez_input(NODES, "cc-42-10-8a-70-42"))
+    # 文本形式也接受（降级路径）
+    check("文本输入也能识别", a2dp._has_bluez_input("node.name = bluez_input.CC_42_10_8A_70_42"))
+
+    # ---- 回归：wpctl status 的友好名不含 bluez_input ----
+    #
+    # 这条测试锁住那个坑：如果有人把判据改回「在 wpctl status 里搜
+    # bluez_input」，这里会提醒他这样做行不通。
+    import nodes
+    WPCTL_FRIENDLY = """PipeWire 'pipewire-0' [1.6.8]
  \u251c\u2500 Sources:
+ \u2502  *   49. Built-in Audio Microphone [vol: 1.00]
  \u2502      51. Ciallo [vol: 0.80]
 """
-    check("识别 bluez_input 节点", a2dp._has_bluez_input(
-        WPCTL.replace("51. Ciallo", "51. bluez_input.CC_42_10_8A_70_42")))
-    check("没有 bluez_input 时返回 False", not a2dp._has_bluez_input(WPCTL))
-    check("空输入返回 False", not a2dp._has_bluez_input(""))
-    check("None 返回 False", not a2dp._has_bluez_input(None))
-    # 按 MAC 过滤：不匹配的节点不算
-    two = WPCTL.replace("51. Ciallo", "51. bluez_input.CC_42_10_8A_70_42")
-    check("MAC 匹配时返回 True", a2dp._has_bluez_input(two, "CC:42:10:8A:70:42"))
-    check("MAC 不匹配时返回 False", not a2dp._has_bluez_input(two, "AA:BB:CC:DD:EE:FF"))
-    # 不带 mac 时，任何 bluez_input 都算（同一时刻只可能有一台设备）
-    check("不传 MAC 时任何 bluez_input 都算", a2dp._has_bluez_input(two))
-    # 横线写法 MAC 也要能匹配（复用 normalize_mac）
-    check("横线 MAC 也能匹配节点", a2dp._has_bluez_input(two, "cc-42-10-8a-70-42"))
+    check("wpctl 友好名里确实没有 bluez_input",
+          "bluez_input" not in WPCTL_FRIENDLY.lower())
+    # 兜底逻辑：非内置设备应被认成外部输入
+    src = nodes.find_bt_input(WPCTL_FRIENDLY)
+    check("兜底能认出外部输入（友好名）", src is not None, str(src))
+    if src:
+        check("兜底判定为 external", src.get("kind") == "external", str(src.get("kind")))
+    # 只有内置设备时不应误判
+    only_builtin = WPCTL_FRIENDLY.replace(
+        " \u2502      51. Ciallo [vol: 0.80]\n", "")
+    check("只有内置设备时不误判", nodes.find_bt_input(only_builtin) is None)
 
 
 if __name__ == "__main__":

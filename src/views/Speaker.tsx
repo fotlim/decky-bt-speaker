@@ -67,8 +67,25 @@ export function Speaker() {
 
   const enterDim = async () => {
     try {
+      // ⚠️ 第一步：先关掉 QAM 侧边菜单，再让遮罩接管。
+      //
+      // 真机反馈「可以息屏，但是会显示一个 QAM 面板」—— 根因是
+      // QAM 面板在**更高的合成层**，而遮罩挂在全局组件里，压不住它。
+      // 光靠 z-index 或 UIComposition.Overlay 都不够，因为 QAM 是 Steam
+      // 自己的 OverlayQAM 层。
+      //
+      // 正确做法是先把 QAM 收起来（`Navigation.CloseSideMenus()`，
+      // MagicBlack 也是这么干的），这样屏幕上只剩游戏画面，
+      // 遮罩就能完整盖住。用户想看插件面板时按 QAM 键，
+      // 那时会触发输入 → 自动唤醒 → 遮罩消失。
+      try {
+        Navigation.CloseSideMenus();
+      } catch {
+        /* 老版本没有这个 API，忽略 */
+      }
+
       const r: any = await api.dimScreen();
-      // 先通知全局遮罩显示，再更新本地按钮状态
+      // 通知全局遮罩显示，再更新本地按钮状态
       setDimState(true);
       setDimmedState(true);
       const secs = (r.max_seconds || 300) * 1000;

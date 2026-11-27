@@ -225,46 +225,110 @@ async def set_profile(card_name, profile):
 async def has_input_node(mac=None):
     """PipeWire 里有没有 `bluez_input` 节点 —— 音频链路真的通了的**强判据**。
 
-    为什么这个比 profile 名可靠？
-    --------------------------
-    真机反馈「已经能接音频了，界面还一直显示正在协商」。原因是有些对端
-    （尤其 Windows）协商完成后，`pactl` 里的 `Active Profile` 仍可能显示成
-    别的名字，或者输出格式和我们的正则对不上。
+    ⚠️⚠️ 血泪教训（v2.9.2）
+    ----------------------
+    v2.9.1 里这个函数是用 `wpctl status` 全文搜 `bluez_input` 实现的，
+    **永远返回 False**，因为：
 
-    而 `bluez_input.<MAC>` 这个节点是 **A2DP 流真的建起来才会出现**的
-    （PipeWire 在 transport 启动时才创建它），拿它当判据几乎不会误判。
+        `wpctl status` 显示的是节点的**友好名**
+            Sources:
+                51. Ciallo [vol: 0.80]        <- 只有设备名，没有 bluez_input
 
-    实现：优先用 `wpctl status`（本项目到处都在用，输出格式已知），
-    失败再退回 `pw-dump`。
+        而 `node.name`（真正带 `bluez_input.MAC` 的那个属性）
+        只能从 `pw-dump` 的 JSON 里拿到
+
+    结果就是「音频在放、界面却一直说正在协商」——判据压根没生效。
+    教训：**判断某个数据源里有什么之前，先确认那个字段真的会出现在里面。**
+
+    现在改用 `pw-dump`，和 `silence.py` 里 `parse_node_states` 用的是同一个
+    可靠来源（那边早就在用了，本鱼这里重复踩了一遍）。
+
+    为什么这个判据比 profile 名可靠？
+    ------------------------------
+    有些对端（尤其 Windows）协商完成后，`pactl` 的 `Active Profile`
+    仍可能显示成别的名字。而 `bluez_input` 节点是 **A2DP 流真的建起来
+    才会出现**的（PipeWire 在 transport 启动时才创建它），几乎不会误判。
     """
-    if not which("wpctl"):
+    states = await read_node_states()
+    if states is None:
         return False
-    try:
-        rc, out = await run_cmd(["wpctl", "status"], timeout=8.0)
-    except Exception:  # noqa: BLE001
-        return False
-    if rc != 0 or not out:
-        return False
-    return _has_bluez_input(out, mac)
+    return _has_bluez_input(states, mac)
 
 
-def _has_bluez_input(status_text, mac=None):
-    """从 `wpctl status` 输出里判断有没有 bluez_input 节点（纯函数，便于测试）。"""
-    if not status_text:
+def _has_bluez_input(states, mac=None):
+    """从 `pw-dump` 解析出的节点列表里判断有没有 bluez_input（纯函数，便于测试）。
+
+    `states` 是 `silence.parse_node_states()` 那种列表：
+        [{"id": 51, "name": "bluez_input.CC_42_10_8A_70_42", "state": "running"}]
+
+    也接受原始文本（便于测试和降级），此时直接在文本里搜。
+    """
+    if not states:
         return False
+
     want = ""
     if mac:
         norm = normalize_mac(mac)
         if norm:
-            # 节点名形如 bluez_input.CC_42_10_8A_70_42（冒号换下划线）
+            # node.name 形如 bluez_input.CC_42_10_8A_70_42（冒号换下划线）
             want = norm.replace(":", "_").lower()
-    for raw in status_text.splitlines():
+
+    # 传进来的是列表（正常路径）
+    if isinstance(states, (list, tuple)):
+        for item in states:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").lower()
+            if "bluez_input" not in name:
+                continue
+            if not want or want in name:
+                return True
+        return False
+
+    # 传进来的是文本（降级 / 测试）
+    for raw in str(states).splitlines():
         low = raw.lower()
         if "bluez_input" not in low:
             continue
         if not want or want in low:
             return True
     return False
+
+
+async def read_node_states():
+    """用 `pw-dump` 读节点状态。没有 pw-dump / 失败时返回 None。"""
+    if not which("pw-dump"):
+        return None
+    try:
+        rc, out = await run_cmd(["pw-dump"], timeout=10.0)
+    except Exception:  # noqa: BLE001
+        return None
+    if rc != 0 or not out:
+        return None
+    try:
+        import json as _json
+        data = _json.loads(out)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, list):
+        return None
+    result = []
+    for obj in data:
+        try:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("type") != "PipeWire:Interface:Node":
+                continue
+            info = obj.get("info") or {}
+            props = info.get("props") or {}
+            result.append({
+                "id": obj.get("id"),
+                "name": str(props.get("node.name") or ""),
+                "state": str(info.get("state") or "").lower(),
+            })
+        except Exception:  # noqa: BLE001
+            continue
+    return result
 
 
 async def wait_for_sink(mac=None, log=None, max_wait=MAX_WAIT,

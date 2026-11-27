@@ -92,17 +92,46 @@ def parse_status(text):
 def find_bt_input(status_text):
     """找出蓝牙 A2DP 输入节点（外部设备推流进 Deck）。
 
-    判定依据（按可靠度排序）：
-    1. 节点名里带 `bluez_input`（PipeWire 的标准命名）
-    2. 节点名匹配一个设备别名且不是内置声卡（兜底）
+    ⚠️⚠️ 重要：`wpctl status` 里**看不到 `bluez_input` 字样**
+    ----------------------------------------------------
+    Sources 分节显示的是节点的**友好名**（设备名），例如：
 
-    返回 dict 或 None。
+        Sources:
+            49. Built-in Audio Microphone [vol: 1.00]
+            51. Ciallo [vol: 0.80]        <- 这是蓝牙输入，但名字是设备名
+
+    所以「在 wpctl status 里搜 `bluez_input`」**永远搜不到** ——
+    这个函数以前就是这么写的，导致 `live` 一直是 None，
+    界面上的「谁在放歌」和「外部音源音量」整块功能都没生效。
+
+    真正带 `bluez_input.<MAC>` 的是 `node.name` 属性，只能从 `pw-dump` 拿。
+    调用方请优先用 `a2dp.read_node_states()` / `a2dp.has_input_node()`。
+
+    这个函数保留作**降级路径**：如果节点名碰巧就是 `bluez_input...`
+    （某些 PipeWire 版本会直接显示 node.name），仍然能认出来。
+    另外它现在也会**按「是不是内置声卡」来兜底**：Sources 里只要不是
+    内置麦克风、且不是内置声卡，就认为是外部蓝牙输入。
     """
     parsed = parse_status(status_text)
+
+    # 1. 优先：名字里直接带 bluez_input（某些版本 wpctl 会显示 node.name）
     for node in parsed["sources"]:
         if re.search(r"bluez_input", node["name"], re.I):
             node["kind"] = "bluez"
             return node
+
+    # 2. 兜底：Sources 里不是内置设备的，就是外部推流
+    #
+    #    内置设备的典型名字：Built-in Audio Microphone / alsa_input.*
+    #    蓝牙输入在 wpctl 里显示为对端设备名（如 "Ciallo"、"Pixel 8"）
+    for node in parsed["sources"]:
+        name = node["name"] or ""
+        low = name.lower()
+        if any(k in low for k in ("built-in", "builtin", "alsa_input", "internal")):
+            continue
+        node["kind"] = "external"
+        return node
+
     return None
 
 
