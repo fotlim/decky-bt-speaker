@@ -421,17 +421,30 @@ class Plugin:
     async def dim_screen(self):
         """息屏（背光归 0）。
 
-        安全措施：
-        - 记住原亮度，恢复时还原
-        - 启动兜底定时器：最多 MAX_DIM_SECONDS 后自动恢复
-        - 前端会同时监听输入，任何按键/触摸立即调 undim_screen
+        ⚠️ 如实反馈是否真的关掉了背光。真机上出现过「点了息屏但屏幕还亮着」——
+        原因是内核把 0 钳制成了最小值。所以这里回读验证，不假装成功。
         """
         if self.dimmer is None:
             return {_ERR: "screen 模块未加载"}
-        await self.dimmer.dim()
-        # 兜底：即使前端监听失效，也不会永久黑屏
-        self._start_dim_guard()
-        return {"ok": True, "dimmed": True, "max_seconds": screen.MAX_DIM_SECONDS}
+        r = await self.dimmer.dim()
+        if r.get("ok") and r.get("backlight_off"):
+            # 背光确实关了，启动兜底定时器
+            self._start_dim_guard()
+        elif r.get("ok"):
+            # 写了但没关掉（被钳制）：仍然启动兜底，避免遮罩层卡住
+            self._start_dim_guard()
+        return r
+
+    @_safe
+    async def get_screen_diag(self):
+        """息屏能力诊断：每个环节的真实结果。"""
+        if screen is None:
+            return {_ERR: "screen 模块未加载"}
+        d = screen.diagnose()
+        if self.dimmer is not None:
+            d["dimmed"] = self.dimmer.dimmed
+            d["saved"] = self.dimmer._saved
+        return d
 
     @_safe
     async def undim_screen(self):

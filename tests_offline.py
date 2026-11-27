@@ -753,6 +753,19 @@ def test_screen():
     check("status 有 available", "available" in st)
     check("status 有 dimmed", "dimmed" in st)
     check("status 有 path", "path" in st)
+    check("status 有 bl_power 字段", "bl_power" in st)
+    check("status 有 bl_power_supported", "bl_power_supported" in st)
+
+    # bl_power 是真正切断背光电源的开关，brightness=0 只会被钳制
+    bp, bp_ok = screen.read_bl_power()
+    check("read_bl_power 不崩", bp is None or isinstance(bp, int),
+          "bl_power=%s supported=%s" % (bp, bp_ok))
+
+    # 诊断函数必须能跑（真机上用来定位是哪一环断了）
+    diag = screen.diagnose()
+    for k in ["backlight_dev", "writable", "bl_power_supported",
+              "bl_power_writable", "priv_write_exists", "available", "candidates"]:
+        check("diagnose 有 %s" % k, k in diag)
 
 
 def test_wp_kernel():

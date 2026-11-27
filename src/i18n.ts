@@ -69,6 +69,9 @@ const EN: Dict = {
   "qam.manage": "Devices / Settings",
   "qam.dimScreen": "Turn off screen (keep playing)",
   "qam.dimHint": "Tap anywhere or press any key to wake",
+  "qam.dimPartial": "Backlight not fully off",
+  "qam.dimPartialBody": "The kernel clamped brightness to {val}. The screen is dim but still lit. Try setting bl_power manually.",
+  "qam.dimFailed": "Cannot turn off screen",
   "qam.playingLabel": "Playing",
 
   // 全屏页
@@ -289,6 +292,9 @@ const ZH: Dict = {
   "qam.manage": "设备管理 / 设置",
   "qam.dimScreen": "息屏当音箱（继续播放）",
   "qam.dimHint": "触摸屏幕或按任意键唤醒",
+  "qam.dimPartial": "背光没能完全关闭",
+  "qam.dimPartialBody": "内核把亮度钳制到了 {val}，屏幕只是变暗但仍然发亮。可尝试手动设置 bl_power。",
+  "qam.dimFailed": "无法关闭屏幕",
   "qam.playingLabel": "正在播放",
 
   "page.title": "蓝牙音箱",

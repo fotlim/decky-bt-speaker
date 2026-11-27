@@ -67,6 +67,54 @@ def find_backlight():
     return None
 
 
+def read_bl_power(dev=None):
+    """读背光电源状态。返回 (bl_power, supported)。
+
+    `bl_power` 是**真正切断背光电源**的开关（0=开，1=关，部分驱动 4=FB_BLANK_POWERDOWN）。
+    这和 `brightness` 完全不同：
+      - `brightness = 0` 只是把调光值调到最低，很多驱动会**钳制到最小值**，
+        屏幕仍然微微发亮（真机反馈「很低亮度但还能看到头像」就是这个）
+      - `bl_power = 1` 直接关掉背光电源，屏幕彻底黑
+
+    返回 supported=False 表示该设备没有 bl_power 节点。
+    """
+    dev = dev or find_backlight()
+    if not dev:
+        return None, False
+    p = os.path.join(dev, "bl_power")
+    if not os.path.exists(p):
+        return None, False
+    try:
+        with open(p, "r") as f:
+            return int((f.read() or "0").strip()), True
+    except (OSError, ValueError):
+        return None, True
+
+
+async def write_bl_power(on, dev=None):
+    """开关背光电源。
+
+    `on=False` 表示切断背光（真正黑屏）。
+    SteamOS 的 polkit 助手只白名单了 `brightness` 路径，不包含 `bl_power`，
+    所以这里优先直接写（多数情况下 udev 已给 bl_power 可写权限），
+    失败时返回 False 让上层降级到 brightness=0。
+    """
+    dev = dev or find_backlight()
+    if not dev:
+        return False
+    p = os.path.join(dev, "bl_power")
+    if not os.path.exists(p):
+        return False
+    if not _writable(p):
+        return False
+    try:
+        with open(p, "w") as f:
+            f.write("0" if on else "1")
+        return True
+    except OSError:
+        return False
+
+
 def read_brightness(dev=None):
     """读当前亮度与最大亮度，返回 (cur, max) 或 (None, None)。"""
     dev = dev or find_backlight()
@@ -91,52 +139,99 @@ def _writable(path):
 
 
 async def write_brightness(value, dev=None):
-    """写背光值。
+    """写背光值，**写完回读验证**。
 
-    三条路径，按可靠性排序：
-      1. 直接写（steamos-priv-write 之前已经 chmod a+w 过）
-      2. `steamos-priv-write`（polkit 助手，无需密码）
-      3. 直接抛错（让上层提示用户）
+    为什么要回读？
+    ------------
+    内核/驱动可能把过小的值钳制掉。ArchWiki 提到 systemd-backlight 会把
+    亮度钳到「至少 1 或最大值的 5%」；部分驱动对直接写 sysfs 也会做类似处理。
+    只写不验证的话，用户会看到「点了息屏但屏幕还亮着」—— 正是真机反馈的问题。
 
-    返回 True 表示成功。
+    返回实际生效的亮度值（int）。如果和请求值不一致，说明被钳制了。
     """
     dev = dev or find_backlight()
     if not dev:
         raise BtError("找不到背光设备（/sys/class/backlight 下没有可用的）")
 
     path = os.path.join(dev, "brightness")
-    val = str(int(value))
+    want = int(value)
 
     # 1. 能直接写就直接写（最快，零进程开销）
+    wrote = False
     if _writable(path):
         try:
             with open(path, "w") as f:
-                f.write(val)
-            return True
+                f.write(str(want))
+            wrote = True
         except OSError:
-            pass  # 落到 polkit
+            wrote = False
 
     # 2. 走 SteamOS 的 polkit 助手
-    if os.path.exists(PRIV_WRITE):
-        try:
-            rc, out = await run_cmd([PRIV_WRITE, path, val], timeout=12.0)
-            if rc == 0:
-                return True
-            # 助手的输出在 journal 里，这里只能给个通用错误
+    if not wrote:
+        if not os.path.exists(PRIV_WRITE):
             raise BtError(
-                "写入背光被拒绝。可能需要在桌面模式下首次授权，"
-                "或 SteamOS 版本较旧没有该助手。"
+                "没有写背光的权限，也找不到 steamos-priv-write 助手。\n"
+                "可以手动执行一次：\n  sudo chmod a+w %s" % path
             )
-        except BtError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            raise BtError("写入背光失败：%s" % e)
+        rc, out = await run_cmd([PRIV_WRITE, path, str(want)], timeout=12.0)
+        if rc != 0:
+            raise BtError(
+                "写入背光被拒绝（steamos-priv-write 返回 %d）。" % rc
+            )
 
-    raise BtError(
-        "没有写背光的权限，也找不到 steamos-priv-write 助手。\n"
-        "可以手动执行一次：\n"
-        "  sudo chmod a+w %s" % path
-    )
+    # 3. 回读验证
+    got, mx = read_brightness(dev)
+    return got if got is not None else want
+
+
+def diagnose():
+    """息屏能力诊断：把每个环节的真实结果都报出来。
+
+    用户在真机上遇到「点了没反应」时，这个函数能直接定位是哪一环断了：
+    没有背光设备 / 没有写权限 / 没有 polkit 助手 / 写了但被钳制。
+    """
+    dev = find_backlight()
+    info = {
+        "backlight_dev": dev or "",
+        "brightness_path": (os.path.join(dev, "brightness") if dev else ""),
+        "writable": False,
+        "bl_power_path": (os.path.join(dev, "bl_power") if dev else ""),
+        "bl_power_supported": False,
+        "bl_power_writable": False,
+        "bl_power": None,
+        "priv_write_exists": os.path.exists(PRIV_WRITE),
+        "priv_write_path": PRIV_WRITE,
+        "current": None,
+        "max": None,
+        "available": False,
+        "candidates": [],
+    }
+    if dev:
+        path = os.path.join(dev, "brightness")
+        info["writable"] = _writable(path)
+        cur, mx = read_brightness(dev)
+        info["current"] = cur
+        info["max"] = mx
+        bp, bp_ok = read_bl_power(dev)
+        info["bl_power"] = bp
+        info["bl_power_supported"] = bp_ok
+        info["bl_power_writable"] = _writable(os.path.join(dev, "bl_power"))
+    # 列出所有候选设备（排查「选错设备」的情况）
+    try:
+        base = "/sys/class/backlight"
+        for name in sorted(os.listdir(base)):
+            d = os.path.join(base, name)
+            p = os.path.join(d, "brightness")
+            if os.path.exists(p):
+                c, m = read_brightness(d)
+                info["candidates"].append({
+                    "name": name, "current": c, "max": m,
+                    "writable": _writable(p),
+                })
+    except OSError:
+        pass
+    info["available"] = bool(dev) and (info["writable"] or info["priv_write_exists"])
+    return info
 
 
 def available():
@@ -164,9 +259,11 @@ class Dimmer:
         self._dev = None
         self._since = 0.0
         self._task = None
+        self._bl_power_cut = False   # 是否用了 bl_power 切断背光电源
 
     def status(self):
         cur, mx = read_brightness()
+        bp, bp_ok = read_bl_power()
         return {
             "available": available(),
             "dimmed": self.dimmed,
@@ -174,47 +271,102 @@ class Dimmer:
             "max": mx,
             "saved": self._saved,
             "path": find_backlight() or "",
+            "bl_power": bp,
+            "bl_power_supported": bp_ok,
         }
 
     async def dim(self):
-        """息屏（背光归 0）。"""
+        """息屏（背光归 0）。
+
+        返回 dict：
+          {"ok": bool, "backlight_off": bool, "actual": int, "reason": str}
+
+        `backlight_off=False` 表示背光没能真正关掉（被内核钳制或写入失败），
+        此时**不能假装成功** —— 真机上用户会看到「屏幕还亮着」。
+        上层据此决定是提示用户还是继续用遮罩层兜着。
+        """
         if self.dimmed:
-            return True
+            return {"ok": True, "backlight_off": True, "actual": 0, "reason": "already dimmed"}
 
         dev = find_backlight()
         if not dev:
-            raise BtError("找不到背光设备")
+            return {"ok": False, "backlight_off": False, "actual": -1,
+                    "reason": "no backlight device found"}
 
         cur, mx = read_brightness(dev)
         if cur is None:
-            raise BtError("读不到当前亮度")
+            return {"ok": False, "backlight_off": False, "actual": -1,
+                    "reason": "cannot read current brightness"}
 
-        # 记住原亮度。注意：如果原亮度就是 0（用户自己调到底了），
+        # 记住原亮度。如果原亮度就是 0（用户自己调到底了），
         # 恢复时给一个可见的最小值，否则用户会以为坏了。
         self._saved = cur if cur > 0 else max(1, (mx or 100) // 4)
         self._dev = dev
 
-        await write_brightness(0, dev)
+        # 优先用 bl_power 真正切断背光电源。
+        #
+        # 为什么不能只写 brightness=0？
+        # 很多驱动会把 0 钳制到最小值，屏幕仍然微微发亮
+        # （真机反馈「很低亮度，但能看到 Steam 头像和菜单」正是这个）。
+        # bl_power=1 是直接关电源，屏幕彻底黑。
+        power_cut = await write_bl_power(False, dev)
+
+        if power_cut:
+            actual = 0
+            off = True
+        else:
+            # bl_power 不可用（节点不存在或无权限），降级到 brightness=0
+            try:
+                actual = await write_brightness(0, dev)
+            except BtError as e:
+                self._saved = None
+                return {"ok": False, "backlight_off": False, "actual": cur,
+                        "reason": str(e)}
+            off = (actual == 0)
+
         self.dimmed = True
+        self._bl_power_cut = power_cut
         self._since = asyncio.get_event_loop().time()
-        self._log("已息屏（原亮度 %s / %s）" % (self._saved, mx))
-        return True
+        self._log("息屏：原亮度 %s/%s，bl_power=%s，brightness 实测 %s（彻底黑=%s）"
+                  % (self._saved, mx, "已切断" if power_cut else "不可用", actual, off))
+        return {
+            "ok": True,
+            "backlight_off": off,
+            "actual": actual,
+            "saved": self._saved,
+            "max": mx,
+            "method": "bl_power" if power_cut else "brightness",
+            "reason": "" if off else "backlight clamped to %s (kernel refused 0)" % actual,
+        }
 
     async def restore(self, reason=""):
-        """恢复背光到息屏前的值。"""
+        """恢复背光到息屏前的值。
+
+        顺序很重要：先开 bl_power 电源，再设亮度。反过来的话
+        bl_power 关着时写亮度可能不生效。
+        """
         if not self.dimmed:
-            return True
+            return {"ok": True, "actual": -1, "reason": "not dimmed"}
         target = self._saved or 1
+        result = {"ok": False, "actual": -1, "reason": ""}
         try:
-            await write_brightness(target, self._dev)
-            self._log("已恢复显示%s（亮度 %s）" % (("：" + reason) if reason else "", target))
+            # 1. 先恢复背光电源
+            if getattr(self, "_bl_power_cut", False):
+                await write_bl_power(True, self._dev)
+            # 2. 再恢复亮度
+            actual = await write_brightness(target, self._dev)
+            result = {"ok": actual == target, "actual": actual,
+                      "reason": "" if actual == target else "clamped"}
+            self._log("恢复显示%s：目标 %s，实测 %s"
+                      % (("（" + reason + "）") if reason else "", target, actual))
         except BtError as e:
+            result = {"ok": False, "actual": -1, "reason": str(e)}
             self._log("恢复显示失败：%s" % e)
-            raise
         finally:
             self.dimmed = False
             self._saved = None
-        return True
+            self._bl_power_cut = False
+        return result
 
     def elapsed(self):
         """已息屏多少秒。"""

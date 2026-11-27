@@ -440,6 +440,9 @@ const EN = {
     "qam.manage": "Devices / Settings",
     "qam.dimScreen": "Turn off screen (keep playing)",
     "qam.dimHint": "Tap anywhere or press any key to wake",
+    "qam.dimPartial": "Backlight not fully off",
+    "qam.dimPartialBody": "The kernel clamped brightness to {val}. The screen is dim but still lit. Try setting bl_power manually.",
+    "qam.dimFailed": "Cannot turn off screen",
     "qam.playingLabel": "Playing",
     // 全屏页
     "page.title": "Bluetooth Speaker",
@@ -650,6 +653,9 @@ const ZH = {
     "qam.manage": "设备管理 / 设置",
     "qam.dimScreen": "息屏当音箱（继续播放）",
     "qam.dimHint": "触摸屏幕或按任意键唤醒",
+    "qam.dimPartial": "背光没能完全关闭",
+    "qam.dimPartialBody": "内核把亮度钳制到了 {val}，屏幕只是变暗但仍然发亮。可尝试手动设置 bl_power。",
+    "qam.dimFailed": "无法关闭屏幕",
     "qam.playingLabel": "正在播放",
     "page.title": "蓝牙音箱",
     "page.readingAdapter": "正在读取蓝牙适配器…",
@@ -927,9 +933,16 @@ function Speaker() {
             if (dimTimer.current)
                 clearTimeout(dimTimer.current);
             dimTimer.current = setTimeout(() => { exitDim(); }, secs);
+            // 背光没真正关掉就明确告诉用户，别让人以为功能生效了
+            if (r.backlight_off === false) {
+                toaster.toast({
+                    title: t("qam.dimPartial"),
+                    body: t("qam.dimPartialBody", { val: String(r.actual ?? "?") }),
+                });
+            }
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+            toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
         }
     };
     const exitDim = async () => {
@@ -1047,13 +1060,14 @@ function Speaker() {
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
                     fontSize: 12.5, color: COLORS.text,
-                }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && (SP_JSX.jsx("div", { ref: overlayRef, tabIndex: 0, onPointerDown: exitDim, onKeyDown: exitDim, onClick: exitDim, style: {
-                    position: "fixed", inset: 0, zIndex: 999999,
-                    background: "#000", display: "flex",
-                    alignItems: "center", justifyContent: "center",
-                    color: "rgba(255,255,255,0.28)", fontSize: 13,
-                    cursor: "pointer",
-                }, children: t("qam.dimHint") }))] }));
+                }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && typeof document !== "undefined" && SP_REACTDOM.createPortal(SP_JSX.jsx("div", { ref: overlayRef, tabIndex: 0, onPointerDown: exitDim, onKeyDown: exitDim, onClick: exitDim, onTouchStart: exitDim, style: {
+                    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+                    width: "100vw", height: "100vh",
+                    zIndex: 2147483647, background: "#000",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "rgba(255,255,255,0.22)", fontSize: 13,
+                    cursor: "pointer", outline: "none",
+                }, children: t("qam.dimHint") }), document.body)] }));
 }
 
 function BtSpeakerPage() {

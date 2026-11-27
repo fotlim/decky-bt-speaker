@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
 } from "@decky/ui";
@@ -65,14 +66,21 @@ export function Speaker() {
 
   const enterDim = async () => {
     try {
-      const r = await api.dimScreen();
+      const r: any = await api.dimScreen();
       setDimmed(true);
       // 兜底：后端也有定时器，这里再加一层，防止遮罩层没被点到
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
       dimTimer.current = setTimeout(() => { exitDim(); }, secs);
+      // 背光没真正关掉就明确告诉用户，别让人以为功能生效了
+      if (r.backlight_off === false) {
+        toaster.toast({
+          title: t("qam.dimPartial"),
+          body: t("qam.dimPartialBody", { val: String(r.actual ?? "?") }),
+        });
+      }
     } catch (e) {
-      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+      toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
     }
   };
 
@@ -375,25 +383,35 @@ export function Speaker() {
         </ButtonItem>
       </PanelSectionRow>
 
-      {/* 息屏遮罩：背光归 0 后屏幕全黑，这一层负责接住任何输入并立刻恢复。
-          即使背光写入失败（只是变黑而没真正关屏），这层也让体验一致。 */}
-      {dimmed && (
+      {/* 息屏遮罩：挂在 document.body 上（createPortal），而不是就地渲染。
+          为什么必须用 Portal？
+          ------------------
+          Decky 的 QAM 面板容器带 CSS transform，而 transform 会**破坏
+          position:fixed 的包含块** —— fixed 元素变成相对那个容器定位，
+          结果遮罩只盖住面板区域，Steam 的头像和菜单栏仍然露在外面
+          （真机反馈「还能看到头像和菜单图标」就是这个原因）。
+
+          挂到 body 之后 fixed 才真正相对视口，能盖满整个屏幕。 */}
+      {dimmed && typeof document !== "undefined" && createPortal(
         <div
           ref={overlayRef}
           tabIndex={0}
           onPointerDown={exitDim}
           onKeyDown={exitDim}
           onClick={exitDim}
+          onTouchStart={exitDim}
           style={{
-            position: "fixed", inset: 0, zIndex: 999999,
-            background: "#000", display: "flex",
-            alignItems: "center", justifyContent: "center",
-            color: "rgba(255,255,255,0.28)", fontSize: 13,
-            cursor: "pointer",
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+            width: "100vw", height: "100vh",
+            zIndex: 2147483647, background: "#000",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: "rgba(255,255,255,0.22)", fontSize: 13,
+            cursor: "pointer", outline: "none",
           }}
         >
           {t("qam.dimHint")}
-        </div>
+        </div>,
+        document.body,
       )}
     </PanelSection>
   );

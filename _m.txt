@@ -1,0 +1,26 @@
+fix(v2.7.1): 息屏只变暗 + 遮罩没盖全屏
+
+真机反馈两个现象：「很低亮度，但还能看到 Steam 头像和菜单图标」。
+这是两个独立 bug。
+
+1. 背光只变暗没关掉
+   根因：brightness=0 只是把调光值调到最低，很多驱动会把它钳制到
+   最小值，屏幕仍然微微发亮。
+   修法：优先用 bl_power（真正切断背光电源），不可用时才降级到
+   brightness=0。restore 时先开 bl_power 再恢复亮度（顺序很重要，
+   bl_power 关着时写亮度可能不生效）。
+   同时 write_brightness 改成写完回读验证，不再假装成功。
+
+2. 遮罩没盖住全屏
+   根因：Decky 的 QAM 面板容器带 CSS transform，而 transform 会破坏
+   position:fixed 的包含块 —— fixed 元素变成相对那个容器定位，
+   结果遮罩只盖住面板区域，Steam 头像和菜单栏露在外面。
+   修法：用 createPortal 把遮罩挂到 document.body，fixed 才真正
+   相对视口。z-index 提到 2147483647（int 上限）。
+
+另外：
+- dim() 返回真实结果（backlight_off / method / actual），前端在背光
+  没真正关掉时明确提示，不让用户以为功能生效了
+- 新增 screen.diagnose() 和 get_screen_diag RPC，能直接定位是哪一环
+  断了（无设备/无权限/无助手/被钳制）
+- 新增 10 项测试：bl_power 读写、诊断字段完整性
