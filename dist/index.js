@@ -112,6 +112,12 @@ const api = {
     restartAgent: () => call("restart_agent"),
     pairDevice: (mac) => call("pair_device", mac),
     scanDevices: (timeout = 20) => call("scan_devices", timeout),
+    /** 启动扫描（非阻塞，立刻返回） */
+    scanStart: (timeout = 20) => call("scan_start", timeout),
+    /** 拉取当前扫描结果（边扫边出） */
+    scanList: () => call("scan_list"),
+    /** 停止扫描 */
+    scanStop: () => call("scan_stop"),
     stopScan: () => call("stop_scan"),
     pairDeviceFull: (mac) => call("pair_device_full", mac),
     forgetDevice: (mac) => call("forget_device", mac),
@@ -368,6 +374,7 @@ const EN = {
     "common.reading": "Reading…",
     "common.none": "None",
     "common.unknown": "Unknown",
+    "common.empty": "(empty)",
     // 插件名
     "plugin.name": "Bluetooth Speaker",
     // QAM 面板
@@ -407,9 +414,15 @@ const EN = {
     "tab.diag": "Diagnostics",
     // 设备
     "dev.search": "Search nearby devices",
-    "dev.searchHint": "Scans for 20 seconds, then tap Pair. No need to leave the plugin.",
+    "dev.searchHint": "Streaming scan: results appear as they're found. Tap again to stop early.",
     "dev.searchHintWarn": "Tip: turn on \"Allow devices to find and connect\" in QAM first.",
-    "dev.searching": "Searching… (about 20s)",
+    "dev.searching": "Searching…",
+    "dev.stopScan": "Stop",
+    "dev.foundCount": "{n} found",
+    "dev.showUnnamed": "Show unnamed devices",
+    "dev.showUnnamedDesc": "Devices that don't broadcast a name are shown with a type + MAC tail label. Turn off to hide clutter.",
+    "dev.hiddenCount": "{n} unnamed devices hidden",
+    "dev.allHidden": "All {n} devices found are unnamed. Turn on \"Show unnamed devices\" to see them.",
     "dev.pair": "Pair",
     "dev.pairing": "Pairing…",
     "dev.paired": "Paired {name}",
@@ -462,6 +475,13 @@ const EN = {
     "set.fixStutter": "Fix stuttering",
     "set.diagStutter": "Diagnose",
     "set.stutterHint": "\"Fix stuttering\" switches to the anti-stutter latency profile (bigger buffer) and sets volume to 100%.",
+    "set.latencyHint": "A2DP latency depends on codec and buffering. This trades battery / low latency / anti-stutter.",
+    "set.outputsNow": "Current outputs:",
+    "set.avdtpLimit": "The reverse is impossible: AVDTP (v1.3 §5.3) allows only one A2DP source device per adapter at a time.",
+    "set.codecInfo": "Codec",
+    "set.codecActive": "Active codec",
+    "set.codecRole": "Direction",
+    "set.defaultOutput": "Default output",
     "set.power": "Power saving",
     "set.powerHint": "Phones often stay connected after the music stops. Auto-disconnect keeps the radio free.",
     "set.silence": "Auto-disconnect after silence",
@@ -492,7 +512,8 @@ const EN = {
     "eq.customActive": "Using imported curve",
     "eq.active": "Active",
     "eq.import": "Import AutoEQ / Squiglink curve",
-    "eq.importHint": "Paste the contents of ParametricEQ.txt from AutoEq or squig.link. Format: `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`.",
+    "eq.importHint": "Copy the contents of ParametricEQ.txt from AutoEq or squig.link and paste it here. Format: `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`.",
+    "eq.configPath": "Config file:",
     "eq.paste": "Paste curve…",
     "eq.collapse": "Collapse",
     "eq.removeEq": "Remove EQ entirely",
@@ -517,6 +538,19 @@ const EN = {
     "diag.viewLog": "View log",
     "diag.pluginLog": "Plugin log",
     "diag.agent": "Pairing agent",
+    // 自检项（后端只返回 key，这里翻译）
+    "chk.bluetoothctl": "bluetoothctl available",
+    "chk.busctl": "busctl available",
+    "chk.wpctl": "wpctl available",
+    "chk.adapter": "Bluetooth adapter detected",
+    "chk.a2dpSink": "Adapter supports A2DP Sink",
+    "chk.powered": "Bluetooth is powered on",
+    "chk.agent": "Pairing agent running",
+    "chk.discoverable": "Discoverable",
+    "chk.pipewireSink": "PipeWire has an audio output",
+    "chk.pwVersion": "PipeWire version readable",
+    "chk.wpVersion": "WirePlumber version readable",
+    "chk.modules": "All backend modules loaded",
     // Toast
     "toast.failed": "Operation failed",
     "toast.saveFailed": "Save failed",
@@ -534,6 +568,7 @@ const ZH = {
     "common.reading": "读取中…",
     "common.none": "无",
     "common.unknown": "未知",
+    "common.empty": "（空）",
     "plugin.name": "蓝牙音箱",
     "qam.btOn": "蓝牙已开",
     "qam.btOff": "蓝牙已关",
@@ -569,9 +604,15 @@ const ZH = {
     "tab.eq": "均衡器",
     "tab.diag": "诊断",
     "dev.search": "搜索附近设备",
-    "dev.searchHint": "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。",
+    "dev.searchHint": "流式扫描：搜到一个显示一个。再点一次可提前停止。",
     "dev.searchHintWarn": "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。",
-    "dev.searching": "正在搜索…（约 20 秒）",
+    "dev.searching": "正在搜索…",
+    "dev.stopScan": "停止",
+    "dev.foundCount": "已找到 {n} 个",
+    "dev.showUnnamed": "显示没有名称的设备",
+    "dev.showUnnamedDesc": "不广播名称的设备会用「类型 + MAC 后缀」标注。关掉可以过滤杂项。",
+    "dev.hiddenCount": "已隐藏 {n} 个无名称设备",
+    "dev.allHidden": "找到的 {n} 个设备都没有名称。打开「显示没有名称的设备」即可看到。",
     "dev.pair": "配对",
     "dev.pairing": "配对中…",
     "dev.paired": "已配对 {name}",
@@ -623,6 +664,13 @@ const ZH = {
     "set.fixStutter": "一键抗卡顿",
     "set.diagStutter": "诊断卡顿",
     "set.stutterHint": "「一键抗卡顿」会把延迟档位切到抗卡顿（加大缓冲）并把音量拉到 100%。",
+    "set.latencyHint": "蓝牙 A2DP 的延迟取决于编码器与缓冲。这里是「省电 / 低延迟 / 抗卡顿」的取舍。",
+    "set.outputsNow": "当前输出设备：",
+    "set.avdtpLimit": "⚠️ 反方向做不到：受 AVDTP 协议限制（v1.3 §5.3），同一适配器同一时刻只能有一个蓝牙 A2DP 源设备连进来。",
+    "set.codecInfo": "编码器",
+    "set.codecActive": "当前编码",
+    "set.codecRole": "方向",
+    "set.defaultOutput": "默认输出",
     "set.power": "省电",
     "set.powerHint": "手机放完歌常忘了断开，A2DP 链路会一直占着蓝牙射频。这里可以自动收尾。",
     "set.silence": "静音多久后自动断开",
@@ -653,6 +701,7 @@ const ZH = {
     "eq.active": "生效中",
     "eq.import": "导入 AutoEQ / Squiglink 曲线",
     "eq.importHint": "从 AutoEq 或 squig.link 复制 ParametricEQ.txt 的内容粘进来。格式形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`。",
+    "eq.configPath": "配置文件：",
     "eq.paste": "粘贴曲线…",
     "eq.collapse": "收起",
     "eq.removeEq": "完全移除 EQ",
@@ -676,6 +725,19 @@ const ZH = {
     "diag.viewLog": "查看日志",
     "diag.pluginLog": "插件日志",
     "diag.agent": "配对 agent",
+    // 自检项
+    "chk.bluetoothctl": "bluetoothctl 可用",
+    "chk.busctl": "busctl 可用",
+    "chk.wpctl": "wpctl 可用",
+    "chk.adapter": "检测到蓝牙适配器",
+    "chk.a2dpSink": "适配器支持 A2DP Sink",
+    "chk.powered": "蓝牙已上电",
+    "chk.agent": "配对 agent 在运行",
+    "chk.discoverable": "可被发现",
+    "chk.pipewireSink": "PipeWire 有音频输出",
+    "chk.pwVersion": "PipeWire 版本可读",
+    "chk.wpVersion": "WirePlumber 版本可读",
+    "chk.modules": "后端模块全部加载",
     "toast.failed": "操作失败",
     "toast.saveFailed": "保存失败",
     "toast.switchFailed": "切换失败",
@@ -960,36 +1022,80 @@ function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, al
                 }) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }));
 }
 // ---------------------------------------------------------------------------
-// 扫描面板：在插件内完成「搜索 → 配对」，不用跳系统蓝牙设置
+// 扫描面板：流式扫描 + 可中途停止 + 信号强度 + 无名称设备开关
 // ---------------------------------------------------------------------------
 function ScanPanel({ alias, discoverable, onPaired }) {
     const [scanning, setScanning] = SP_REACT.useState(false);
     const [devices, setDevices] = SP_REACT.useState([]);
     const [scanned, setScanned] = SP_REACT.useState(false);
     const [busyMac, setBusyMac] = SP_REACT.useState(null);
-    const scan = async () => {
+    // 是否显示没有广播名称的设备（默认显示，但可关闭以过滤杂项）
+    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
+    const [elapsed, setElapsed] = SP_REACT.useState(0);
+    const pollRef = SP_REACT.useRef(null);
+    const tickRef = SP_REACT.useRef(null);
+    // 扫描时每 2 秒拉一次结果，边扫边出
+    const startScan = async () => {
         if (scanning)
             return;
         setScanning(true);
         setScanned(false);
+        setDevices([]);
+        setElapsed(0);
         try {
-            const r = await api.scanDevices(20);
-            setDevices(r.devices || []);
-            setScanned(true);
-            if (!r.devices || !r.devices.length) {
-                toaster.toast({
-                    title: t("dev.noneFound"),
-                    body: t("dev.noneFound"),
-                });
-            }
+            await api.scanStart(20);
+            // 计时器
+            const started = Date.now();
+            tickRef.current = setInterval(() => {
+                setElapsed(Math.floor((Date.now() - started) / 1000));
+            }, 500);
+            // 轮询器
+            pollRef.current = setInterval(async () => {
+                try {
+                    const r = await api.scanList();
+                    setDevices(r.devices || []);
+                }
+                catch { /* ignore */ }
+            }, 2000);
+            // 首次立刻拉一次
+            const r0 = await api.scanList();
+            setDevices(r0.devices || []);
+            // 20 秒后自动结束
+            setTimeout(() => finishScan(), 20500);
         }
         catch (e) {
             toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
-        }
-        finally {
-            setScanning(false);
+            finishScan();
         }
     };
+    const finishScan = async () => {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+        if (tickRef.current) {
+            clearInterval(tickRef.current);
+            tickRef.current = null;
+        }
+        try {
+            await api.scanStop();
+        }
+        catch { /* ignore */ }
+        try {
+            const r = await api.scanList();
+            setDevices(r.devices || []);
+        }
+        catch { /* ignore */ }
+        setScanning(false);
+        setScanned(true);
+    };
+    // 卸载时清理定时器
+    SP_REACT.useEffect(() => () => {
+        if (pollRef.current)
+            clearInterval(pollRef.current);
+        if (tickRef.current)
+            clearInterval(tickRef.current);
+    }, []);
     const pair = async (mac, name) => {
         if (busyMac)
             return;
@@ -1007,17 +1113,22 @@ function ScanPanel({ alias, discoverable, onPaired }) {
             setBusyMac(null);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: t("dev.search") }), SP_JSX.jsx(Hint, { children: discoverable
-                    ? t("dev.searchHint")
-                    : t("dev.searchHintWarn") }), SP_JSX.jsx(DFL.Focusable, { onClick: scan, onActivate: scan, style: {
-                    display: "inline-flex", alignItems: "center", gap: 8, marginTop: 8,
-                    padding: "9px 18px", borderRadius: 18, cursor: scanning ? "default" : "pointer",
-                    background: scanning ? "rgba(255,255,255,0.06)" : COLORS.accent,
-                    color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
-                }, children: scanning ? t("dev.searching") : t("dev.search") }), devices.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: devices.map((d) => {
+    const shown = showUnnamed ? devices : devices.filter((d) => d.has_real_name !== false);
+    const hiddenCount = devices.length - shown.length;
+    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: t("dev.search") }), SP_JSX.jsx(Hint, { children: discoverable ? t("dev.searchHint") : t("dev.searchHintWarn") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, alignItems: "center" }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: scanning ? finishScan : startScan, onActivate: scanning ? finishScan : startScan, style: {
+                            display: "inline-flex", alignItems: "center", gap: 8,
+                            padding: "9px 18px", borderRadius: 18, cursor: "pointer",
+                            background: scanning ? "rgba(236,65,65,0.16)" : COLORS.accent,
+                            color: scanning ? COLORS.accentWarm : "#fff", fontSize: 13.5,
+                        }, children: scanning
+                            ? `${t("dev.stopScan")} · ${elapsed}s`
+                            : t("dev.search") }), scanning && (SP_JSX.jsx("span", { style: { fontSize: 12, color: COLORS.dim }, children: t("dev.foundCount", { n: devices.length }) }))] }), SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }), !showUnnamed && hiddenCount > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenCount", { n: hiddenCount }) }))] }), shown.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: shown.map((d) => {
                     const busy = busyMac === d.mac;
                     const isPhone = (d.icon || "").includes("phone");
                     const isComputer = (d.icon || "").includes("computer");
+                    // 信号强度条（RSSI 通常 -100..-30，越高越好）
+                    const rssi = typeof d.rssi === "number" ? d.rssi : null;
+                    const bars = rssi === null ? 0 : Math.max(1, Math.min(4, Math.round((rssi + 100) / 17.5)));
                     return (SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
                             borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
@@ -1025,13 +1136,18 @@ function ScanPanel({ alias, discoverable, onPaired }) {
                                     width: 40, height: 40, borderRadius: 20, flexShrink: 0,
                                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
                                     background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: [d.mac, d.has_real_name === false && (SP_JSX.jsxs("span", { style: { marginLeft: 6, color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.display || d.name), onActivate: () => pair(d.mac, d.display || d.name), style: {
+                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: [SP_JSX.jsx("span", { children: d.mac }), rssi !== null && (SP_JSX.jsxs("span", { style: { display: "inline-flex", alignItems: "flex-end", gap: 1, marginLeft: 4 }, children: [[1, 2, 3, 4].map((b) => (SP_JSX.jsx("span", { style: {
+                                                            width: 3, height: 3 + b * 2, borderRadius: 1,
+                                                            background: b <= bars ? COLORS.ok : "rgba(255,255,255,0.15)",
+                                                        } }, b))), SP_JSX.jsxs("span", { style: { marginLeft: 3 }, children: [rssi, " dBm"] })] })), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.display || d.name), onActivate: () => pair(d.mac, d.display || d.name), style: {
                                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                                     cursor: busy ? "default" : "pointer",
                                     background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
                                     color: busy ? COLORS.sub : "#fff",
                                 }, children: busy ? t("dev.pairing") : t("dev.pair") })] }, d.mac));
-                }) })), scanned && devices.length === 0 && (SP_JSX.jsx(Hint, { children: t("dev.noneFound") }))] }));
+                }) })), scanned && shown.length === 0 && (SP_JSX.jsx(Hint, { children: devices.length > 0 && !showUnnamed
+                    ? t("dev.allHidden", { n: devices.length })
+                    : t("dev.noneFound") }))] }));
 }
 // ---------------------------------------------------------------------------
 function SettingsTab({ state, refresh }) {
@@ -1266,12 +1382,12 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: "\u84DD\u7259 A2DP \u7684\u5EF6\u8FDF\u53D6\u51B3\u4E8E\u7F16\u7801\u5668\u4E0E\u7F13\u51B2\u3002\u8FD9\u91CC\u662F\u300C\u7701\u7535 / \u4F4E\u5EF6\u8FDF / \u6297\u5361\u987F\u300D\u7684\u53D6\u820D\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: t("set.latencyHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
                     const active = (s.latency_profile || "balanced") === p.key;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.setLatencyProfile(p.key);
-                                toaster.toast({ title: `${p.label}`, body: "WirePlumber 已重启" });
+                                toaster.toast({ title: p.label, body: "" });
                                 setTimeout(refresh, 1200);
                             }
                             catch (e) {
@@ -1297,9 +1413,9 @@ function SettingsTab({ state, refresh }) {
                     catch (e) {
                         toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: ["\u5F53\u524D\u8F93\u51FA\u8BBE\u5907\uFF1A", (state.output?.sinks || []).map((k) => k.name).join(" · ") || "读取中…", SP_JSX.jsx("br", {}), "\u26A0\uFE0F \u53CD\u65B9\u5411\u505A\u4E0D\u5230\uFF1A\u53D7 AVDTP \u534F\u8BAE\u9650\u5236\uFF08v1.3 \u00A75.3\uFF09\uFF0C\u540C\u4E00\u9002\u914D\u5668\u540C\u4E00\u65F6\u523B\u53EA\u80FD\u6709\u4E00\u4E2A\u84DD\u7259 A2DP \u6E90\u8BBE\u5907\u8FDE\u8FDB\u6765\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u7F16\u7801\u5668" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["\u5F53\u524D\u7F16\u7801\uFF1A", state.codec?.codec || "未连接"] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: ["\u65B9\u5411\uFF1A", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
+                } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
                     ? t("set.resumeDescOn", { backend: state.power.backend })
-                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["\u9ED8\u8BA4\u8F93\u51FA\uFF1A", state.sink || t("common.unknown")] })] })] }));
+                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
 }
 function ToggleRow({ label, desc, checked, onChange }) {
     return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => onChange(!checked), onActivate: () => onChange(!checked), style: {
@@ -1378,7 +1494,7 @@ function EqTab({ state, refresh }) {
                                         border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                         display: "flex", alignItems: "center", justifyContent: "center",
                                     }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 14.5, color: COLORS.text }, children: [p.label, isBusy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: p.desc })] }), p.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: p.bands }) })] }, p.key));
-                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsxs(Hint, { children: ["\u4ECE ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "AutoEq" }), " \u6216 ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "squig.link" }), " \u590D\u5236 ParametricEQ.txt \u7684\u5185\u5BB9\u7C98\u8FDB\u6765\u3002\u683C\u5F0F\u5F62\u5982 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`\u3002"] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsx(Hint, { children: t("eq.importHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.removeEq();
                                 toaster.toast({ title: t("eq.removeEq"), body: "" });
@@ -1397,7 +1513,7 @@ function EqTab({ state, refresh }) {
                             display: "inline-block", marginTop: 8, padding: "9px 20px", borderRadius: 9,
                             background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
                             opacity: busy === "import" ? 0.5 : 1,
-                        }, children: busy === "import" ? t("eq.importing") : t("eq.applyImport") })] })), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
+                        }, children: busy === "import" ? t("eq.importing") : t("eq.applyImport") })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
 }
 // ---------------------------------------------------------------------------
 function DiagTab() {
@@ -1457,7 +1573,7 @@ function DiagTab() {
                                 borderRadius: 8, fontSize: 13,
                                 background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
                                 border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
-                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
+                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.key ? t(c.key) : c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || t("common.empty") }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || t("common.empty") })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
 }
 
 var index = definePlugin(() => {

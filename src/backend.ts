@@ -19,6 +19,12 @@ export const api = {
   pairDevice: (mac: string) => call<[string], { ok: boolean }>("pair_device", mac),
   scanDevices: (timeout = 20) =>
     call<[number], { ok: boolean; devices: any[]; seconds: number }>("scan_devices", timeout),
+  /** 启动扫描（非阻塞，立刻返回） */
+  scanStart: (timeout = 20) => call<[number], { ok: boolean; scanning: boolean }>("scan_start", timeout),
+  /** 拉取当前扫描结果（边扫边出） */
+  scanList: () => call<[], { ok: boolean; devices: any[]; scanning: boolean }>("scan_list"),
+  /** 停止扫描 */
+  scanStop: () => call<[], { ok: boolean }>("scan_stop"),
   stopScan: () => call<[], { ok: boolean }>("stop_scan"),
   pairDeviceFull: (mac: string) =>
     call<[string], { ok: boolean; agent: boolean }>("pair_device_full", mac),

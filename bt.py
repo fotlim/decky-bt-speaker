@@ -206,6 +206,26 @@ def _class_label(klass):
     return ""
 
 
+def _parse_rssi(text):
+    """解析 `bluetoothctl info` 里的 RSSI 字段，返回 int 或 None。
+
+    形如 `RSSI: -58`。部分设备（尤其 BLE）不提供该字段。
+    """
+    if not text:
+        return None
+    m = re.search(r"(-?\d+)", str(text))
+    if not m:
+        return None
+    try:
+        v = int(m.group(1))
+    except ValueError:
+        return None
+    # 合理范围检查，避免解析到垃圾值
+    if -120 <= v <= 20:
+        return v
+    return None
+
+
 def _icon_label(icon):
     """从 BlueZ 的 Icon 属性推断友好类型名。"""
     table = {
@@ -277,6 +297,9 @@ class BlueZ:
         self._agent_task = None
         self._agent_ready = False
         self._show_cache = (0.0, None)
+        # 扫描：后台任务 + 运行标记（非阻塞，可中途停止）
+        self._scan_task = None
+        self._scan_running = False
 
     # -- 基础 -------------------------------------------------------------
     @staticmethod
@@ -511,6 +534,7 @@ class BlueZ:
             ),
             "icon": icon,
             "class": klass,
+            "rssi": _parse_rssi(kv.get("RSSI", "")),
             "paired": yes(kv.get("Paired", "no")),
             "trusted": yes(kv.get("Trusted", "no")),
             "connected": yes(kv.get("Connected", "no")),
@@ -541,19 +565,43 @@ class BlueZ:
 
     # -- 扫描 -------------------------------------------------------------
     async def start_discovery(self, timeout=30):
-        """开始扫描附近设备。
+        """开始扫描附近设备（**非阻塞**）。
 
-        注意：`bluetoothctl scan on` 是**阻塞的**，会一直跑直到 scan off。
-        所以这里用 `--timeout` 参数让它自动结束，避免留下僵尸进程。
+        早期实现用 `bluetoothctl --timeout N scan on`，它会把调用方卡住 N 秒，
+        界面上只能干等、看不到任何中间结果。
+
+        现在改为后台任务：
+        - 立刻返回，调用方可以立刻去轮询 `list_discovered()`
+        - 扫描在后台持续，直到超时或被 `stop_discovery()` 打断
         """
-        rc, out = await self._ctl("--timeout", str(int(timeout)), "scan", "on",
-                                  timeout=float(timeout) + 5.0)
-        # scan 超时退出返回码通常非 0，这里不当作错误
-        self._show_cache = (0.0, None)
-        self._log("扫描完成（%d 秒）" % timeout)
+        if self._scan_task is not None and not self._scan_task.done():
+            return True
+
+        async def _run():
+            try:
+                await self._ctl("--timeout", str(int(timeout)), "scan", "on",
+                                timeout=float(timeout) + 5.0)
+            except BtError:
+                pass
+            finally:
+                self._scan_running = False
+                self._log("扫描结束（%d 秒）" % timeout)
+
+        self._scan_running = True
+        self._scan_task = asyncio.create_task(_run())
+        self._log("开始扫描（%d 秒）" % timeout)
         return True
 
     async def stop_discovery(self):
+        """停止扫描（可中途打断）。"""
+        self._scan_running = False
+        task = self._scan_task
+        self._scan_task = None
+        if task is not None and not task.done():
+            try:
+                task.cancel()
+            except Exception:
+                pass
         try:
             await self._ctl("scan", "off", timeout=8.0)
         except BtError:
@@ -561,11 +609,16 @@ class BlueZ:
         self._show_cache = (0.0, None)
         return True
 
-    async def list_discovered(self, include_paired=False):
+    def scanning(self):
+        return bool(self._scan_running)
+
+    async def list_discovered(self, include_paired=False, include_unreachable=True):
         """列出扫描到的设备。
 
-        返回 [{'mac','name','paired','connected','icon','rssi'}]。
+        返回 [{'mac','name','display','paired','connected','icon','rssi','type'}]。
         默认只返回**未配对**的（也就是「可以新配对」的设备）。
+
+        `rssi` 来自 `bluetoothctl info` 的 `RSSI:` 字段（部分设备不提供）。
         """
         rc, out = await self._ctl("devices", timeout=10.0)
         if rc != 0:
@@ -583,7 +636,7 @@ class BlueZ:
                 "display": friendly_device_name(raw, "", "", "", mac),
                 "has_real_name": bool(raw and not is_mac(raw)),
                 "paired": False, "connected": False,
-                "icon": "", "rssi": None,
+                "icon": "", "class": "", "rssi": None,
             }
             # 逐个补详情（数量一般不多，可以接受）
             try:
@@ -595,14 +648,24 @@ class BlueZ:
                     "paired": info.get("paired", False),
                     "connected": info.get("connected", False),
                     "icon": info.get("icon", ""),
+                    "class": info.get("class", ""),
+                    "rssi": info.get("rssi"),
                 })
             except BtError:
                 pass
             if not include_paired and item["paired"]:
                 continue
+            # 完全没信号又没名字的，多半是扫描残留的幽灵条目，默认过滤
+            if not include_unreachable and item["rssi"] is None and not item["has_real_name"]:
+                continue
             devs.append(item)
-        # 已连接的排前面；有真实名字的排前面（无名的通常是不该连的杂项设备）
-        devs.sort(key=lambda d: (not d["connected"], not d["has_real_name"], d["display"].lower()))
+        # 排序：已连接 > 有名字 > 信号强
+        devs.sort(key=lambda d: (
+            not d["connected"],
+            not d["has_real_name"],
+            -(d["rssi"] if isinstance(d["rssi"], int) else -999),
+            d["display"].lower(),
+        ))
         return devs
 
     async def pair_and_trust(self, mac):

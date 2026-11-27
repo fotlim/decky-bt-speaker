@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Focusable, SliderField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../backend";
@@ -204,7 +204,7 @@ function DevicesTab({
 }
 
 // ---------------------------------------------------------------------------
-// 扫描面板：在插件内完成「搜索 → 配对」，不用跳系统蓝牙设置
+// 扫描面板：流式扫描 + 可中途停止 + 信号强度 + 无名称设备开关
 // ---------------------------------------------------------------------------
 function ScanPanel({ alias, discoverable, onPaired }: {
   alias: string; discoverable: boolean; onPaired: () => void;
@@ -213,27 +213,61 @@ function ScanPanel({ alias, discoverable, onPaired }: {
   const [devices, setDevices] = useState<any[]>([]);
   const [scanned, setScanned] = useState(false);
   const [busyMac, setBusyMac] = useState<string | null>(null);
+  // 是否显示没有广播名称的设备（默认显示，但可关闭以过滤杂项）
+  const [showUnnamed, setShowUnnamed] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
+  const pollRef = useRef<any>(null);
+  const tickRef = useRef<any>(null);
 
-  const scan = async () => {
+  // 扫描时每 2 秒拉一次结果，边扫边出
+  const startScan = async () => {
     if (scanning) return;
     setScanning(true);
     setScanned(false);
+    setDevices([]);
+    setElapsed(0);
     try {
-      const r = await api.scanDevices(20);
-      setDevices(r.devices || []);
-      setScanned(true);
-      if (!r.devices || !r.devices.length) {
-        toaster.toast({
-          title: t("dev.noneFound"),
-          body: t("dev.noneFound"),
-        });
-      }
+      await api.scanStart(20);
+      // 计时器
+      const started = Date.now();
+      tickRef.current = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - started) / 1000));
+      }, 500);
+      // 轮询器
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await api.scanList();
+          setDevices(r.devices || []);
+        } catch { /* ignore */ }
+      }, 2000);
+      // 首次立刻拉一次
+      const r0 = await api.scanList();
+      setDevices(r0.devices || []);
+      // 20 秒后自动结束
+      setTimeout(() => finishScan(), 20500);
     } catch (e: any) {
       toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
-    } finally {
-      setScanning(false);
+      finishScan();
     }
   };
+
+  const finishScan = async () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    try { await api.scanStop(); } catch { /* ignore */ }
+    try {
+      const r = await api.scanList();
+      setDevices(r.devices || []);
+    } catch { /* ignore */ }
+    setScanning(false);
+    setScanned(true);
+  };
+
+  // 卸载时清理定时器
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (tickRef.current) clearInterval(tickRef.current);
+  }, []);
 
   const pair = async (mac: string, name: string) => {
     if (busyMac) return;
@@ -250,33 +284,60 @@ function ScanPanel({ alias, discoverable, onPaired }: {
     }
   };
 
+  const shown = showUnnamed ? devices : devices.filter((d) => d.has_real_name !== false);
+  const hiddenCount = devices.length - shown.length;
+
   return (
     <div style={{ marginBottom: 8 }}>
       <SectionTitle>{t("dev.search")}</SectionTitle>
       <Hint>
-        {discoverable
-          ? t("dev.searchHint")
-          : t("dev.searchHintWarn")}
+        {discoverable ? t("dev.searchHint") : t("dev.searchHintWarn")}
       </Hint>
-      <Focusable
-        onClick={scan}
-        onActivate={scan}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 8, marginTop: 8,
-          padding: "9px 18px", borderRadius: 18, cursor: scanning ? "default" : "pointer",
-          background: scanning ? "rgba(255,255,255,0.06)" : COLORS.accent,
-          color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
-        }}
-      >
-        {scanning ? t("dev.searching") : t("dev.search")}
+
+      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, alignItems: "center" }}>
+        <Focusable
+          onClick={scanning ? finishScan : startScan}
+          onActivate={scanning ? finishScan : startScan}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "9px 18px", borderRadius: 18, cursor: "pointer",
+            background: scanning ? "rgba(236,65,65,0.16)" : COLORS.accent,
+            color: scanning ? COLORS.accentWarm : "#fff", fontSize: 13.5,
+          }}
+        >
+          {scanning
+            ? `${t("dev.stopScan")} · ${elapsed}s`
+            : t("dev.search")}
+        </Focusable>
+        {scanning && (
+          <span style={{ fontSize: 12, color: COLORS.dim }}>
+            {t("dev.foundCount", { n: devices.length })}
+          </span>
+        )}
       </Focusable>
 
-      {devices.length > 0 && (
+      {/* 无名称设备开关 */}
+      <div style={{ marginTop: 10 }}>
+        <ToggleRow
+          label={t("dev.showUnnamed")}
+          desc={t("dev.showUnnamedDesc")}
+          checked={showUnnamed}
+          onChange={setShowUnnamed}
+        />
+        {!showUnnamed && hiddenCount > 0 && (
+          <Hint>{t("dev.hiddenCount", { n: hiddenCount })}</Hint>
+        )}
+      </div>
+
+      {shown.length > 0 && (
         <Focusable flow-children="column" style={{ marginTop: 12 }}>
-          {devices.map((d) => {
+          {shown.map((d) => {
             const busy = busyMac === d.mac;
             const isPhone = (d.icon || "").includes("phone");
             const isComputer = (d.icon || "").includes("computer");
+            // 信号强度条（RSSI 通常 -100..-30，越高越好）
+            const rssi = typeof d.rssi === "number" ? d.rssi : null;
+            const bars = rssi === null ? 0 : Math.max(1, Math.min(4, Math.round((rssi + 100) / 17.5)));
             return (
               <div key={d.mac} style={{
                 display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
@@ -291,10 +352,21 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                   <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {d.display || d.name}
                   </div>
-                  <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
-                    {d.mac}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
+                    <span>{d.mac}</span>
+                    {rssi !== null && (
+                      <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 1, marginLeft: 4 }}>
+                        {[1, 2, 3, 4].map((b) => (
+                          <span key={b} style={{
+                            width: 3, height: 3 + b * 2, borderRadius: 1,
+                            background: b <= bars ? COLORS.ok : "rgba(255,255,255,0.15)",
+                          }} />
+                        ))}
+                        <span style={{ marginLeft: 3 }}>{rssi} dBm</span>
+                      </span>
+                    )}
                     {d.has_real_name === false && (
-                      <span style={{ marginLeft: 6, color: "#e0a800" }}>· {t("dev.noName")}</span>
+                      <span style={{ color: "#e0a800" }}>· {t("dev.noName")}</span>
                     )}
                   </div>
                 </div>
@@ -314,9 +386,11 @@ function ScanPanel({ alias, discoverable, onPaired }: {
         </Focusable>
       )}
 
-      {scanned && devices.length === 0 && (
+      {scanned && shown.length === 0 && (
         <Hint>
-          {t("dev.noneFound")}
+          {devices.length > 0 && !showUnnamed
+            ? t("dev.allHidden", { n: devices.length })
+            : t("dev.noneFound")}
         </Hint>
       )}
     </div>
@@ -693,7 +767,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
       </Focusable>
 
       <SectionTitle>{t("set.behavior")}</SectionTitle>
-      <Hint>蓝牙 A2DP 的延迟取决于编码器与缓冲。这里是「省电 / 低延迟 / 抗卡顿」的取舍。</Hint>
+      <Hint>{t("set.latencyHint")}</Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
         {(state.output?.latency_profiles || []).map((p: any) => {
           const active = (s.latency_profile || "balanced") === p.key;
@@ -703,7 +777,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
               onClick={async () => {
                 try {
                   await api.setLatencyProfile(p.key);
-                  toaster.toast({ title: `${p.label}`, body: "WirePlumber 已重启" });
+                  toaster.toast({ title: p.label, body: "" });
                   setTimeout(refresh, 1200);
                 } catch (e: any) {
                   toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
@@ -742,16 +816,16 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         }}
       />
       <Hint>
-        当前输出设备：{(state.output?.sinks || []).map((k: any) => k.name).join(" · ") || "读取中…"}
+        {t("set.outputsNow")} {(state.output?.sinks || []).map((k: any) => k.name).join(" · ") || t("common.reading")}
         <br />
-        ⚠️ 反方向做不到：受 AVDTP 协议限制（v1.3 §5.3），同一适配器同一时刻只能有一个蓝牙 A2DP 源设备连进来。
+        {t("set.avdtpLimit")}
       </Hint>
 
-      <SectionTitle>编码器</SectionTitle>
+      <SectionTitle>{t("set.codecInfo")}</SectionTitle>
       <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
-        <div>当前编码：{state.codec?.codec || "未连接"}</div>
+        <div>{t("set.codecActive")}: {state.codec?.codec || t("common.none")}</div>
         <div>Profile：{state.codec?.profile || "—"}</div>
-        <div>方向：{state.codec?.role || "—"}</div>
+        <div>{t("set.codecRole")}: {state.codec?.role || "—"}</div>
       </div>
 
       <SectionTitle>{t("set.behavior")}</SectionTitle>
@@ -789,7 +863,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         <div>PipeWire：{state.versions?.pipewire || t("common.unknown")}</div>
         <div>WirePlumber：{state.versions?.wireplumber || t("common.unknown")}</div>
         <div>BlueZ：{state.versions?.bluez || t("common.unknown")}</div>
-        <div>默认输出：{state.sink || t("common.unknown")}</div>
+        <div>{t("set.defaultOutput")}: {state.sink || t("common.unknown")}</div>
       </div>
     </div>
   );
@@ -924,8 +998,7 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
 
       <SectionTitle>{t("eq.import")}</SectionTitle>
       <Hint>
-        从 <span style={{ color: COLORS.sub }}>AutoEq</span> 或 <span style={{ color: COLORS.sub }}>squig.link</span> 复制
-        ParametricEQ.txt 的内容粘进来。格式形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`。
+        {t("eq.importHint")}
       </Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
         <Focusable
@@ -973,7 +1046,7 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
       )}
 
       <Hint>
-        配置文件：<span style={{ color: COLORS.sub }}>{state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf"}</span>
+        {t("eq.configPath")} <span style={{ color: COLORS.sub }}>{state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf"}</span>
       </Hint>
     </div>
   );
@@ -1065,7 +1138,10 @@ function DiagTab() {
                 <span style={{ color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }}>
                   {c.ok ? "✓" : "✕"}
                 </span>
-                <span style={{ flex: 1, color: COLORS.text }}>{c.name}</span>
+                <span style={{ flex: 1, color: COLORS.text }}>
+                  {/* 后端只返回 i18n key，这里按当前语言翻译 */}
+                  {c.key ? t(c.key) : c.name}
+                </span>
                 {c.detail && <span style={{ fontSize: 11, color: COLORS.dim }}>{c.detail}</span>}
               </div>
             ))}
@@ -1087,17 +1163,17 @@ function DiagTab() {
           </div>
 
           <SectionTitle>{t("diag.adapterRaw")}</SectionTitle>
-          <div style={box}>{data.adapter_raw || "（空）"}</div>
+          <div style={box}>{data.adapter_raw || t("common.empty")}</div>
 
           <SectionTitle>{t("diag.wpStatus")}</SectionTitle>
-          <div style={box}>{data.wp_status || "（空）"}</div>
+          <div style={box}>{data.wp_status || t("common.empty")}</div>
         </>
       )}
 
       {log && (
         <>
           <SectionTitle right={<span style={{ fontSize: 11, color: COLORS.dim }}>{log.path}</span>}>{t("diag.pluginLog")}</SectionTitle>
-          <div style={box}>{log.text || "（空）"}</div>
+          <div style={box}>{log.text || t("common.empty")}</div>
         </>
       )}
     </div>

@@ -772,6 +772,35 @@ class Plugin:
         await self.bz.stop_discovery()
         return {"ok": True}
 
+    # ---- 流式扫描（非阻塞，边扫边出）----------------------------------
+    @_safe
+    async def scan_start(self, timeout=20):
+        """启动扫描并立刻返回。
+
+        早期版本 `scan_devices` 是阻塞的：调用后要干等 20 秒才看到结果，
+        界面上只有一个静止的「正在搜索…」。现在拆成三步：
+        `scan_start` → 反复 `scan_list` → `scan_stop`。
+        """
+        sec = max(5, min(60, int(timeout or 20)))
+        if not self.bz.agent_registered():
+            try:
+                await self.bz.start_agent()
+            except Exception as e:  # noqa: BLE001
+                self._log("扫描前启动 agent 失败：%s" % e)
+        await self.bz.start_discovery(sec)
+        return {"ok": True, "scanning": True, "seconds": sec}
+
+    @_safe
+    async def scan_list(self):
+        """拉取当前扫描到的设备（可在扫描过程中反复调用）。"""
+        devs = await self.bz.list_discovered(include_paired=False)
+        return {"ok": True, "devices": devs, "scanning": self.bz.scanning()}
+
+    @_safe
+    async def scan_stop(self):
+        await self.bz.stop_discovery()
+        return {"ok": True, "scanning": False}
+
     @_safe
     async def pair_device_full(self, mac):
         """一键配对：配对 + 信任 + 连接。"""
@@ -1379,35 +1408,39 @@ class Plugin:
         return out
 
     def _run_checks(self, d):
-        """生成一组可读的自检项。"""
+        """生成一组可读的自检项。
+
+        ⚠️ 只返回 **i18n key**，不返回中文文案 —— 文案由前端按当前语言翻译。
+        早期版本在这里直接写中文，导致切到英文后诊断页还是中文
+        （真机反馈过这个问题）。
+        """
         checks = []
 
-        def add(name, ok, detail=""):
-            checks.append({"name": name, "ok": bool(ok), "detail": detail})
+        def add(key, ok, detail=""):
+            checks.append({"key": key, "ok": bool(ok), "detail": detail})
 
         tools = d.get("tools") or {}
-        add("bluetoothctl 可用", tools.get("bluetoothctl"), "bluez-utils")
-        add("busctl 可用", tools.get("busctl"), "systemd")
-        add("wpctl 可用", tools.get("wpctl"), "wireplumber")
+        add("chk.bluetoothctl", tools.get("bluetoothctl"), "bluez-utils")
+        add("chk.busctl", tools.get("busctl"), "systemd")
+        add("chk.wpctl", tools.get("wpctl"), "wireplumber")
 
         raw = d.get("adapter_raw") or ""
-        add("检测到蓝牙适配器", "Controller" in raw, "bluetoothctl show")
-        add("适配器支持 A2DP Sink", bt.A2DP_SINK_UUID in raw.lower(),
-            "UUID 0000110b（当音箱的必要条件）")
-        add("蓝牙已上电", "Powered: yes" in raw)
-        add("配对 agent 在运行", d.get("agent"), "NoInputNoOutput")
-        add("可被发现", "Discoverable: yes" in raw, "BlueZ 默认 180 秒超时")
+        add("chk.adapter", "Controller" in raw, "bluetoothctl show")
+        add("chk.a2dpSink", bt.A2DP_SINK_UUID in raw.lower(), "UUID 0000110b")
+        add("chk.powered", "Powered: yes" in raw)
+        add("chk.agent", d.get("agent"), "NoInputNoOutput")
+        add("chk.discoverable", "Discoverable: yes" in raw, "BlueZ 180s")
 
         wp = d.get("wp_status") or ""
-        add("PipeWire 有音频输出", "Sinks:" in wp, "wpctl status")
+        add("chk.pipewireSink", "Sinks:" in wp, "wpctl status")
 
         vers = d.get("versions") or {}
-        add("PipeWire 版本可读", bool(vers.get("pipewire")), vers.get("pipewire", ""))
-        add("WirePlumber 版本可读", bool(vers.get("wireplumber")), vers.get("wireplumber", ""))
+        add("chk.pwVersion", bool(vers.get("pipewire")), vers.get("pipewire", ""))
+        add("chk.wpVersion", bool(vers.get("wireplumber")), vers.get("wireplumber", ""))
 
         mods = d.get("modules") or {}
         bad = [k for k, v in mods.items() if not v]
-        add("后端模块全部加载", not bad, ("缺失：" + ", ".join(bad)) if bad else "8/8")
+        add("chk.modules", not bad, ("missing: " + ", ".join(bad)) if bad else "8/8")
 
         return checks
 
