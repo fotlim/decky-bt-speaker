@@ -38,6 +38,7 @@ INCLUDE_FILES = [
     "main.py",
     "bt.py",
     "btutil.py",
+    "screen.py",
     "power.py",
     "nodes.py",
     "focus.py",

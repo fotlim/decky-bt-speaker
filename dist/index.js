@@ -88,6 +88,8 @@ function FaBluetooth (props) {
   return GenIcon({"attr":{"viewBox":"0 0 576 512"},"child":[{"tag":"path","attr":{"d":"M215.03 71.05L126.06 160H24c-13.26 0-24 10.74-24 24v144c0 13.25 10.74 24 24 24h102.06l88.97 88.95c15.03 15.03 40.97 4.47 40.97-16.97V88.02c0-21.46-25.96-31.98-40.97-16.97zm233.32-51.08c-11.17-7.33-26.18-4.24-33.51 6.95-7.34 11.17-4.22 26.18 6.95 33.51 66.27 43.49 105.82 116.6 105.82 195.58 0 78.98-39.55 152.09-105.82 195.58-11.17 7.32-14.29 22.34-6.95 33.5 7.04 10.71 21.93 14.56 33.51 6.95C528.27 439.58 576 351.33 576 256S528.27 72.43 448.35 19.97zM480 256c0-63.53-32.06-121.94-85.77-156.24-11.19-7.14-26.03-3.82-33.12 7.46s-3.78 26.21 7.41 33.36C408.27 165.97 432 209.11 432 256s-23.73 90.03-63.48 115.42c-11.19 7.14-14.5 22.07-7.41 33.36 6.51 10.36 21.12 15.14 33.12 7.46C447.94 377.94 480 319.54 480 256zm-141.77-76.87c-11.58-6.33-26.19-2.16-32.61 9.45-6.39 11.61-2.16 26.2 9.45 32.61C327.98 228.28 336 241.63 336 256c0 14.38-8.02 27.72-20.92 34.81-11.61 6.41-15.84 21-9.45 32.61 6.43 11.66 21.05 15.8 32.61 9.45 28.23-15.55 45.77-45 45.77-76.88s-17.54-61.32-45.78-76.86z"},"child":[]}]})(props);
 }function FaVolumeMute (props) {
   return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M215.03 71.05L126.06 160H24c-13.26 0-24 10.74-24 24v144c0 13.25 10.74 24 24 24h102.06l88.97 88.95c15.03 15.03 40.97 4.47 40.97-16.97V88.02c0-21.46-25.96-31.98-40.97-16.97zM461.64 256l45.64-45.64c6.3-6.3 6.3-16.52 0-22.82l-22.82-22.82c-6.3-6.3-16.52-6.3-22.82 0L416 210.36l-45.64-45.64c-6.3-6.3-16.52-6.3-22.82 0l-22.82 22.82c-6.3 6.3-6.3 16.52 0 22.82L370.36 256l-45.63 45.63c-6.3 6.3-6.3 16.52 0 22.82l22.82 22.82c6.3 6.3 16.52 6.3 22.82 0L416 301.64l45.64 45.64c6.3 6.3 16.52 6.3 22.82 0l22.82-22.82c6.3-6.3 6.3-16.52 0-22.82L461.64 256z"},"child":[]}]})(props);
+}function FaMoon (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M283.211 512c78.962 0 151.079-35.925 198.857-94.792 7.068-8.708-.639-21.43-11.562-19.35-124.203 23.654-238.262-71.576-238.262-196.954 0-72.222 38.662-138.635 101.498-174.394 9.686-5.512 7.25-20.197-3.756-22.23A258.156 258.156 0 0 0 283.211 0c-141.309 0-256 114.511-256 256 0 141.309 114.511 256 256 256z"},"child":[]}]})(props);
 }function FaMobileAlt (props) {
   return GenIcon({"attr":{"viewBox":"0 0 320 512"},"child":[{"tag":"path","attr":{"d":"M272 0H48C21.5 0 0 21.5 0 48v416c0 26.5 21.5 48 48 48h224c26.5 0 48-21.5 48-48V48c0-26.5-21.5-48-48-48zM160 480c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm112-108c0 6.6-5.4 12-12 12H60c-6.6 0-12-5.4-12-12V60c0-6.6 5.4-12 12-12h200c6.6 0 12 5.4 12 12v312z"},"child":[]}]})(props);
 }function FaLaptop (props) {
@@ -121,6 +123,12 @@ const api = {
     setAlias: (alias) => call("set_alias", alias),
     deviceAction: (mac, action, value) => call("device_action", mac, action, value),
     /** 断开所有已连接设备 */
+    /** 息屏状态 */
+    getScreen: () => call("get_screen"),
+    /** 息屏（背光归 0） */
+    dimScreen: () => call("dim_screen"),
+    /** 恢复显示 */
+    undimScreen: () => call("undim_screen"),
     setVolume: (v) => call("set_volume", v),
     /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
     stepVolume: (delta) => call("step_volume", delta),
@@ -430,6 +438,8 @@ const EN = {
     "qam.boosted200": "Volume set to 200% (may clip)",
     "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
     "qam.manage": "Devices / Settings",
+    "qam.dimScreen": "Turn off screen (keep playing)",
+    "qam.dimHint": "Tap anywhere or press any key to wake",
     "qam.playingLabel": "Playing",
     // 全屏页
     "page.title": "Bluetooth Speaker",
@@ -638,6 +648,8 @@ const ZH = {
     "qam.boosted200": "音量已设为 200%（可能破音）",
     "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
     "qam.manage": "设备管理 / 设置",
+    "qam.dimScreen": "息屏当音箱（继续播放）",
+    "qam.dimHint": "触摸屏幕或按任意键唤醒",
     "qam.playingLabel": "正在播放",
     "page.title": "蓝牙音箱",
     "page.readingAdapter": "正在读取蓝牙适配器…",
@@ -888,6 +900,49 @@ function Speaker() {
         setPanelVisible(true);
         return () => setPanelVisible(false);
     }, []);
+    // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
+    const [dimmed, setDimmed] = SP_REACT.useState(false);
+    const overlayRef = SP_REACT.useRef(null);
+    const dimTimer = SP_REACT.useRef(null);
+    // 息屏后聚焦遮罩层，这样按键能被接住
+    SP_REACT.useEffect(() => {
+        if (dimmed && overlayRef.current) {
+            try {
+                overlayRef.current.focus();
+            }
+            catch { /* ignore */ }
+        }
+    }, [dimmed]);
+    // 组件卸载时一定恢复背光，避免留下黑屏
+    SP_REACT.useEffect(() => () => {
+        if (dimTimer.current)
+            clearTimeout(dimTimer.current);
+    }, []);
+    const enterDim = async () => {
+        try {
+            const r = await api.dimScreen();
+            setDimmed(true);
+            // 兜底：后端也有定时器，这里再加一层，防止遮罩层没被点到
+            const secs = (r.max_seconds || 300) * 1000;
+            if (dimTimer.current)
+                clearTimeout(dimTimer.current);
+            dimTimer.current = setTimeout(() => { exitDim(); }, secs);
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
+    const exitDim = async () => {
+        if (dimTimer.current) {
+            clearTimeout(dimTimer.current);
+            dimTimer.current = null;
+        }
+        setDimmed(false);
+        try {
+            await api.undimScreen();
+        }
+        catch { /* ignore */ }
+    };
     const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
     // ⚠️ 同步策略（真机反馈「音量调节没同步」的修复核心）
     // 之前是「松手后固定 3 秒交还」，但空闲时轮询间隔是 10 秒，
@@ -987,7 +1042,18 @@ function Speaker() {
                                 } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
-                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
+                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
+                    marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+                    fontSize: 12.5, color: COLORS.text,
+                }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && (SP_JSX.jsx("div", { ref: overlayRef, tabIndex: 0, onPointerDown: exitDim, onKeyDown: exitDim, onClick: exitDim, style: {
+                    position: "fixed", inset: 0, zIndex: 999999,
+                    background: "#000", display: "flex",
+                    alignItems: "center", justifyContent: "center",
+                    color: "rgba(255,255,255,0.28)", fontSize: 13,
+                    cursor: "pointer",
+                }, children: t("qam.dimHint") }))] }));
 }
 
 function BtSpeakerPage() {

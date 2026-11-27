@@ -3,7 +3,7 @@ import {
   PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog } from "react-icons/fa";
+import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
 import { api } from "../backend";
 import { useSpeaker, setPanelVisible } from "../store";
 import { COLORS, ROUTE } from "../route";
@@ -45,6 +45,42 @@ export function Speaker() {
     setPanelVisible(true);
     return () => setPanelVisible(false);
   }, []);
+
+  // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
+  const [dimmed, setDimmed] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const dimTimer = useRef<any>(null);
+
+  // 息屏后聚焦遮罩层，这样按键能被接住
+  useEffect(() => {
+    if (dimmed && overlayRef.current) {
+      try { overlayRef.current.focus(); } catch { /* ignore */ }
+    }
+  }, [dimmed]);
+
+  // 组件卸载时一定恢复背光，避免留下黑屏
+  useEffect(() => () => {
+    if (dimTimer.current) clearTimeout(dimTimer.current);
+  }, []);
+
+  const enterDim = async () => {
+    try {
+      const r = await api.dimScreen();
+      setDimmed(true);
+      // 兜底：后端也有定时器，这里再加一层，防止遮罩层没被点到
+      const secs = (r.max_seconds || 300) * 1000;
+      if (dimTimer.current) clearTimeout(dimTimer.current);
+      dimTimer.current = setTimeout(() => { exitDim(); }, secs);
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+    }
+  };
+
+  const exitDim = async () => {
+    if (dimTimer.current) { clearTimeout(dimTimer.current); dimTimer.current = null; }
+    setDimmed(false);
+    try { await api.undimScreen(); } catch { /* ignore */ }
+  };
 
   const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
 
@@ -315,6 +351,22 @@ export function Speaker() {
         </div>
       )}
 
+      {/* 息屏当音箱：背光归 0 省电、防烧屏。任何按键 / 触摸立即恢复。 */}
+      {state?.screen?.available && (
+        <Focusable
+          onClick={enterDim}
+          onActivate={enterDim}
+          style={{
+            marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+            fontSize: 12.5, color: COLORS.text,
+          }}
+        >
+          <FaMoon size={11} /> {t("qam.dimScreen")}
+        </Focusable>
+      )}
+
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => Navigation.Navigate(ROUTE)}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -322,6 +374,27 @@ export function Speaker() {
           </div>
         </ButtonItem>
       </PanelSectionRow>
+
+      {/* 息屏遮罩：背光归 0 后屏幕全黑，这一层负责接住任何输入并立刻恢复。
+          即使背光写入失败（只是变黑而没真正关屏），这层也让体验一致。 */}
+      {dimmed && (
+        <div
+          ref={overlayRef}
+          tabIndex={0}
+          onPointerDown={exitDim}
+          onKeyDown={exitDim}
+          onClick={exitDim}
+          style={{
+            position: "fixed", inset: 0, zIndex: 999999,
+            background: "#000", display: "flex",
+            alignItems: "center", justifyContent: "center",
+            color: "rgba(255,255,255,0.28)", fontSize: 13,
+            cursor: "pointer",
+          }}
+        >
+          {t("qam.dimHint")}
+        </div>
+      )}
     </PanelSection>
   );
 }

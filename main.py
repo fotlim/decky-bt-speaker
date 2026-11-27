@@ -40,6 +40,13 @@ except Exception:
     _POWER_IMPORT_ERR = traceback.format_exc()
 
 try:
+    import screen  # type: ignore
+    _SCREEN_IMPORT_ERR = None
+except Exception:
+    screen = None
+    _SCREEN_IMPORT_ERR = traceback.format_exc()
+
+try:
     import nodes  # type: ignore
     _NODES_IMPORT_ERR = None
 except Exception:
@@ -195,7 +202,9 @@ class Plugin:
     outcfg = None
     meta = None
     qcfg = None
+    dimmer = None
     _keep_task = None
+    _dim_task = None
     _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
     _auto_gain_done = False     # 本次音源会话是否已自动增益过
     # status() 的分层缓存：{key: (时间戳, 值)}
@@ -301,6 +310,8 @@ class Plugin:
         self.outcfg = output.CombineConfig(self._log) if output is not None else None
         self.meta = metadata.Metadata(self._log) if metadata is not None else None
         self.qcfg = quality.QualityConfig(self._log) if quality is not None else None
+        # 息屏控制（背光归 0）。初始化时确保不是黑屏状态。
+        self.dimmer = screen.Dimmer(self._log) if screen is not None else None
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -359,6 +370,19 @@ class Plugin:
 
     async def _do_unload(self):
         self._log("插件卸载")
+        # 0. 最优先：恢复背光。如果用户正在息屏状态下卸载/重载插件，
+        #    不恢复就会留下黑屏，用户只能硬重启。
+        if self.dimmer is not None and self.dimmer.dimmed:
+            try:
+                await self.dimmer.restore("插件卸载")
+            except Exception as e:  # noqa: BLE001
+                self._log("卸载时恢复背光失败：%s" % e)
+        if self._dim_task is not None:
+            try:
+                self._dim_task.cancel()
+            except Exception:
+                pass
+            self._dim_task = None
         # 1. 停后台任务（不 await，避免拖慢）
         if self._keep_task is not None:
             try:
@@ -379,6 +403,71 @@ class Plugin:
                 await self.bz.stop_agent(quick=True)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # RPC：息屏 / 唤醒
+    # ------------------------------------------------------------------
+    @_safe
+    async def get_screen(self):
+        """屏幕状态：能不能息屏、当前是否已息屏、亮度值。"""
+        if self.dimmer is None:
+            return {"available": False, "dimmed": False, "error": "screen 模块未加载"}
+        st = self.dimmer.status()
+        st["elapsed"] = round(self.dimmer.elapsed(), 1)
+        st["max_seconds"] = screen.MAX_DIM_SECONDS if screen is not None else 0
+        return st
+
+    @_safe
+    async def dim_screen(self):
+        """息屏（背光归 0）。
+
+        安全措施：
+        - 记住原亮度，恢复时还原
+        - 启动兜底定时器：最多 MAX_DIM_SECONDS 后自动恢复
+        - 前端会同时监听输入，任何按键/触摸立即调 undim_screen
+        """
+        if self.dimmer is None:
+            return {_ERR: "screen 模块未加载"}
+        await self.dimmer.dim()
+        # 兜底：即使前端监听失效，也不会永久黑屏
+        self._start_dim_guard()
+        return {"ok": True, "dimmed": True, "max_seconds": screen.MAX_DIM_SECONDS}
+
+    @_safe
+    async def undim_screen(self):
+        """恢复显示。"""
+        if self.dimmer is None:
+            return {_ERR: "screen 模块未加载"}
+        await self.dimmer.restore("用户唤醒")
+        return {"ok": True, "dimmed": False}
+
+    def _start_dim_guard(self):
+        """启动息屏兜底定时器（到点自动恢复）。"""
+        if self._dim_task is not None:
+            try:
+                self._dim_task.cancel()
+            except Exception:
+                pass
+            self._dim_task = None
+        if screen is None or self.dimmer is None:
+            return
+
+        async def _guard():
+            try:
+                # 每 5 秒检查一次，超时就恢复
+                while self.dimmer is not None and self.dimmer.dimmed:
+                    await asyncio.sleep(5)
+                    if self.dimmer.timed_out():
+                        self._log("息屏超过 %d 秒，自动恢复（兜底保护）"
+                                  % screen.MAX_DIM_SECONDS)
+                        await self.dimmer.restore("超时兜底")
+                        break
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                self._log("息屏兜底定时器异常：%s" % e)
+
+        self._dim_task = asyncio.create_task(_guard())
 
     # ------------------------------------------------------------------
     # 睡眠 / 唤醒处理
@@ -687,6 +776,13 @@ class Plugin:
             "normalize": (self.norm.status() if self.norm is not None else None),
             # Wi-Fi 频段几乎不变，缓存 60 秒（原本每次 status 都跑一次 `iw dev`）
             "wifi": (await self._cached_async("wifi", 60.0, wifi.detect) if wifi is not None else None),
+            # 息屏状态（背光是否已归 0）
+            "screen": ({
+                "available": screen.available(),
+                "dimmed": bool(self.dimmer and self.dimmer.dimmed),
+                "elapsed": round(self.dimmer.elapsed(), 1) if self.dimmer else 0,
+                "max_seconds": screen.MAX_DIM_SECONDS,
+            } if screen is not None and self.dimmer is not None else None),
             "quality": {
                 "preset": self.settings.get("codec_preset", "balanced"),
                 # 预设列表是静态数据，缓存 10 分钟

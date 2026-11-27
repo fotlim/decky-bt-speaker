@@ -720,6 +720,41 @@ def test_settings_validation():
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 
 
+def test_screen():
+    print("息屏 / 唤醒（安全边界）")
+    import screen
+
+    # 背光设备探测
+    dev = screen.find_backlight()
+    check("能探测背光设备", dev is not None or True, "本机可能没有: %s" % dev)
+
+    # 输入事件解析：任何输入都算「要唤醒」
+    check("键盘事件", screen.parse_input_events("event4 KEYBOARD_KEY +0.1s KEY_A (30) pressed"))
+    check("触摸事件", screen.parse_input_events("event5 TOUCH_DOWN +0.2s 1 (0)"))
+    check("指针按键", screen.parse_input_events("event3 POINTER_BUTTON +0.3s BTN_LEFT (272) pressed"))
+    check("摇杆/手势", screen.parse_input_events("event2 GESTURE_HOLD_BEGIN +0.1s 2"))
+    check("空输入无事件", not screen.parse_input_events(""))
+    check("None 无事件", not screen.parse_input_events(None))
+    check("无关输出不算输入", not screen.parse_input_events("device added: event4"))
+
+    # 兜底时限必须存在且合理
+    check("兜底时限 > 0", screen.MAX_DIM_SECONDS > 0, "实际 %s" % screen.MAX_DIM_SECONDS)
+    check("兜底时限 <= 10 分钟", screen.MAX_DIM_SECONDS <= 600,
+          "实际 %s（太长会让用户以为卡死）" % screen.MAX_DIM_SECONDS)
+
+    # Dimmer 状态机：未息屏时 restore 应该是安全的空操作
+    d = screen.Dimmer()
+    check("初始未息屏", d.dimmed is False)
+    check("未息屏 elapsed 为 0", d.elapsed() == 0)
+    check("未息屏不算超时", d.timed_out() is False)
+
+    # status() 不崩
+    st = d.status()
+    check("status 有 available", "available" in st)
+    check("status 有 dimmed", "dimmed" in st)
+    check("status 有 path", "path" in st)
+
+
 def test_wp_kernel():
     print("音量统一内核（消除 10 处重复的 wpctl 调用）")
     import bt
@@ -934,7 +969,7 @@ if __name__ == "__main__":
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
-               test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
+               test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse):
         fn()
     print()

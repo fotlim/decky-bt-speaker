@@ -201,6 +201,19 @@ export interface QualityInfo {
   active_profile: string;
 }
 
+export interface ScreenInfo {
+  /** 当前环境能不能息屏（有背光设备 + 有写入途径） */
+  available: boolean;
+  /** 是否已息屏（背光归 0） */
+  dimmed: boolean;
+  /** 已息屏秒数 */
+  elapsed?: number;
+  /** 兜底自动恢复的时限（秒） */
+  max_seconds?: number;
+  current?: number;
+  max?: number;
+}
+
 export interface SpeakerStatus {
   ok: boolean;
   error: string | null;
@@ -216,6 +229,7 @@ export interface SpeakerStatus {
   silence: SilenceInfo | null;
   normalize: NormalizeInfo | null;
   wifi: WifiInfo | null;
+  screen?: ScreenInfo | null;
   quality: QualityInfo;
   eq: EqInfo;
   output: OutputInfo;

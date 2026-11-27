@@ -67,6 +67,8 @@ const EN: Dict = {
   "qam.boosted200": "Volume set to 200% (may clip)",
   "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
   "qam.manage": "Devices / Settings",
+  "qam.dimScreen": "Turn off screen (keep playing)",
+  "qam.dimHint": "Tap anywhere or press any key to wake",
   "qam.playingLabel": "Playing",
 
   // 全屏页
@@ -285,6 +287,8 @@ const ZH: Dict = {
   "qam.boosted200": "音量已设为 200%（可能破音）",
   "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
   "qam.manage": "设备管理 / 设置",
+  "qam.dimScreen": "息屏当音箱（继续播放）",
+  "qam.dimHint": "触摸屏幕或按任意键唤醒",
   "qam.playingLabel": "正在播放",
 
   "page.title": "蓝牙音箱",

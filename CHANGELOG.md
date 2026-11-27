@@ -105,6 +105,56 @@
 
 ---
 
+## [2.7.0] - 2026-11-27
+
+### Added
+
+- **息屏当音箱**
+
+  QAM 面板新增「息屏当音箱（继续播放）」。当蓝牙音箱时屏幕常亮既费电
+  又容易烧屏，现在可以真正关掉屏幕，音频不受影响。
+
+  **为什么不用现有插件的做法？**
+
+  MagicBlack 这类插件是往界面上盖一层纯黑。OLED 机型上黑像素不发光，
+  等于关了；但 **LCD 机型（初代 Deck）背光仍然全亮**，一点电都省不了。
+
+  **为什么不用 `xset dpms force off`？**
+
+  Deck 跑在 gamescope（Wayland 合成器）上，X11 的 DPMS 命令对它无效
+  （[ArchWiki](https://wiki.archlinux.org/title/Display_Power_Management_Signaling)
+  明确说明「Wayland 下由合成器控制屏幕」）。
+
+  **本插件的做法**：直接写背光 sysfs，把亮度置 0 —— 真正的硬件级关屏，
+  LCD / OLED 都有效。SteamOS 提供
+  `/usr/bin/steamos-polkit-helpers/steamos-priv-write` 这个 polkit 助手，
+  **无需 root 密码**就能写 `/sys/class/backlight/*/brightness`
+  （Steam 自己的亮度滑块走的就是这条路径），写完还会 `chmod a+w`，
+  之后普通用户可以直接写。
+
+  ### 安全边界（三重保护）
+
+  背光归 0 后屏幕全黑，如果唤醒失败用户只能硬重启。所以：
+
+  1. **超时兜底**：息屏后最多 5 分钟自动恢复，即使所有输入监听都失效
+     也不会永久黑屏（前端和后端各有一个定时器）
+  2. **任何输入立即恢复**：遮罩层接住 pointerdown / keydown / click
+  3. **卸载自愈**：插件卸载或重载时，`_do_unload` 第一件事就是恢复背光
+
+  恢复值是**息屏前实测的亮度**，不是硬编码，不会改变用户原有设置。
+
+- 新增 `screen.py`（`find_backlight` / `read_brightness` / `write_brightness`
+  / `Dimmer` / `parse_input_events`）
+- 新增 RPC：`get_screen` / `dim_screen` / `undim_screen`
+- `status()` 新增 `screen` 字段
+
+### 测试
+
+新增 16 项息屏测试：输入事件识别（键盘/触摸/指针/手势）、
+兜底时限合理性、`Dimmer` 状态机（未息屏时 restore 是安全空操作）。
+
+---
+
 ## [2.6.0] - 2026-11-27
 
 代码质量重构，不改变用户可见行为。

@@ -32,6 +32,13 @@ export const api = {
     value?: string,
   ) => call<[string, string, string?], { ok: boolean }>("device_action", mac, action, value),
   /** 断开所有已连接设备 */
+  /** 息屏状态 */
+  getScreen: () =>
+    call<[], { available: boolean; dimmed: boolean; current?: number; max?: number; saved?: number; elapsed?: number; max_seconds?: number }>("get_screen"),
+  /** 息屏（背光归 0） */
+  dimScreen: () => call<[], { ok: boolean; dimmed: boolean; max_seconds: number }>("dim_screen"),
+  /** 恢复显示 */
+  undimScreen: () => call<[], { ok: boolean; dimmed: boolean }>("undim_screen"),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
   /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
   stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),
