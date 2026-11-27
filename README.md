@@ -1,9 +1,334 @@
-# 蓝牙音箱 · Steam Deck Decky Loader 插件
+# Bluetooth Speaker · Steam Deck Decky Loader Plugin
+
+**English** · [简体中文](#简体中文)
+
+> **Turn your Steam Deck into a *usable* Bluetooth speaker and audio hub.**
+> Phones, tablets and PCs connect and play music straight out of the Deck's surprisingly good stereo speakers.
+
+[![Version](https://img.shields.io/badge/version-2.4.5-blue.svg)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![SteamOS](https://img.shields.io/badge/SteamOS-3.7%2B-1a9fff.svg)](https://store.steampowered.com/steamos)
+
+---
+
+## Why this exists
+
+Since SteamOS 3.7, a Deck **can already** act as a Bluetooth speaker — just pair manually ([Xe Iaso's writeup](https://xeiaso.net/notes/2026/steam-deck-bluetooth-speaker/)). WirePlumber's `bluez5.roles` includes `a2dp_sink` by default.
+
+But four things get in the way:
+
+| Problem | Consequence | What this plugin does |
+|---|---|---|
+| `DiscoverableTimeout` defaults to 180s | Your phone loses the Deck after 3 minutes | Set to 0, re-checked every minute |
+| HFP/HSP steals A2DP | Opening a mic drops the whole stream to mono — sounds muffled, like a phone call | Disable `autoswitch-to-headset-profile` |
+| Dual-role devices negotiate `audio-gateway` | **Connects but no sound** ([wireplumber#969](https://gitlab.freedesktop.org/pipewire/wireplumber/-/work_items/969)) | Narrow `bluez5.roles` to A2DP only |
+| `bluez5.hw-volume` excludes `a2dp_sink` by default | Receiver gets no Bluetooth hardware volume | Explicitly added |
+
+**None of the 118 Decky Store plugins does "Deck receives audio"** (GitHub search for `decky a2dp` / `decky bluetooth sink` returns zero). Existing plugins all do "Deck sends audio out" or "adjust the Deck's own audio".
+
+This plugin fills that gap.
+
+---
+
+## Features
+
+### Core
+
+- **One switch to become a speaker** — Bluetooth on, discoverable, pairing agent ready
+- **PIN-free pairing** — a resident `NoInputNoOutput` agent; one tap on your phone
+- **Discoverability keep-alive** — `DiscoverableTimeout = 0` plus a per-minute re-check
+- **Device management** — paired list, connect / disconnect / remove, rename
+- **Volume control** — relative-step buttons (`wpctl set-volume N%+`), no read-back needed
+- **Zero root** — only ships with system tools (`bluetoothctl` / `busctl` / `wpctl`), `flags: []`
+
+### Handheld-specific
+
+- **Survive suspend, restore on resume** — close the lid, open it, Bluetooth state is not lost
+  - Snapshot `powered` / `discoverable` / connected devices before sleep
+  - On resume: power on → restart agent → restore discoverable → reconnect devices
+  - Listens to logind's `PrepareForSleep` via `busctl` / `gdbus` — **not** `dbus-monitor --system`, which needs root for `BecomeMonitor`
+
+### Audio experience
+
+- **"Who's playing" live display** — detects the `bluez_input` node and shows the source device
+- **Independent external-source volume** — adjust the phone stream **without touching game audio**
+- **AVRCP metadata** — title / artist / album / position / playback state (the Deck screen is no longer blank)
+- **Audio focus policy** — coexist with game / receiver-first / manual
+- **Codec visibility** — shows whether you're on SBC / SBC-XQ / AAC / LDAC / aptX
+- **Latency profiles** — low 60ms / balanced 120ms / anti-stutter 240ms
+- **Auto-disconnect on silence** — cleans up when your phone forgets to disconnect (saves battery, stops swallowed notifications)
+- **Volume normalization** — records a baseline and flags jumps over 25%
+
+### Equalizer
+
+- **5 presets** — flat / bass boost / vocal clarity / bright / loudness compensation
+- **AutoEQ / Squiglink import** — paste a `ParametricEQ.txt`
+- Uses PipeWire's **built-in** `param_eq`, zero external plugin dependencies
+- A `clamp` limiter is chained after the EQ to prevent clipping (the built-in zero-latency hard limiter)
+
+### Multi-output
+
+- **Synchronized multi-output** — internal speakers + Bluetooth headset + wired headset at once (`combine-stream`)
+
+### Diagnostics
+
+- **12 self-checks** — from "adapter detected" to "all backend modules loaded", explicit ✅/❌
+- **One-tap diagnostic report** — plain text, paste it straight to the author
+- Raw adapter info, `wpctl status`, plugin log
+- **Wi-Fi interference detection** — flags 2.4 GHz Wi-Fi, the #1 cause of Bluetooth audio stutter
+
+---
+
+## Install
+
+### Decky Store / ZIP (recommended)
+
+1. Decky settings → Developer → enable **Developer Mode**
+2. **Install Plugin from ZIP** → pick `decky-bt-speaker.zip`
+3. Back in the QAM, **Bluetooth Speaker** appears in the plugin list
+
+### SSH push
+
+```bash
+pnpm install && pnpm run build
+python pack.py
+
+scp ../decky-bt-speaker.zip deck@steamdeck:~/
+ssh deck@steamdeck
+unzip -o ~/decky-bt-speaker.zip -d ~/homebrew/plugins/
+sudo systemctl restart plugin_loader
+```
+
+### Local development
+
+```bash
+pnpm install
+pnpm run watch          # rebuild on change
+python tests_offline.py # backend self-tests (no Deck needed)
+python pack.py          # package the zip
+```
+
+---
+
+## Usage
+
+1. QAM (`···`) → **Bluetooth Speaker** → turn on **Allow devices to find and connect**
+2. Full page → **Settings** → enable **Speaker optimization** (writes the WirePlumber config once)
+3. Search `Steam Deck` in your phone's Bluetooth settings and pair
+4. Play music — it comes out of the Deck
+5. Want to change the tone? Full page → **Equalizer** → pick a preset
+
+> 💡 For the first pairing, try Desktop Mode. On some phones (iOS especially) the pairing dialog can be hidden behind the Steam UI in Game Mode.
+
+### Pairing from the plugin
+
+Full page → **Paired** tab → **Search nearby devices** (20s scan) → tap **Pair**. No need to leave the plugin for the system Bluetooth settings.
+
+If pairing fails with "incorrect PIN or passkey", tap **Repair** — it clears the stale bond key on the Deck side and re-pairs.
+
+---
+
+## How it works
+
+```
+Phone / PC                          Steam Deck (SteamOS)
+┌──────────┐   A2DP (SBC/AAC)   ┌──────────────────────────────┐
+│ Music app│ ─────────────────▶ │ BlueZ ──▶ PipeWire           │
+└──────────┘   2.4 GHz BT        │   bluez_input.<MAC> node     │
+                                  │        │                     │
+                                  │        ▼                     │
+                                  │  default sink (speakers)     │
+                                  └──────────────────────────────┘
+```
+
+> **Direction matters**: when the Deck **is the speaker**, the node is `bluez_input.*` (external stream coming in). When the Deck **connects to headphones**, it's `bluez_output.*`.
+
+| Layer | What's used | Purpose |
+|---|---|---|
+| Adapter | `bluetoothctl` / `busctl set-property` | Power, discoverable, rename, `DiscoverableTimeout=0` |
+| Pairing | Resident `bluetoothctl --agent=NoInputNoOutput` | PIN-free |
+| Devices | `bluetoothctl devices/info/connect/disconnect/remove` | List and connection management |
+| Volume | `wpctl set-volume` (relative `N%+`) | Works without reading current value |
+| Metadata | `busctl get-property org.bluez ... MediaPlayer1` | Track info |
+| Suspend | `busctl monitor` / `gdbus monitor` | Resume restore |
+| EQ | `libpipewire-module-filter-chain` + `param_eq` + `clamp` | Equalizer with anti-clipping |
+| Multi-output | `libpipewire-module-combine-stream` | Simultaneous output |
+
+### Where configs live
+
+| File | Contents |
+|---|---|
+| `~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf` | Speaker optimization (roles / hw-volume / autoswitch) |
+| `~/.config/wireplumber/wireplumber.conf.d/55-bt-speaker-quality.conf` | Codec priority + resample quality |
+| `~/.config/wireplumber/wireplumber.conf.d/70-bt-speaker-latency.conf` | Latency profile |
+| `~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf` | Equalizer |
+| `~/.config/pipewire/pipewire.conf.d/70-bt-speaker-combine.conf` | Multi-output |
+
+**Everything lives in the user's home**, needs no root, and is unaffected by SteamOS's `/etc` keep-list on upgrades.
+
+---
+
+## Known limitations
+
+### Protocol-level (unsolvable, informational)
+
+- **Only one A2DP source device per adapter at a time.** AVDTP v1.3 §5.3 states a local SEP can connect to at most one remote SEP. PipeWire author Wim Taymans' commit: *"bluez5: endpoint can be used only by one device at a time ... Trying to have it connected to multiple remotes either fails or causes misbehavior later on"* ([a58d815](https://gitlab.freedesktop.org/pipewire/pipewire/-/commits/a58d8150249c31d3bb37844ec98563eddd5cf143/spa/plugins)).
+  > The "no real limit to the number of inputs" claim you'll find online means multiple devices can hold ACL connections — but **only one A2DP stream can actually produce sound at a time**.
+- **150–300 ms latency.** Video lip-sync will be slightly off; music is fine.
+- **SBC is the baseline codec.** Whether AAC / LDAC / aptX negotiate depends on the phone.
+- **No microphone passthrough.** Only A2DP Sink is enabled, not HFP AG.
+- **Turn your phone's volume up** and control volume on the Deck — many phones ignore the sink's volume.
+
+### Upstream bugs (mitigable only)
+
+- Dual-role Bluetooth devices may negotiate `audio-gateway`, presenting as "connected but no sound". This is an upstream regression ([wireplumber#969](https://gitlab.freedesktop.org/pipewire/wireplumber/-/work_items/969) / [bluez#1922](https://github.com/bluez/bluez/issues/1922)) recurring on BlueZ 5.86/5.87/5.88. Speaker optimization mitigates it but cannot cure it.
+
+### Version reference
+
+| SteamOS | PipeWire | WirePlumber | BlueZ |
+|---|---|---|---|
+| 3.7.x | 1.2.7 | 0.5.7 | 5.79 |
+| 3.8.10 | 1.6.4 | 0.5.14 | 5.83 |
+| 3.9.7 | 1.6.8 | 0.5.18 | 5.87 |
+
+> WirePlumber 0.5.7 and 0.5.18 behave differently around Bluetooth; parameter names in older tutorials may not match.
+
+---
+
+## Troubleshooting
+
+Full page → **Diagnostics**:
+
+- **12 self-checks**, each with an explicit ✅/❌
+- **Copy diagnostic report** — plain text, paste it to the author
+- Backend module load status (all 8 modules)
+- Raw `bluetoothctl show` output
+- `wpctl status`
+- Plugin log
+
+Log path: `~/homebrew/logs/decky-bt-speaker/bt-speaker.log`
+
+| Symptom | Fix |
+|---|---|
+| Phone can't find the Deck | Check "Discoverable"; make sure keep-alive is on |
+| Pairing asks for a PIN | Check the "Pairing agent" row in Diagnostics; restart the agent |
+| Connected but no sound | ① Enable "Speaker optimization" and reconnect ② Check the default output ③ Phone volume isn't 0 |
+| Muffled, sounds like a phone call | Dropped to HFP mono. Enable "Speaker optimization" and disable "Call audio" in the phone's Bluetooth settings |
+| Audio stutters | 2.4 GHz interference — move away from the router / USB 3.0, or switch Wi-Fi to 5 GHz |
+| No sound after switching EQ | PipeWire needs a second or two to restart; if it persists, reboot the Deck |
+| Link lost after closing the lid | Confirm "Restore after sleep" is on; check the captured event count in Diagnostics |
+| Volume slider showed 0% | Fixed in v2.4.3+ — replaced with relative-step buttons |
+
+---
+
+## Development
+
+```
+decky-bt-speaker/
+├── main.py              # Backend entry (Plugin class / RPC / lifecycle)
+├── bt.py                # BlueZ + PipeWire wrapper
+├── power.py             # Suspend/resume watcher
+├── nodes.py             # PipeWire node graph parsing
+├── focus.py             # Audio focus / codec
+├── silence.py           # Silence guard / volume normalization
+├── eq.py                # Equalizer (filter-chain + param_eq + clamp)
+├── output.py            # Latency profiles / multi-output
+├── metadata.py          # AVRCP metadata
+├── quality.py           # Codec presets / resample quality
+├── wifi.py              # Wi-Fi band / interference detection
+├── pack.py              # Packaging (with missing-file self-checks)
+├── tests_offline.py     # Offline tests (200+, no Deck needed)
+├── src/
+│   ├── index.tsx        # definePlugin
+│   ├── backend.ts       # RPC wrapper
+│   ├── store.ts         # State singleton + adaptive polling
+│   ├── i18n.ts          # English / 简体中文 dictionaries
+│   ├── types.ts         # TS types
+│   ├── components.tsx   # Shared controls
+│   └── views/
+│       ├── Speaker.tsx        # QAM panel
+│       └── BtSpeakerPage.tsx  # Full page (devices / settings / EQ / diagnostics)
+└── docs/
+    ├── 功能拓展与竞品调研.md   # Competitive research (Chinese)
+    └── 商店提交指南.md         # Store submission guide (Chinese)
+```
+
+```bash
+pnpm run typecheck      # type check
+pnpm run build          # build dist/index.js
+python tests_offline.py # backend self-tests
+python pack.py          # package the zip
+```
+
+### Hard constraints
+
+1. **Backend uses only the standard library.** Decky's backend is a PyInstaller-frozen environment; third-party packages like `dbus-python` won't import.
+2. **Resolve commands by absolute path.** Decky before v3.2.6 doesn't pass `PATH` to child processes.
+3. **Never use `wpctl set-default` for auto-switching.** That choice is remembered permanently and gets a `+30000` priority bonus that outranks every `priority.session`, so whatever the user picks afterwards gets stolen back (see [GNOME #3800](https://gitlab.gnome.org/GNOME/gnome-control-center/-/work_items/3800)).
+4. **Always pass session env to child processes.** Decky's backend doesn't inherit `XDG_RUNTIME_DIR`; without it `wpctl` / `pactl` / `systemctl --user` all fail. `run_cmd()` injects `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `PIPEWIRE_RUNTIME_DIR`.
+5. **`flags` takes `"root"`, not `"_root"`.** The official template says `_root`, but the loader source checks `"root"`. This plugin needs no root: `flags: []`.
+6. **`package.json` must be in the zip with `"type": "module"`.** Without it Decky falls back to legacy IIFE loading via `eval()`, and an ESM bundle throws `SyntaxError: Unexpected token 'export'`.
+7. **Keep daemons on `systemctl --user`.** Don't add a root flag just to run something persistently.
+
+---
+
+## Version history
+
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.4.5**.
+
+| Version | Contents |
+|---|---|
+| 1.0.0 | Base: QAM / device management / PIN-free pairing / keep-alive / speaker tuning |
+| 1.1.0 | Cross-suspend keep-alive and auto-reconnect |
+| 1.2.0 | "Who's playing" + independent external-source volume |
+| 1.3.0 | Audio focus policy + codec visibility |
+| 1.4.0 | Auto-disconnect on silence + volume normalization |
+| 1.5.0 | Equalizer + AutoEQ import |
+| 1.6.0 | Latency profiles + multi-output sync |
+| 1.7.0 | AVRCP metadata |
+| 2.0.0 | Diagnostics overhaul + report export + docs rewrite |
+| 2.0.1 | Fix `package.json` missing from the zip (ESM/IIFE loading) |
+| 2.0.3 | Real-device fixes: PipeWire restart / pairing code / safe-area |
+| 2.0.4 | Volume boost |
+| 2.0.5 | Flat EQ no longer leaves an empty virtual sink |
+| 2.1.0 | In-plugin device scanning and pairing |
+| 2.1.1 | Anti-clipping (`clamp`) + anti-stutter buffer tuning |
+| 2.2.1 | Volume sync / layout overlap / codec optimization |
+| 2.3.0 | Friendly names for unnamed devices + i18n |
+| 2.4.0 | Dependency upgrade / polling throttle / settings validation |
+| 2.4.1 | `auto_gain` no longer fights the user |
+| 2.4.2 | `run_cmd` injects session env |
+| 2.4.3 | Removed volume slider, relative-step buttons |
+| 2.4.4 | Removed the external-source slider too |
+| 2.4.5 | Faster unload (no waiting on child processes) |
+
+---
+
+## Credits
+
+- [WirePlumber Bluetooth configuration](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html)
+- [pipewire-props(7)](https://man.archlinux.org/man/pipewire-props.7)
+- [PipeWire filter-chain / combine-stream / loopback](https://docs.pipewire.org/)
+- [Xe Iaso: A Steam Deck can be a Bluetooth speaker](https://xeiaso.net/notes/2026/steam-deck-bluetooth-speaker/)
+- [pw_wp_bluetooth_rpi_speaker](https://github.com/fdanis-oss/pw_wp_bluetooth_rpi_speaker) — an A2DP sink reference by a PipeWire maintainer
+- [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)
+
+---
+
+## License
+
+MIT © 大肥鱼 (BigFatFish)
+
+---
+
+# 简体中文
+
+[English](#bluetooth-speaker--steam-deck-decky-loader-plugin) · **简体中文**
 
 > **把 Steam Deck 变成一台「好用的」蓝牙音箱与音频中枢。**
 > 手机、平板、电脑连上来就能放歌，声音从 Deck 那对素质不错的双喇叭出来。
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](#changelog)
+[![Version](https://img.shields.io/badge/version-2.4.5-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![SteamOS](https://img.shields.io/badge/SteamOS-3.7%2B-1a9fff.svg)](https://store.steampowered.com/steamos)
 
@@ -36,7 +361,7 @@
 - **免 PIN 配对**：常驻 `NoInputNoOutput` agent，手机侧点一下即配对
 - **可发现性保活**：`DiscoverableTimeout = 0` + 每分钟复查
 - **设备管理**：已配对列表、连接 / 断开 / 移除、设备改名
-- **音量控制**：走 `wpctl`，与 Steam 音量键、系统音量条同一个音量
+- **音量控制**：相对调节按钮（`wpctl set-volume N%+`），不需要读回当前值
 - **零 root 依赖**：只用系统自带 `bluetoothctl` / `busctl` / `wpctl`，`flags: []`
 
 ### 掌机专属
@@ -44,7 +369,7 @@
 - **跨睡眠保活与自动重连**：合盖再开盖，蓝牙状态不会丢
   - 睡前快照 `powered` / `discoverable` / 已连接设备
   - 唤醒后按序恢复：上电 → 重启 agent → 恢复可发现 → 重连设备
-  - 监听 logind 的 `PrepareForSleep`（用 `busctl` / `gdbus`，**不用** `dbus-monitor --system` —— 它需要 root 权限才能 BecomeMonitor）
+  - 监听 logind 的 `PrepareForSleep`（用 `busctl` / `gdbus`，**不用** `dbus-monitor --system` —— 它需要 root 权限才能 `BecomeMonitor`）
 
 ### 音频体验
 
@@ -62,6 +387,7 @@
 - **5 个预设**：平直 / 低音增强 / 人声清晰 / 明亮通透 / 等响补偿
 - **AutoEQ / Squiglink 导入**：粘贴 `ParametricEQ.txt` 即可
 - 用 PipeWire **内置** `param_eq`，零外部插件依赖
+- EQ 之后串了一个 `clamp` 限幅器，防止增益过头削波（内置零延迟硬限幅）
 
 ### 多输出
 
@@ -72,6 +398,7 @@
 - **12 项自检**：从「检测到适配器」到「后端模块全部加载」，明确的 ✅/❌
 - **一键复制诊断报告**：纯文本，直接贴给作者
 - 适配器原始信息、`wpctl status`、插件日志
+- **Wi-Fi 干扰检测**：识别 2.4GHz Wi-Fi —— 蓝牙音频卡顿的头号原因
 
 ---
 
@@ -81,7 +408,7 @@
 
 1. Decky 设置 → 开发者 → 打开 **Developer Mode**
 2. 出现 **Install Plugin from ZIP** → 选 `decky-bt-speaker.zip`
-3. 回到 QAM，插件列表里出现「蓝牙音箱」
+3. 回到 QAM，插件列表里出现「Bluetooth Speaker」
 
 ### SSH 推送
 
@@ -108,13 +435,19 @@ python pack.py          # 打包
 
 ## 使用
 
-1. QAM（`···`）→「蓝牙音箱」→ 打开 **允许设备发现并连接**
+1. QAM（`···`）→「Bluetooth Speaker」→ 打开 **允许设备发现并连接**
 2. 全屏页 → **设置** → 打开 **「音箱优化」**（写一次 WirePlumber 配置）
 3. 手机蓝牙里搜 `Steam Deck`，配对
 4. 放歌，声音从 Deck 出来
 5. 想调音色？全屏页 → **均衡器** → 选个预设
 
 > 💡 首次配对建议在桌面模式试一次。个别手机（尤其 iOS）在游戏模式全屏时配对弹窗可能被 Steam 界面挡住。
+
+### 在插件里配对
+
+全屏页 → **已配对设备** → **搜索附近设备**（扫描 20 秒）→ 点 **配对**。不用退出插件去系统蓝牙设置。
+
+如果报「配对码 / 通行密钥不正确」，点 **修复配对** —— 它会清除 Deck 端保存的旧绑定密钥再重新配对。
 
 ---
 
@@ -125,10 +458,10 @@ python pack.py          # 打包
 ┌──────────┐   A2DP (SBC/AAC)   ┌──────────────────────────────┐
 │ 音乐 App │ ─────────────────▶ │ BlueZ ──▶ PipeWire           │
 └──────────┘   蓝牙 2.4GHz       │   bluez_input.<MAC> 节点      │
-                                 │        │                     │
-                                 │        ▼                     │
-                                 │  默认 sink（内置扬声器）       │
-                                 └──────────────────────────────┘
+                                  │        │                     │
+                                  │        ▼                     │
+                                  │  默认 sink（内置扬声器）       │
+                                  └──────────────────────────────┘
 ```
 
 > **方向很重要**：Deck **当音箱**时出现的是 `bluez_input.*`（外部推流进来）；Deck **连耳机**时是 `bluez_output.*`。
@@ -136,12 +469,12 @@ python pack.py          # 打包
 | 层 | 用什么 | 作用 |
 |---|---|---|
 | 蓝牙适配器 | `bluetoothctl` / `busctl set-property` | 上电、可发现、改名、`DiscoverableTimeout=0` |
-| 配对 | 常驻 `bluetoothctl` + `agent NoInputNoOutput` | 免 PIN |
+| 配对 | 常驻 `bluetoothctl --agent=NoInputNoOutput` | 免 PIN |
 | 设备 | `bluetoothctl devices/info/connect/disconnect/remove` | 列表与连接管理 |
-| 音量 | `wpctl get-volume/set-volume` | 与系统音量同步 |
+| 音量 | `wpctl set-volume`（相对语法 `N%+`） | 不需要读当前值 |
 | 元数据 | `busctl get-property org.bluez ... MediaPlayer1` | 曲目信息 |
 | 睡眠 | `busctl monitor` / `gdbus monitor` | 唤醒恢复 |
-| 均衡 | `libpipewire-module-filter-chain` + `param_eq` | EQ |
+| 均衡 | `libpipewire-module-filter-chain` + `param_eq` + `clamp` | EQ 与抗削波 |
 | 多输出 | `libpipewire-module-combine-stream` | 同步出声 |
 
 ### 配置写在哪
@@ -149,6 +482,7 @@ python pack.py          # 打包
 | 文件 | 内容 |
 |---|---|
 | `~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf` | 音箱优化（roles / hw-volume / autoswitch） |
+| `~/.config/wireplumber/wireplumber.conf.d/55-bt-speaker-quality.conf` | 编码器优先级 + 重采样质量 |
 | `~/.config/wireplumber/wireplumber.conf.d/70-bt-speaker-latency.conf` | 延迟档位 |
 | `~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf` | 均衡器 |
 | `~/.config/pipewire/pipewire.conf.d/70-bt-speaker-combine.conf` | 多输出 |
@@ -206,6 +540,7 @@ python pack.py          # 打包
 | 声音断续 | 2.4GHz 干扰，远离路由器 / USB 3.0；或用 5GHz Wi-Fi |
 | 切 EQ 后没声音 | PipeWire 重启需要一两秒，等一下；还不行就重启 Deck |
 | 合盖再开盖失联 | 确认「睡眠唤醒后自动恢复」开着，诊断页看已捕获事件数 |
+| 音量滑条显示 0% | v2.4.3+ 已修复 —— 改成相对调节按钮 |
 
 ---
 
@@ -219,15 +554,18 @@ decky-bt-speaker/
 ├── nodes.py             # PipeWire 节点图解析
 ├── focus.py             # 音频焦点 / 编码器
 ├── silence.py           # 静音守卫 / 音量归一化
-├── eq.py                # 均衡器（filter-chain + param_eq）
+├── eq.py                # 均衡器（filter-chain + param_eq + clamp）
 ├── output.py            # 延迟档位 / 多输出同步
 ├── metadata.py          # AVRCP 元数据
+├── quality.py           # 编码器预设 / 重采样质量
+├── wifi.py              # Wi-Fi 频段 / 干扰检测
 ├── pack.py              # 打包（含漏包自检）
-├── tests_offline.py     # 离线自检（197 项，不需要 Deck）
+├── tests_offline.py     # 离线自检（200+ 项，不需要 Deck）
 ├── src/
 │   ├── index.tsx        # definePlugin
 │   ├── backend.ts       # RPC 封装
-│   ├── store.ts         # 状态单例 + 轮询
+│   ├── store.ts         # 状态单例 + 自适应轮询
+│   ├── i18n.ts          # 中英双语词典
 │   ├── types.ts         # TS 类型
 │   ├── components.tsx   # 通用控件
 │   └── views/
@@ -250,14 +588,16 @@ python pack.py          # 打包 zip
 1. **后端只用标准库**。Decky 后端是 PyInstaller 冻结环境，`dbus-python` 等第三方包 import 不到。
 2. **命令探测走绝对路径**。Decky v3.2.6 之前子进程不继承 PATH。
 3. **不用 `wpctl set-default` 做自动切换**。那个选择会被永久记住且获得 +30000 优先级加成，压过所有 `priority.session`，用户之后怎么切都会被抢回去（见 [GNOME #3800](https://gitlab.gnome.org/GNOME/gnome-control-center/-/work_items/3800)）。
-4. **`flags` 写 `"root"` 不是 `"_root"`**。官方模板写的是 `_root`，但 loader 源码实际判断的是 `"root"`。本插件不需要 root，`flags: []`。
-5. **常驻用 `systemctl --user`**，不要为常驻加 root flag。
+4. **子进程必须带会话环境变量**。Decky 后端不继承 `XDG_RUNTIME_DIR`，缺了它 `wpctl` / `pactl` / `systemctl --user` 全部失败。`run_cmd()` 统一注入 `XDG_RUNTIME_DIR`、`DBUS_SESSION_BUS_ADDRESS`、`PIPEWIRE_RUNTIME_DIR`。
+5. **`flags` 写 `"root"` 不是 `"_root"`**。官方模板写的是 `_root`，但 loader 源码实际判断的是 `"root"`。本插件不需要 root，`flags: []`。
+6. **zip 里必须有 `package.json` 且 `"type": "module"`**。缺了 Decky 会退回旧版 IIFE 用 `eval()` 加载，ESM 产物直接抛 `SyntaxError: Unexpected token 'export'`。
+7. **常驻用 `systemctl --user`**，不要为常驻加 root flag。
 
 ---
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.0.0**，7 个功能版本：
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.4.5**。
 
 | 版本 | 内容 |
 |---|---|
@@ -270,6 +610,20 @@ python pack.py          # 打包 zip
 | 1.6.0 | 延迟档位 + 多输出同步 |
 | 1.7.0 | AVRCP 元数据 |
 | 2.0.0 | 诊断完善 + 报告导出 + 文档重写 |
+| 2.0.1 | 修复 zip 漏打 `package.json`（ESM/IIFE 加载） |
+| 2.0.3 | 真机修复：PipeWire 重启 / 配对码 / 安全区 |
+| 2.0.4 | 音量增益 |
+| 2.0.5 | 平直 EQ 不再挂空虚拟 sink |
+| 2.1.0 | 插件内搜索配对 |
+| 2.1.1 | 抗爆音（`clamp`）+ 抗卡顿缓冲 |
+| 2.2.1 | 音量同步 / 布局遮挡 / 编码器优化 |
+| 2.3.0 | 无名称设备友好标签 + 中英双语 |
+| 2.4.0 | 依赖升级 / 轮询节流 / 设置类型校验 |
+| 2.4.1 | `auto_gain` 不再抢控制权 |
+| 2.4.2 | `run_cmd` 注入会话环境变量 |
+| 2.4.3 | 删音量滑条，改相对调节按钮 |
+| 2.4.4 | 外部音源滑条也删掉 |
+| 2.4.5 | 卸载加快（不等子进程退出） |
 
 ---
 
@@ -279,7 +633,7 @@ python pack.py          # 打包 zip
 - [pipewire-props(7)](https://man.archlinux.org/man/pipewire-props.7)
 - [PipeWire filter-chain / combine-stream / loopback](https://docs.pipewire.org/)
 - [Xe Iaso：A Steam Deck can be a Bluetooth speaker](https://xeiaso.net/notes/2026/steam-deck-bluetooth-speaker/)
-- [pw_wp_bluetooth_rpi_speaker](https://github.com/fdanis-oss/pw_wp_bluetooth_rpi_speaker) —— PipeWire 作者本人的 A2DP sink 参考实现
+- [pw_wp_bluetooth_rpi_speaker](https://github.com/fdanis-oss/pw_wp_bluetooth_rpi_speaker) —— PipeWire 维护者本人的 A2DP sink 参考实现
 - [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)
 
 ---
