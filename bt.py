@@ -1001,6 +1001,35 @@ class Wp:
             raise BtError("设置节点 %s 音量失败：%s" % (node_id, (out or "").strip()))
         return True
 
+    async def step_volume_of(self, node_id, delta):
+        """给指定节点相对调节音量（不读取当前值）。
+
+        用 wpctl 的相对语法，加减由 wpctl 内部完成，
+        因此不受「读不到当前值」影响。
+        """
+        try:
+            d = int(delta)
+        except (TypeError, ValueError):
+            raise BtError("音量增量不合法：%s" % delta)
+        if d == 0:
+            return True
+        sign = "+" if d > 0 else "-"
+        arg = "%d%%%s" % (abs(d), sign)
+        rc, out = await run_cmd(
+            ["wpctl", "set-volume", "-l", "%.2f" % MAX_GAIN, str(int(node_id)), arg],
+            timeout=5.0,
+        )
+        if rc != 0:
+            rc2, out2 = await run_cmd(
+                ["wpctl", "set-volume", str(int(node_id)), arg], timeout=5.0
+            )
+            if rc2 != 0:
+                raise BtError(
+                    "调节节点 %s 音量失败：%s"
+                    % (node_id, ((out2 or out or "").strip().splitlines() or ["未知错误"])[-1])
+                )
+        return True
+
     async def set_mute_of(self, node_id, muted):
         rc, out = await run_cmd(
             ["wpctl", "set-mute", str(int(node_id)), "1" if muted else "0"], timeout=5.0

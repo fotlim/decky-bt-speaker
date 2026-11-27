@@ -254,31 +254,21 @@ export function Speaker() {
               {state.track.position} / {state.track.duration}
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Focusable
-              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted), t("common.ok"))}
-              onActivate={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted))}
-              style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}
-            >
-              {state.live.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
-            </Focusable>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <SliderField
-                value={srcVol !== null ? srcVol : Math.round((state.live.volume || 0) * 100)}
-                min={0}
-                max={150}
-                step={1}
-                showValue={false}
-                onChange={(v) => {
-                  // 外部源同样用「确认式交还」，避免被轮询拽回去
-                  setSrcVol(v);
-                  if (srcTimer.current) clearTimeout(srcTimer.current);
-                  srcTimer.current = setTimeout(() => setSrcVol(null), 15000);
-                  api.setSourceVolume(state.live!.id, v / 100).catch(() => {});
-                }}
-              />
-            </div>
-          </div>
+          {/* 外部音源音量：同样不用滑条（读取不可靠），改相对调节 */}
+          <Focusable flow-children="row" style={{ display: "flex", gap: 6, marginTop: 2 }}>
+            <VolBtn
+              onClick={() => act(() => api.stepSourceVolume(state.live!.id, -10))}
+              label="−10%"
+            />
+            <VolBtn
+              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted))}
+              label={state.live.muted ? t("qam.unmute") : t("qam.mute")}
+            />
+            <VolBtn
+              onClick={() => act(() => api.stepSourceVolume(state.live!.id, 10))}
+              label="+10%"
+            />
+          </Focusable>
         </div>
       )}
 

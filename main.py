@@ -815,6 +815,13 @@ class Plugin:
         return {"ok": True, "volume": max(0.0, min(bt.MAX_GAIN, float(value)))}
 
     @_safe
+    async def step_source_volume(self, node_id, delta):
+        """外部源相对调节（不读取当前值）。"""
+        self._last_manual_volume = time.time()
+        await self.wp.step_volume_of(node_id, delta)
+        return {"ok": True, "delta": int(delta)}
+
+    @_safe
     async def set_source_mute(self, node_id, muted):
         await self.wp.set_mute_of(node_id, bool(muted))
         return {"ok": True, "muted": bool(muted)}

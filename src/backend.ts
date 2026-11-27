@@ -33,6 +33,9 @@ export const api = {
   setMute: (m: boolean) => call<[boolean], { ok: boolean }>("set_mute", m),
   setSourceVolume: (nodeId: number, v: number) =>
     call<[number, number], { ok: boolean; volume: number }>("set_source_volume", nodeId, v),
+  /** 外部源相对调节：同样不依赖读取当前值 */
+  stepSourceVolume: (nodeId: number, delta: number) =>
+    call<[number, number], { ok: boolean }>("step_source_volume", nodeId, delta),
   setSourceMute: (nodeId: number, m: boolean) =>
     call<[number, boolean], { ok: boolean }>("set_source_mute", nodeId, m),
   boostVolume: (gain = 1.5) =>
