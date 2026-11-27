@@ -7,7 +7,7 @@ import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog } f
 import { api } from "../backend";
 import { useSpeaker, setPanelVisible } from "../store";
 import { COLORS, ROUTE } from "../route";
-import { Pill, ErrorText } from "../components";
+import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
@@ -100,8 +100,8 @@ export function Speaker() {
     try {
       await fn();
       if (okMsg) toaster.toast({ title: okMsg, body: "" });
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     } finally {
       setBusy(false);
     }

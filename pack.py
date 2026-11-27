@@ -37,6 +37,7 @@ INCLUDE_FILES = [
     "package.json",
     "main.py",
     "bt.py",
+    "btutil.py",
     "power.py",
     "nodes.py",
     "focus.py",

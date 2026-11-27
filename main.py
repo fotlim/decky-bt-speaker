@@ -198,6 +198,8 @@ class Plugin:
     _keep_task = None
     _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
     _auto_gain_done = False     # 本次音源会话是否已自动增益过
+    # status() 的分层缓存：{key: (时间戳, 值)}
+    _cache = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
     # ------------------------------------------------------------------
@@ -270,6 +272,8 @@ class Plugin:
     # 生命周期
     # ------------------------------------------------------------------
     async def _main(self):
+        # 分层缓存容器（status() 用）
+        self._cache = {}
         runtime = getattr(decky, "DECKY_PLUGIN_RUNTIME_DIR", _PLUGIN_DIR)
         logdir = getattr(decky, "DECKY_PLUGIN_LOG_DIR", runtime)
         try:
@@ -532,6 +536,45 @@ class Plugin:
         self.guard.reset()
 
     # ------------------------------------------------------------------
+    # 轻量缓存：status() 每次要 fork 6~7 个外部进程，其中不少数据几乎不变。
+    # 按「变化频率」分层缓存，把轮询开销压下来。
+    # ------------------------------------------------------------------
+    def _cached(self, key, ttl, factory):
+        """取缓存；过期或未命中时调用 factory 重新计算。
+
+        factory 是同步函数（用于纯计算）；异步的请用 _cached_async。
+        """
+        if self._cache is None:
+            self._cache = {}
+        now = time.time()
+        hit = self._cache.get(key)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+        try:
+            val = factory()
+        except Exception as e:  # noqa: BLE001
+            self._log("缓存 %s 计算失败：%s" % (key, e))
+            val = hit[1] if hit is not None else None
+        self._cache[key] = (now, val)
+        return val
+
+    async def _cached_async(self, key, ttl, factory):
+        """异步版的缓存。"""
+        if self._cache is None:
+            self._cache = {}
+        now = time.time()
+        hit = self._cache.get(key)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+        try:
+            val = await factory()
+        except Exception as e:  # noqa: BLE001
+            self._log("缓存 %s 计算失败：%s" % (key, e))
+            val = hit[1] if hit is not None else None
+        self._cache[key] = (now, val)
+        return val
+
+    # ------------------------------------------------------------------
     # RPC：状态
     # ------------------------------------------------------------------
     @_safe
@@ -600,10 +643,20 @@ class Plugin:
                 self._log("读取编码器失败：%s" % e)
 
         # 已连接设备的详情（图标/类别用来在 UI 上区分手机和电脑）
+        #
+        # 这里原来对每个已连接设备都跑一次 `bluetoothctl info`（一个进程），
+        # 设备多的时候很贵。info 的图标/类别几乎不变，缓存 30 秒。
         details = []
         for d in connected:
             try:
-                details.append(await self.bz.info(d["mac"]))
+                info = await self._cached_async(
+                    "dev_info:" + d["mac"], 30.0,
+                    lambda m=d["mac"]: self.bz.info(m),
+                )
+                if info:
+                    details.append(info)
+                else:
+                    raise bt.BtError("no info")
             except Exception:
                 details.append({"mac": d["mac"], "name": d["name"], "connected": True, "paired": True, "icon": ""})
 
@@ -632,10 +685,13 @@ class Plugin:
             },
             "silence": (self.guard.status() if self.guard is not None else None),
             "normalize": (self.norm.status() if self.norm is not None else None),
-            "wifi": (await wifi.detect() if wifi is not None else None),
+            # Wi-Fi 频段几乎不变，缓存 60 秒（原本每次 status 都跑一次 `iw dev`）
+            "wifi": (await self._cached_async("wifi", 60.0, wifi.detect) if wifi is not None else None),
             "quality": {
                 "preset": self.settings.get("codec_preset", "balanced"),
-                "presets": (quality.codec_list() if quality is not None else []),
+                # 预设列表是静态数据，缓存 10 分钟
+                "presets": (self._cached("codec_list", 600.0, quality.codec_list)
+                            if quality is not None else []),
                 "installed": (quality.QualityConfig.installed() if quality is not None else False),
                 "active_profile": codec.get("profile", "") if codec else "",
             },
@@ -748,30 +804,6 @@ class Plugin:
     # ------------------------------------------------------------------
     # RPC：扫描与配对（插件内完成，不用跳系统设置）
     # ------------------------------------------------------------------
-    @_safe
-    async def scan_devices(self, timeout=20):
-        """扫描附近设备并返回未配对的列表。
-
-        这是「配对体验」的核心：不用退出插件去系统蓝牙设置里找，
-        直接在插件里看到设备并一键配对。
-        """
-        sec = max(5, min(60, int(timeout or 20)))
-        # 扫描前确保 agent 就绪，否则扫到了也配不上
-        if not self.bz.agent_registered():
-            try:
-                await self.bz.start_agent()
-            except Exception as e:  # noqa: BLE001
-                self._log("扫描前启动 agent 失败：%s" % e)
-        await self.bz.start_discovery(sec)
-        devs = await self.bz.list_discovered(include_paired=False)
-        self._log("扫描到 %d 个未配对设备" % len(devs))
-        return {"ok": True, "devices": devs, "seconds": sec}
-
-    @_safe
-    async def stop_scan(self):
-        await self.bz.stop_discovery()
-        return {"ok": True}
-
     # ---- 流式扫描（非阻塞，边扫边出）----------------------------------
     @_safe
     async def scan_start(self, timeout=20):
@@ -1168,20 +1200,6 @@ class Plugin:
                 pass
         self._log("焦点模式切换为 %s（%s）" % (mode, "、".join(applied) or "无附加操作"))
         return {"ok": True, "mode": mode, "applied": applied}
-
-    @_safe
-    async def get_autoswitch(self):
-        if focus is None:
-            raise bt.BtError("focus 模块未加载")
-        return {"enabled": await self.foc.get_autoswitch()}
-
-    @_safe
-    async def set_autoswitch(self, enabled):
-        if focus is None:
-            raise bt.BtError("focus 模块未加载")
-        await self.foc.set_autoswitch(bool(enabled))
-        return {"ok": True, "enabled": bool(enabled)}
-
     # ------------------------------------------------------------------
     # RPC：静音守卫 / 音量归一化
     # ------------------------------------------------------------------

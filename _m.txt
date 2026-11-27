@@ -1,0 +1,36 @@
+refactor(v2.6.0): 代码质量重构 - 类型安全/死代码/重复/缓存/拆分
+
+五类问题全部处理，不改变任何用户可见行为。
+
+1. 类型安全（收益最大）
+   视图里 45 处 any，其中 state: any 等于关掉了整个状态树的类型检查，
+   这也是今天反复踩 bug 的根源。
+   - SettingsTab / EqTab 的 state: any -> SpeakerStatus
+   - devLabel(d: any) -> devLabel(d: BtDevice)
+   - 预设/WiFi/延迟/sink 列表全部用真实类型
+   - catch (e: any) -> catch (e) + 新增 errMsg(e: unknown)
+
+   立刻抓出 4 个真实缺陷：
+   - BtDevice 缺 rssi / uuids / services_resolved
+   - Settings 缺 codec_preset
+   - CheckItem 字段名是 name 但代码用 key
+   - 视图里 c.name 兜底分支引用了不存在的字段
+
+2. 死代码清理
+   - backend.ts 删 11 个从未被调用的 api 方法（48 -> 25）
+   - main.py 删 4 个被取代的旧 RPC
+
+3. 重复逻辑合并
+   Wp 类 6 个音量方法各自拼 wpctl 命令，10 处重复。
+   抽出 _vol_cmd / _target / _parse_vol / _step 统一内核，
+   wpctl 调用点从 10 处降到 2 处。
+
+4. 轮询开销
+   status() 按变化频率分层缓存：Wi-Fi 60s、编码器预设 600s、
+   设备 info 30s。适配器/音量/设备列表/元数据保持实时。
+
+5. 文件拆分
+   bt.py 1513 行拆出 btutil.py（320 行通用工具），
+   bt.py 降到 1068 行。保留 re-export 保持向后兼容。
+
+验证：后端测试全过、i18n 全过（199 key）、类型检查通过、打包 7 项自检全过

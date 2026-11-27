@@ -2,6 +2,37 @@ import { Focusable } from "@decky/ui";
 import { COLORS } from "./route";
 
 // ---------------------------------------------------------------------------
+// 工具函数
+// ---------------------------------------------------------------------------
+
+/**
+ * 从 catch 到的任意值里取出可读的错误文本。
+ *
+ * 为什么需要它？
+ * ------------
+ * TS 4.4+ 的 `useUnknownInCatchVariables` 下，`catch (e)` 里的 e 是 `unknown`，
+ * 直接读 `e.message` 会编译报错。早期代码为了省事全写成 `catch (e: any)`，
+ * 但那等于关掉了类型检查 —— 后端返回什么形状都不会被发现。
+ *
+ * 统一走这个函数，既能拿到消息，又保持 unknown 的类型安全。
+ */
+export function errMsg(e: unknown): string {
+  if (e == null) return "unknown error";
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object") {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string") return m;
+    try {
+      return JSON.stringify(e);
+    } catch {
+      return String(e);
+    }
+  }
+  return String(e);
+}
+
+// ---------------------------------------------------------------------------
 // 基础控件
 // ---------------------------------------------------------------------------
 export function IconButton({

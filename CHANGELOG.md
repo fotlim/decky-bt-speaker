@@ -105,6 +105,201 @@
 
 ---
 
+## [2.6.0] - 2026-11-27
+
+代码质量重构，不改变用户可见行为。
+
+### 类型安全（收益最大）
+
+视图里 45 处 `any`，其中 `state: any` 等于关掉了整个状态树的类型检查 ——
+这也是反复踩 bug 的根源（字段拼错、类型不匹配都不会报错）。
+
+- `SettingsTab` / `EqTab` 的 `state: any` → `SpeakerStatus`
+- `devLabel(d: any)` → `devLabel(d: BtDevice)`
+- 预设列表、WiFi 列表、延迟档位、sink 列表全部用真实类型
+- `catch (e: any)` → `catch (e)` + 新增 `errMsg(e: unknown)` 辅助函数
+
+**立刻抓出 4 个真实缺陷**（补上后编译才通过）：
+- `BtDevice` 缺 `rssi` / `uuids` / `services_resolved` 字段
+- `Settings` 缺 `codec_preset` 字段
+- `CheckItem` 的字段名是 `name`，但后端和代码都用 `key`
+- 视图里 `c.name` 兜底分支引用了不存在的字段
+
+### 死代码清理
+
+- `backend.ts` 删除 11 个从未被视图调用的 api 方法（48 → 25 个）
+- `main.py` 删除 4 个被新接口取代的旧 RPC：
+  `scan_devices` / `stop_scan`（→ `scan_start`/`scan_list`/`scan_stop`）、
+  `get_autoswitch` / `set_autoswitch`（无对应 UI）
+
+### 重复逻辑合并
+
+`Wp` 类的 6 个音量方法各自拼一遍 `wpctl` 命令，共 10 处重复。
+
+抽出统一内核：
+- `_vol_cmd(verb, node_id, arg, limit)` — 唯一入口，负责拼 target、
+  加 `-l` 限幅、失败回退
+- `_target(node_id)` — None 表示默认 sink，否则节点 id
+- `_parse_vol(text)` — 统一解析音量与静音状态
+- `_step(node_id, delta)` — 相对加减共用实现
+
+**`wpctl` 调用点从 10 处降到 2 处。**
+
+### 轮询开销
+
+`status()` 每次要 fork 6~7 个外部进程。按变化频率分层缓存：
+- Wi-Fi 频段：60 秒（原本每次轮询都跑一次 `iw dev`）
+- 编码器预设列表：600 秒（静态数据）
+- 设备 info：30 秒（图标/类别几乎不变）
+
+**适配器、音量、设备列表、元数据全部保持实时查询**，不受缓存影响。
+
+### 文件拆分
+
+`bt.py` 1513 行混了三类职责，拆出 `btutil.py`：
+- `btutil.py`（320 行）— 通用工具：MAC 归一化、命令执行、设备名推断、对端类型识别
+- `bt.py`（1068 行）— BlueZ 封装
+
+`bt.py` 保留 re-export，`bt.normalize_mac(...)` 等老写法仍然可用。
+
+### 验证
+
+- 后端离线测试：全部通过
+- i18n 测试：EN/ZH 各 199 个 key，无硬编码中文残留
+- 前端类型检查：通过
+- 打包自检：7 项全过
+
+---
+
+## [2.5.5] - 2026-11-27
+
+### Fixed
+
+- **电脑推流声音小、手机没问题**（AVRCP 绝对音量把控制权交给了对端）
+
+  根因是 `bluez5.hw-volume = [ a2dp_sink a2dp_source ]` 里的 `a2dp_sink`。
+  启用后音量控制权通过 AVRCP 绝对音量交给对端，而不同对端实现差异极大：
+  - 手机：多数不实现或实现不完整 → Deck 自己控制，正常
+  - Windows：完整实现 → 电脑的音量滑块直接决定 Deck 音量
+
+  修法一（根本）：`hw-volume` 只保留 `a2dp_source`，
+  接收方向完全由 PipeWire 软件音量控制。
+
+  修法二（补偿）：新增 `classify_peer()` 识别对端类型
+  （Icon → Class of Device → 名字关键词三层兜底），
+  识别到电脑推流时额外再给 1.2 倍增益。
+
+---
+
+## [2.5.4] - 2026-11-27
+
+### Fixed
+
+- **一键增益完全失效**
+
+  它先调 `wpctl get-volume` 读当前值再算目标值：
+
+  ```python
+  cur = await self.wp.get_volume()      # 真机上读不到，抛异常
+  target = max(cur["volume"], g)
+  await self.wp.set_volume(target)      # 整段被 except 吞掉
+  ```
+
+  而 `get_volume` 在真机上一直不可靠，一旦抛异常整段就被跳过 ——
+  用户点了按钮，音量毫无变化。
+
+  改成直接设绝对值，完全不读。前端从单个按钮改成
+  100% / 130% / 150% / 200% 四档，`MAX_GAIN` 提到 2.5。
+
+---
+
+## [2.5.3] - 2026-11-27
+
+### Fixed
+
+- **配对电脑时报「设备地址不合法」**
+
+  `is_mac()` 的正则只接受「大写冒号」格式，但 BlueZ 在不同场合给的
+  格式不一致（横线 Alias、小写输出），前端传进来校验就失败。
+
+  新增 `normalize_mac()`：去分隔符 → 校验 12 位十六进制 → 重新按冒号
+  分组大写。`is_mac` / `is_mac_like` 都改为复用它，5 处校验点全部
+  改成「先归一化再用」。
+
+---
+
+## [2.5.2] - 2026-11-27
+
+### Fixed
+
+- **「显示没有名称的设备」开关对已配对列表无效**
+
+  开关只作用于扫描结果，用户看到的「未知设备」其实来自已配对列表。
+
+  - `showUnnamed` 状态提到 `DevicesTab` 层，两个列表共用
+  - 后端 `friendly_device_name` 的中文兜底改为中性的 `? · XX:XX`
+  - 前端新增 `devLabel()`，无名设备按当前语言显示
+
+---
+
+## [2.5.1] - 2026-11-27
+
+### Fixed
+
+- **无名称设备过滤失效**
+
+  BlueZ 对没广播名字的设备会自动生成 `Alias`，格式是
+  `AA-BB-CC-DD-EE-FF`（**横线**），而 `is_mac()` 只认冒号，
+  于是横线 MAC 被当成「真实名字」，`has_real_name` 错判为 True。
+
+  新增 `is_mac_like()` 统一处理各种写法。
+
+- **以前连接过的设备扫不出来**
+
+  `list_discovered` 里 `if not include_paired: continue` 把所有已配对
+  设备过滤掉了。默认改为 True，扫描列表里已配对设备显示「已配对」
+  标签、按钮变成「连接」。
+
+- **连接管理不完整**
+
+  参考 [DeckyLoader-Bluetooth](https://github.com/introkun/DeckyLoader-Bluetooth) 补齐：
+  - `device_action` 新增 `block` / `unblock` / `alias`
+  - 新增 `disconnect_all`
+  - `info()` 新增 `services_resolved` 和 `uuids`
+  - **`bluetoothctl` 版本兼容**：`devices Paired` 是 5.66 才有的子命令，
+    旧版本退回 `paired-devices`
+  - 已配对设备支持一键切换信任/取消信任
+
+---
+
+## [2.5.0] - 2026-11-27
+
+### Added
+
+- **流式扫描**（非阻塞，边扫边出）
+
+  之前是阻塞扫描：点一下要干等 20 秒，界面上只有静止的「正在搜索…」，
+  无法中途停止，也没有信号强度。
+
+  - 拆成 `scan_start` / `scan_list` / `scan_stop` 三个 RPC
+  - `start_discovery` 改为后台任务（非阻塞）
+  - 前端每 2 秒轮询，显示已用秒数和已找到数量
+  - 新增 RSSI 解析和 4 格信号强度条
+  - 排序：已连接 > 已配对 > 有名字 > 信号强
+
+- **「显示没有名称的设备」开关**
+
+- **i18n 补全**
+
+  诊断页自检项原来是后端返回硬编码中文，切英文后仍是中文。
+  改为后端只返回 i18n key（`chk.*`），前端按语言翻译。
+  另修掉 13 处残留硬编码中文。
+
+  新增 `tests_i18n.py` 长期校验：词典一致性、源码引用完整性、
+  后端 key 有翻译、无硬编码中文残留。
+
+---
+
 ## [2.4.5] - 2026-11-27
 
 真机反馈：音量调节正常了、卸载安装正常了。

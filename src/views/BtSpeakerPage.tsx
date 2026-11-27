@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Focusable, SliderField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../backend";
+import type {
+  SpeakerStatus, BtDevice, CodecPreset, WifiInterface,
+  LatencyProfile, SinkNode, EqPreset, CheckItem,
+} from "../types";
+import { errMsg } from "../components";
 import { useSpeaker } from "../store";
 import { COLORS } from "../route";
 import { Pill, ErrorText, Hint, Avatar, SectionTitle, Loading, Card } from "../components";
@@ -33,8 +38,8 @@ export function BtSpeakerPage() {
       }
       toaster.toast({ title: label, body: "" });
       setTimeout(refresh, 800);
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     } finally {
       setBusyMac(null);
     }
@@ -192,7 +197,7 @@ function DevicesTab({
               display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
               borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
             }}>
-              <Avatar connected={connected} icon={(d as any).icon} />
+              <Avatar connected={connected} icon={d.icon} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {devLabel(d)}
@@ -258,7 +263,7 @@ function DevicesTab({
 }
 
 /** 设备显示名：无名设备用本地化的「未知设备 · XX:XX」而不是后端的裸 MAC 后缀。 */
-function devLabel(d: any): string {
+function devLabel(d: BtDevice): string {
   const disp = d.display || d.name || d.mac;
   if (d.has_real_name === false) {
     const tail = String(d.mac || "").slice(-5);
@@ -276,7 +281,7 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }: {
   showUnnamed: boolean;
 }) {
   const [scanning, setScanning] = useState(false);
-  const [devices, setDevices] = useState<any[]>([]);
+  const [devices, setDevices] = useState<BtDevice[]>([]);
   const [scanned, setScanned] = useState(false);
   const [busyMac, setBusyMac] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -309,8 +314,8 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }: {
       setDevices(r0.devices || []);
       // 20 秒后自动结束
       setTimeout(() => finishScan(), 20500);
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
       finishScan();
     }
   };
@@ -347,10 +352,10 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }: {
       }
       setDevices((prev) => prev.filter((d) => d.mac !== mac));
       onPaired();
-    } catch (e: any) {
+    } catch (e) {
       toaster.toast({
         title: paired ? t("dev.connectFailed") : t("dev.pairFailed"),
-        body: e?.message || String(e),
+        body: errMsg(e),
       });
     } finally {
       setBusyMac(null);
@@ -467,19 +472,19 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }: {
 }
 
 // ---------------------------------------------------------------------------
-function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
+function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh: () => void }) {
   const [alias, setAlias] = useState(state.adapter?.alias || "");
   const [busy, setBusy] = useState(false);
   const s = state.settings || {};
 
   useEffect(() => { setAlias(state.adapter?.alias || ""); }, [state.adapter?.alias]);
 
-  const save = async (key: string, value: any, label: string) => {
+  const save = async (key: string, value: boolean | number | string, label: string) => {
     try {
       await api.setSetting(key, value);
       toaster.toast({ title: label, body: "" });
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
     }
   };
 
@@ -491,8 +496,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         body: r.applied && r.applied.length ? r.applied.join("、") : "",
       });
       refresh();
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
     }
   };
 
@@ -500,8 +505,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     try {
       await api.setSilenceTimeout(sec);
       refresh();
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
     }
   };
 
@@ -512,8 +517,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     try {
       await api.setAlias(v);
       toaster.toast({ title: t("toast.nameChanged", { name: v }), body: "" });
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.renameFailed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.renameFailed"), body: errMsg(e) });
     } finally {
       setBusy(false);
     }
@@ -560,8 +565,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
               toaster.toast({ title: t("set.tuningOff"), body: "" });
             }
             refresh();
-          } catch (e: any) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+          } catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
           }
         }}
       />
@@ -594,8 +599,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                 body: "",
               });
               setTimeout(refresh, 800);
-            } catch (e: any) {
-              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            } catch (e) {
+              toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
           }}
           onActivate={async () => {
@@ -613,7 +618,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         {t("set.codecHint")}
       </Hint>
       <Focusable flow-children="column" style={{ marginTop: 8 }}>
-        {(state.quality?.presets || []).map((p: any) => {
+        {(state.quality?.presets || []).map((p: CodecPreset) => {
           const active = (s.codec_preset || "balanced") === p.key;
           return (
             <Focusable
@@ -626,8 +631,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                     body: r.active_profile ? `${t("set.codecCurrent", { codec: r.active_profile })}` : "",
                   });
                   setTimeout(refresh, 1500);
-                } catch (e: any) {
-                  toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+                } catch (e) {
+                  toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                 }
               }}
               onActivate={async () => {
@@ -674,7 +679,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         }}>
           <b>⚠️ {t("set.stutterWifi")}</b>
           {"\n"}
-          {state.wifi.wifi_24g.map((w: any) =>
+          {state.wifi.wifi_24g.map((w: WifiInterface) =>
             `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / ")}
           {"\n"}
           {t("set.stutterWifiBody")}
@@ -696,8 +701,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                 body: (r.applied || []).join("、"),
               });
               setTimeout(refresh, 1500);
-            } catch (e: any) {
-              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            } catch (e) {
+              toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
           }}
           onActivate={async () => {
@@ -724,8 +729,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                 title: t("set.diagStutter"),
                 body: lines.join("; ").slice(0, 300) || t("common.none"),
               });
-            } catch (e: any) {
-              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            } catch (e) {
+              toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
           }}
           onActivate={async () => {
@@ -812,8 +817,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
               await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
               toaster.toast({ title: t("set.setBaseline"), body: "" });
               refresh();
-            } catch (e: any) {
-              toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+            } catch (e) {
+              toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
             }
           }}
           onActivate={async () => {
@@ -838,7 +843,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
       <SectionTitle>{t("set.behavior")}</SectionTitle>
       <Hint>{t("set.latencyHint")}</Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-        {(state.output?.latency_profiles || []).map((p: any) => {
+        {(state.output?.latency_profiles || []).map((p: LatencyProfile) => {
           const active = (s.latency_profile || "balanced") === p.key;
           return (
             <Focusable
@@ -848,8 +853,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                   await api.setLatencyProfile(p.key);
                   toaster.toast({ title: p.label, body: "" });
                   setTimeout(refresh, 1200);
-                } catch (e: any) {
-                  toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+                } catch (e) {
+                  toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                 }
               }}
               onActivate={async () => {
@@ -879,13 +884,13 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             await api.setMultiOutput(v);
             toaster.toast({ title: v ? "multi-output on" : "multi-output off", body: "" });
             setTimeout(refresh, 1500);
-          } catch (e: any) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+          } catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
           }
         }}
       />
       <Hint>
-        {t("set.outputsNow")} {(state.output?.sinks || []).map((k: any) => k.name).join(" · ") || t("common.reading")}
+        {t("set.outputsNow")} {(state.output?.sinks || []).map((k: SinkNode) => k.name).join(" · ") || t("common.reading")}
         <br />
         {t("set.avdtpLimit")}
       </Hint>
@@ -967,11 +972,11 @@ function ToggleRow({ label, desc, checked, onChange }: { label: string; desc: st
 }
 
 // ---------------------------------------------------------------------------
-function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
+function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
-  const presets: any[] = state.eq?.presets || [];
+  const presets: EqPreset[] = state.eq?.presets || [];
   const current = state.eq?.preset || "flat";
 
   const apply = async (key: string) => {
@@ -981,8 +986,8 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
       await api.setEqPreset(key);
       toaster.toast({ title: t("eq.applied"), body: t("eq.appliedBody") });
       setTimeout(refresh, 1500);
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
     } finally {
       setBusy(null);
     }
@@ -1000,18 +1005,18 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
       setShowImport(false);
       setImportText("");
       setTimeout(refresh, 1500);
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     } finally {
       setBusy(null);
     }
   };
 
-  const box: any = {
+  const box: React.CSSProperties = {
     marginTop: 8, padding: 10, borderRadius: 9, width: "100%", minHeight: 120,
     fontSize: 12, color: COLORS.text, fontFamily: "monospace",
     background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
-    outline: "none", resize: "vertical" as any,
+    outline: "none", resize: "vertical",
   };
 
   return (
@@ -1082,8 +1087,8 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
                 await api.removeEq();
                 toaster.toast({ title: t("eq.removeEq"), body: "" });
                 setTimeout(refresh, 1500);
-              } catch (e: any) {
-                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+              } catch (e) {
+                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
               }
             }}
             onActivate={async () => {
@@ -1132,8 +1137,8 @@ function DiagTab() {
     setLoading(true);
     try {
       setData(await api.diagnose());
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     } finally {
       setLoading(false);
     }
@@ -1142,14 +1147,14 @@ function DiagTab() {
   const loadLog = async () => {
     try {
       setLog(await api.getLog(200));
-    } catch (e: any) {
-      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     }
   };
 
   useEffect(() => { load(); }, []);
 
-  const box: any = {
+  const box: React.CSSProperties = {
     marginTop: 10, padding: 12, borderRadius: 9, background: "rgba(0,0,0,0.35)",
     fontSize: 11.5, color: COLORS.sub, fontFamily: "monospace", whiteSpace: "pre-wrap",
     maxHeight: 340, overflowY: "auto", lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
@@ -1175,8 +1180,8 @@ function DiagTab() {
               } catch {
                 toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
               }
-            } catch (e: any) {
-              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            } catch (e) {
+              toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
           }}
           onActivate={async () => {
@@ -1197,7 +1202,7 @@ function DiagTab() {
         <>
           <SectionTitle>{t("diag.checks")}</SectionTitle>
           <Focusable flow-children="column" style={{ marginTop: 8 }}>
-            {(data.checks || []).map((c: any, i: number) => (
+            {(data.checks || []).map((c: CheckItem, i: number) => (
               <div key={i} style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6,
                 borderRadius: 8, fontSize: 13,
@@ -1209,7 +1214,7 @@ function DiagTab() {
                 </span>
                 <span style={{ flex: 1, color: COLORS.text }}>
                   {/* 后端只返回 i18n key，这里按当前语言翻译 */}
-                  {c.key ? t(c.key) : c.name}
+                  {t(c.key)}
                 </span>
                 {c.detail && <span style={{ fontSize: 11, color: COLORS.dim }}>{c.detail}</span>}
               </div>
@@ -1218,14 +1223,14 @@ function DiagTab() {
 
           <SectionTitle>{t("diag.modules")}</SectionTitle>
           <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
-            {Object.entries(data.modules || {}).map(([k, v]: any) => (
+            {Object.entries(data.modules || {} as Record<string, boolean>).map(([k, v]) => (
               <div key={k}>{v ? "✅" : "❌"} {k}.py</div>
             ))}
           </div>
 
           <SectionTitle>{t("diag.tools")}</SectionTitle>
           <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
-            {Object.entries(data.tools || {}).map(([k, v]: any) => (
+            {Object.entries(data.tools || {} as Record<string, boolean>).map(([k, v]) => (
               <div key={k}>{v ? "✅" : "❌"} {k}</div>
             ))}
             <div>{data.agent ? "✅" : "❌"} {t("diag.agent")}</div>

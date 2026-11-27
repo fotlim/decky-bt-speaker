@@ -1,398 +1,38 @@
-"""
-蓝牙音箱后端：封装 BlueZ / PipeWire 的系统调用。
+"""BlueZ 适配器 / 设备 / 配对 / 扫描封装。
 
-设计要点：
-- 只依赖标准库 + 系统自带的 bluetoothctl / busctl / wpctl（不引入 dbus-python，
-  因为 Decky 的后端是 PyInstaller 冻结环境，第三方模块大概率 import 失败）。
-- 所有外部命令都走 asyncio 子进程，带超时，失败抛 BtError（由 main.py 转成可读错误）。
-- 配对采用「常驻 bluetoothctl + NoInputNoOutput agent」方案：
-  手机侧只要点确认即可，Deck 这边不需要弹窗输入 PIN（音箱该有的行为）。
+通用工具（MAC 归一化、命令执行、设备名推断）已拆到 btutil.py，
+这里 import 后 re-export，所以 `bt.normalize_mac(...)` 这类老写法仍然可用。
 """
 
-import os
 import asyncio
+import os
 import re
-import shutil
 
-# A2DP Sink / Source 的蓝牙服务 UUID（用来判断适配器有没有对外宣告「我是音箱」）
-A2DP_SINK_UUID = "0000110b"
-A2DP_SOURCE_UUID = "0000110a"
-HFP_AG_UUID = "0000111f"
-HFP_HF_UUID = "0000111e"
-
-# 音量增益上限。
-# PipeWire 的软件音量可以超过 100%（wpctl 手册：「Volume percentages can exceed
-# 100% unless limited」）。但**超过 100% 必然削波**，表现为爆音/破音。
-#
-# 实测结论：1.0 是安全上限，1.3 以内轻微削波可以接受，再高就明显破音。
-# 所以默认把安全上限设在 1.5，并把「超过 100%」明确标注为「增益（可能破音）」。
-SAFE_GAIN = 1.5
-# 上限提到 2.5：蓝牙接收场景确实常常偏轻，200% 是实际会用到的档位。
-# 之所以敢放开，是因为 EQ 的 filter-chain 末尾串了 `clamp`（PipeWire 内置
-# 零延迟硬限幅，钳 ±1.0），超出的部分会被削平而不是产生刺耳的爆音。
-# 代价是动态范围压缩，听起来会「闷」一些 —— 这是音量与音质的取舍。
-MAX_GAIN = 2.5
-
-# 「自动增益」触发阈值：外部源音量低于这个值就认为偏小
-LOW_VOLUME_THRESHOLD = 0.75
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_MAC_RE = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.I)
-
-
-class BtError(Exception):
-    """可读的蓝牙/音频错误。"""
-
-
-def strip_ansi(s):
-    return _ANSI_RE.sub("", s or "")
-
-
-# Decky 后端起子进程时不一定继承完整的 PATH（loader v3.2.6 才修），
-# 所以优先用绝对路径探测，避免「命令明明装着却报找不到」。
-_BIN_DIRS = ("/usr/bin", "/usr/local/bin", "/bin", "/usr/sbin", "/run/current-system/sw/bin")
-
-
-def which(name):
-    if os.path.isabs(name):
-        return name if os.path.exists(name) else None
-    for d in _BIN_DIRS:
-        p = os.path.join(d, name)
-        if os.path.exists(p) and os.access(p, os.X_OK):
-            return p
-    return shutil.which(name)
-
-
-def normalize_mac(s):
-    """把各种写法的 MAC 归一化成 `AA:BB:CC:DD:EE:FF`（大写冒号）。
-
-    为什么要这个？
-    ------------
-    BlueZ 在不同场合给出的 MAC 格式不一致：
-      - `bluetoothctl devices` 输出：`CC:42:10:8A:70:42`（大写冒号）
-      - 自动生成的 Alias：`CC-42-10-8A-70-42`（**横线**）
-      - 部分工具输出小写
-
-    早期 `is_mac()` 只接受「大写冒号」，前端传小写或横线就会报
-    「设备地址不合法」（真机配对电脑时踩到过）。
-
-    这里统一：去掉所有分隔符 -> 校验 12 位十六进制 -> 重新按冒号分组大写。
-    无法识别时返回空字符串。
-    """
-    if not s:
-        return ""
-    t = str(s).strip().upper()
-    for ch in (":", "-", ".", " ", "\t", "\n", "\r"):
-        t = t.replace(ch, "")
-    if len(t) != 12:
-        return ""
-    if not all(c in "0123456789ABCDEF" for c in t):
-        return ""
-    return ":".join(t[i:i + 2] for i in range(0, 12, 2))
-
-
-def is_mac(s):
-    """是否是合法 MAC（接受冒号/横线/点分/纯 12 位等各种写法）。"""
-    return bool(normalize_mac(s))
-
-
-def is_mac_like(s):
-    """判断一个字符串是不是「MAC 地址的各种写法」。
-
-    为什么要单独一个函数？
-    --------------------
-    BlueZ 对**没有广播名称**的设备会自动生成 `Alias`，格式是
-    `AA-BB-CC-DD-EE-FF`（**横线**分隔），而 `Name`/`Address` 用冒号。
-
-    早期只用 `is_mac()`（只认冒号）判断，导致 `AA-BB-CC-DD-EE-FF`
-    被当成「真实名字」，`has_real_name` 错判为 True ——
-    「显示没有名称的设备」开关就失效了（真机反馈过这个问题）。
-
-    这里把所有分隔符（冒号 / 横线 / 点 / 空格）统一去掉再判断。
-    实现直接复用 normalize_mac()，保证两处逻辑一致。
-    """
-    return bool(normalize_mac(s))
-
-
-def yes(s):
-    return str(s).strip().lower() in ("yes", "true", "1", "on")
-
-
-def _user_session_env():
-    """构造用户会话的环境变量。
-
-    为什么需要这个？
-    ----------------
-    Decky 后端进程虽然以 deck 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**。
-    而 PipeWire 客户端（`wpctl` / `pactl` / `pw-dump`）靠它定位 socket，
-    缺失时的典型报错：
-
-        pipewire-0 is not an absolute path and no runtime dir found.
-        Set one of PIPEWIRE_RUNTIME_DIR, XDG_RUNTIME_DIR
-
-    后果是 `wpctl get-volume` 读不到值（返回 0 或失败），
-    表现为插件音量条显示 0%，但 Steam 自己的音量条是满的。
-
-    同时设置 `PIPEWIRE_RUNTIME_DIR` 作为双保险 —— PipeWire 会先看它，
-    再看 `XDG_RUNTIME_DIR`。两个都设，任何版本都能连上。
-    """
-    env = {}
-    uid = None
-    try:
-        uid = os.getuid()
-    except Exception:
-        pass
-    if uid is None:
-        try:
-            import pwd
-            uid = pwd.getpwnam(os.environ.get("USER", "deck")).pw_uid
-        except Exception:
-            uid = 1000
-    runtime = "/run/user/%d" % uid
-    env["XDG_RUNTIME_DIR"] = runtime
-    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=%s/bus" % runtime
-    # PipeWire 优先读这个；与 XDG_RUNTIME_DIR 一起设，兼容所有版本
-    env["PIPEWIRE_RUNTIME_DIR"] = runtime
-    return env
-
-
-async def run_cmd(argv, timeout=8.0, env_extra=None):
-    """执行外部命令，返回 (returncode, 合并后的输出)。找不到命令直接抛 BtError。
-
-    ⚠️ 关键：**默认注入用户会话环境变量**。
-
-    为什么必须这么做？
-    ----------------
-    Decky 的后端进程以 deck 用户运行，但**不继承 `XDG_RUNTIME_DIR`**。
-    而所有 PipeWire 工具（`wpctl` / `pactl` / `pw-dump`）都靠这个变量
-    找到会话总线与 PipeWire socket。
-
-    没有它，`wpctl get-volume` 会失败或返回 0，表现为：
-    - 插件音量条显示 0%，但 Steam 自己的音量条是满的
-    - 拖动滑杆「没反应」（其实是读写都失败了）
-
-    这就是真机反馈「音量调节还是不同步」的真正根因 —— 之前只在
-    `systemctl --user` 那条路径上补了环境变量，漏掉了 wpctl。
-    """
-    exe = which(argv[0])
-    if not exe:
-        raise BtError("系统里找不到命令：%s" % argv[0])
-
-    env = dict(os.environ)
-    env.update(_user_session_env())
-    if env_extra:
-        env.update(env_extra)
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            exe,
-            *argv[1:],
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-        )
-    except Exception as e:  # noqa: BLE001 - 兜底成可读错误
-        raise BtError("启动 %s 失败：%s" % (argv[0], e))
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        raise BtError("%s 执行超时（%.0fs）" % (argv[0], timeout))
-    return proc.returncode, strip_ansi(out.decode("utf-8", "replace"))
-
-
-def parse_kv(text):
-    """把 bluetoothctl 的 `Key: value` 输出解析成 dict（同名 key 只取第一个）。"""
-    out = {}
-    for line in (text or "").splitlines():
-        m = re.match(r"^\s*([A-Za-z][A-Za-z0-9 _]*?):\s?(.*)$", line)
-        if not m:
-            continue
-        k = m.group(1).strip()
-        v = m.group(2).strip()
-        if k and k not in out:
-            out[k] = v
-    return out
-
-
-# 按蓝牙 Class 推断设备类型，用于给没有名称的设备一个可读标签
-def _class_label(klass):
-    """从 Class of Device 推断友好类型名。"""
-    try:
-        # Class 形如 "0x005a020c" 或 "0x240404"
-        v = int(str(klass).strip(), 16)
-    except (ValueError, TypeError):
-        return ""
-    major = (v >> 8) & 0x1F          # Major Device Class
-    minor = (v >> 2) & 0x3F          # Minor Device Class
-
-    if major == 0x01:
-        return "电脑"
-    if major == 0x02:
-        if minor & 0x04:
-            return "手机"
-        if minor & 0x08:
-            return "平板"
-        return "手机"
-    if major == 0x04:
-        # 音频/视频
-        if minor & 0x01:
-            return "耳机"
-        if minor & 0x02:
-            return "音箱"
-        if minor & 0x04:
-            return "麦克风"
-        return "音频设备"
-    if major == 0x05:
-        return "外设"
-    if major == 0x06:
-        return "键盘鼠标"
-    if major == 0x07:
-        return "穿戴设备"
-    if major == 0x08:
-        return "玩具"
-    return ""
-
-
-def _parse_rssi(text):
-    """解析 `bluetoothctl info` 里的 RSSI 字段，返回 int 或 None。
-
-    形如 `RSSI: -58`。部分设备（尤其 BLE）不提供该字段。
-    """
-    if not text:
-        return None
-    m = re.search(r"(-?\d+)", str(text))
-    if not m:
-        return None
-    try:
-        v = int(m.group(1))
-    except ValueError:
-        return None
-    # 合理范围检查，避免解析到垃圾值
-    if -120 <= v <= 20:
-        return v
-    return None
-
-
-def classify_peer(icon, klass, name=""):
-    """判断推流的对端是什么类型的设备。
-
-    为什么需要区分？
-    --------------
-    不同对端的 A2DP 推流电平差别很大，且 AVRCP 绝对音量实现程度不同：
-      - **Windows / macOS 电脑**：完整实现 AVRCP 绝对音量，
-        会把 Deck 的音量绑定到电脑的音量滑块上；
-        而且推流电平通常比手机低（尤其系统音量不满时）
-      - **手机**：多数不实现或实现不完整，Deck 自己控制音量
-
-    真机反馈「电脑声音小、手机没问题」就是这个差异造成的。
-
-    返回 'computer' | 'phone' | 'other'
-    """
-    ic = (icon or "").lower()
-    nm = (name or "").lower()
-    if "computer" in ic or "laptop" in ic:
-        return "computer"
-    if "phone" in ic:
-        return "phone"
-    # 按 Class of Device 兜底
-    try:
-        v = int(str(klass or "").strip(), 16)
-        major = (v >> 8) & 0x1F
-        if major == 0x01:
-            return "computer"
-        if major == 0x02:
-            return "phone"
-    except (ValueError, TypeError):
-        pass
-    # 按名字关键词兜底
-    for kw in ("windows", "pc", "laptop", "desktop", "macbook", "thinkpad"):
-        if kw in nm:
-            return "computer"
-    for kw in ("iphone", "android", "phone", "pixel", "galaxy", "redmi", "xiaomi"):
-        if kw in nm:
-            return "phone"
-    return "other"
-
-
-def _parse_uuids(info_text):
-    """从 `bluetoothctl info` 输出里提取设备支持的 UUID 短码列表。
-
-    形如 `UUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)`
-    返回 ['0000110b', '0000110a', ...]
-    """
-    if not info_text:
-        return []
-    out = []
-    for m in re.finditer(r"\(([0-9a-fA-F]{8})-0000-1000-8000-00805f9b34fb\)", info_text):
-        short = m.group(1).lower()
-        if short not in out:
-            out.append(short)
-    return out
-
-
-def _icon_label(icon):
-    """从 BlueZ 的 Icon 属性推断友好类型名。"""
-    table = {
-        "phone": "手机",
-        "computer": "电脑",
-        "audio-card": "音频设备",
-        "audio-headphones": "耳机",
-        "audio-headset": "耳麦",
-        "input-keyboard": "键盘",
-        "input-mouse": "鼠标",
-        "input-gaming": "手柄",
-        "multimedia-player": "播放器",
-        "video-display": "显示器",
-        "printer": "打印机",
-        "camera-photo": "相机",
-        "scanner": "扫描仪",
-        "modem": "调制解调器",
-        "network-wireless": "网络设备",
-    }
-    return table.get((icon or "").strip().lower(), "")
-
-
-def friendly_device_name(name, alias, icon, klass, mac):
-    """给设备拼一个可读名称。
-
-    优先级：
-      1. Name（设备自己广播的名字）
-      2. Alias（BlueZ 侧别名，用户可能改过）
-      3. 按 Icon / Class 推断的类型 + MAC 后四位，例如「手机 · EE:FF」
-      4. 纯 MAC 兜底
-
-    为什么要这个？
-    ------------
-    `bluetoothctl devices` 对**没有广播名称**的设备只输出 MAC，界面就会显示
-    一串 `AA:BB:CC:DD:EE:FF`，用户反馈「显示没有名称的蓝牙设备」。
-    这类设备通常是：刚进入配对模式还没广播名字、BLE 设备、或某些手机的隐私模式。
-
-    给一个「手机 · EE:FF」这样的标签，至少能让人判断该不该连。
-    """
-    name = (name or "").strip()
-    alias = (alias or "").strip()
-    mac = (mac or "").strip().upper()
-
-    # 1/2：真实名字优先。注意排除「名字就是 MAC」的情况（含横线写法）
-    for cand in (name, alias):
-        if cand and not is_mac_like(cand):
-            return cand
-
-    # 3：按类型推断
-    label = _icon_label(icon) or _class_label(klass)
-    tail = mac[-5:] if len(mac) >= 5 else mac
-    if label:
-        return "%s · %s" % (label, tail)
-    if tail:
-        # 注意：这里用中性写法，不带语言。前端会按 has_real_name 决定
-        # 是否显示成「未知设备」（i18n），避免英文界面出现中文。
-        return "? · %s" % tail
-    return "?"
-
+from btutil import (  # noqa: F401  (re-export 给老代码用)
+    A2DP_SINK_UUID,
+    A2DP_SOURCE_UUID,
+    HFP_AG_UUID,
+    HFP_HF_UUID,
+    SAFE_GAIN,
+    MAX_GAIN,
+    LOW_VOLUME_THRESHOLD,
+    BtError,
+    strip_ansi,
+    which,
+    _user_session_env,
+    run_cmd,
+    normalize_mac,
+    is_mac,
+    is_mac_like,
+    yes,
+    parse_kv,
+    _class_label,
+    _icon_label,
+    _parse_rssi,
+    _parse_uuids,
+    friendly_device_name,
+    classify_peer,
+)
 
 # ---------------------------------------------------------------------------
 # BlueZ
@@ -1189,6 +829,57 @@ class Wp:
     def available():
         return which("wpctl") is not None
 
+    # -- 统一内核 -------------------------------------------------------
+    #
+    # 原来 6 个音量方法各自拼一遍 `wpctl ...` 命令，10 处重复。
+    # 抽成 _vol_cmd() 一个入口：负责拼 target、加 -l 限幅、失败回退。
+    # 上层方法只关心语义（读/写/加减/静音）。
+
+    @staticmethod
+    def _target(node_id):
+        """wpctl 的 target 参数：None 表示默认 sink，否则是节点数字 id。"""
+        return "@DEFAULT_AUDIO_SINK@" if node_id is None else str(int(node_id))
+
+    async def _vol_cmd(self, verb, node_id=None, arg=None, limit=False):
+        """执行一次 wpctl 音量/静音操作，返回 (ok, 输出)。
+
+        `limit=True` 时带 `-l MAX_GAIN` 防止加爆；某些 wpctl 版本不支持 -l，
+        失败会自动退回不带 -l 的形式重试。
+        """
+        target = self._target(node_id)
+        base = ["wpctl", verb]
+        if verb == "set-volume":
+            if limit:
+                rc, out = await run_cmd(
+                    base + ["-l", "%.2f" % MAX_GAIN, target, arg], timeout=5.0)
+                if rc == 0:
+                    return True, out
+                # 退回不带 -l
+            rc, out = await run_cmd(base + [target, arg], timeout=5.0)
+            return rc == 0, out
+        if verb == "set-mute":
+            rc, out = await run_cmd(base + [target, arg], timeout=5.0)
+            return rc == 0, out
+        # get-volume
+        rc, out = await run_cmd(base + [target], timeout=5.0)
+        return rc == 0, out
+
+    @staticmethod
+    def _parse_vol(text):
+        """从 wpctl 输出解析音量与静音状态。解析不到时 volume 为 None。"""
+        m = re.search(r"Volume:\s*([0-9.]+)", text or "")
+        return {
+            "volume": float(m.group(1)) if m else None,
+            "muted": "MUTED" in (text or "").upper(),
+        }
+
+    @staticmethod
+    def _last_line(text):
+        lines = (text or "").strip().splitlines()
+        return lines[-1] if lines else "unknown error"
+
+    # -- 默认 sink ------------------------------------------------------
+
     async def get_volume(self):
         """返回 {'volume': 0..MAX_GAIN, 'muted': bool, 'ok': bool, 'raw': str}。
 
@@ -1196,139 +887,89 @@ class Wp:
         用户以为音量真是 0，实际是命令失败了（真机反馈过这个问题）。
         所以这里带 `ok` 标记，让调用方能区分「音量真的是 0」和「读失败」。
         """
-        rc, out = await run_cmd(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=5.0)
+        ok, out = await self._vol_cmd("get-volume")
         text = (out or "").strip()
-        if rc != 0 or not text:
+        if not ok or not text:
             return {
-                "volume": 0.0,
-                "muted": False,
-                "ok": False,
-                "raw": text or "（无输出）",
-                "error": "读取音量失败：%s" % (text.splitlines()[0] if text else "wpctl 无输出"),
+                "volume": 0.0, "muted": False, "ok": False,
+                "raw": text or "(no output)",
+                "error": "read failed: %s" % (text.splitlines()[0] if text else "wpctl no output"),
             }
-        m = re.search(r"Volume:\s*([0-9.]+)", text)
-        if not m:
+        parsed = self._parse_vol(text)
+        if parsed["volume"] is None:
             return {
-                "volume": 0.0,
-                "muted": False,
-                "ok": False,
-                "raw": text,
-                "error": "无法解析 wpctl 输出：%s" % text[:120],
+                "volume": 0.0, "muted": False, "ok": False, "raw": text,
+                "error": "cannot parse wpctl output: %s" % text[:120],
             }
-        vol = float(m.group(1))
         return {
-            "volume": max(0.0, min(MAX_GAIN, vol)),
-            "muted": "MUTED" in text.upper(),
+            "volume": max(0.0, min(MAX_GAIN, parsed["volume"])),
+            "muted": parsed["muted"],
             "ok": True,
             "raw": text,
         }
 
     async def set_volume(self, value):
-        value = max(0.0, min(MAX_GAIN, float(value)))
-        rc, out = await run_cmd(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "%.2f" % value], timeout=5.0)
-        if rc != 0:
-            raise BtError("设置音量失败：%s" % (out or "").strip())
+        v = max(0.0, min(MAX_GAIN, float(value)))
+        ok, out = await self._vol_cmd("set-volume", None, "%.2f" % v)
+        if not ok:
+            raise BtError("set volume failed: %s" % self._last_line(out))
         return True
 
     async def step_volume(self, delta):
-        """相对调节音量（+/-），不需要先读取当前值。
+        """相对调节（+/-），不需要先读当前值。
 
-        为什么用这个而不是 set_volume？
-        ------------------------------
-        真机上 `wpctl get-volume` 读取一直不可靠（显示 0%），
-        但 `wpctl set-volume N%+` 这种**相对语法由 wpctl 内部完成加减**，
-        完全不需要我们先读到当前值。所以它永远有效，不会有同步问题。
-
-        wpctl 的相对语法：
-          wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%+   # 加 10%
-          wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-    # 减 5%
+        `wpctl set-volume N%+` 的加减由 wpctl 内部完成，因此不受
+        「读不到当前值」影响 —— 这是真机上唯一可靠的调节方式。
         """
-        try:
-            d = int(delta)
-        except (TypeError, ValueError):
-            raise BtError("音量增量不合法：%s" % delta)
-        if d == 0:
-            return True
-        sign = "+" if d > 0 else "-"
-        arg = "%d%%%s" % (abs(d), sign)
-        # 用 -l 限制上限，避免一路加爆导致削波
-        rc, out = await run_cmd(
-            ["wpctl", "set-volume", "-l", "%.2f" % MAX_GAIN, "@DEFAULT_AUDIO_SINK@", arg],
-            timeout=5.0,
-        )
-        if rc != 0:
-            # 某些版本不支持 -l，退回不带限制
-            rc2, out2 = await run_cmd(
-                ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", arg], timeout=5.0
-            )
-            if rc2 != 0:
-                raise BtError("调节音量失败：%s" % ((out2 or out or "").strip().splitlines() or ["未知错误"])[-1])
-        return True
+        return await self._step(None, delta)
 
     async def set_mute(self, muted):
-        rc, out = await run_cmd(
-            ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if muted else "0"], timeout=5.0
-        )
-        if rc != 0:
-            raise BtError("设置静音失败：%s" % (out or "").strip())
+        ok, out = await self._vol_cmd("set-mute", None, "1" if muted else "0")
+        if not ok:
+            raise BtError("set mute failed: %s" % self._last_line(out))
         return True
 
+    # -- 指定节点 -------------------------------------------------------
+
     async def get_volume_of(self, node_id):
-        """读取指定节点（数字 id）的音量。"""
-        rc, out = await run_cmd(["wpctl", "get-volume", str(int(node_id))], timeout=5.0)
-        if rc != 0:
-            raise BtError("读取节点 %s 音量失败：%s" % (node_id, (out or "").strip()))
-        m = re.search(r"Volume:\s*([0-9.]+)", out)
-        return {
-            "volume": float(m.group(1)) if m else 0.0,
-            "muted": "MUTED" in out.upper(),
-        }
+        """读取指定节点的音量（失败抛异常，与 get_volume 的宽容语义不同）。"""
+        ok, out = await self._vol_cmd("get-volume", node_id)
+        if not ok:
+            raise BtError("read node %s volume failed: %s" % (node_id, (out or "").strip()))
+        parsed = self._parse_vol(out)
+        return {"volume": parsed["volume"] or 0.0, "muted": parsed["muted"]}
 
     async def set_volume_of(self, node_id, value):
-        """给指定节点单独设音量（不影响其他节点）。"""
-        value = max(0.0, min(MAX_GAIN, float(value)))
-        rc, out = await run_cmd(
-            ["wpctl", "set-volume", str(int(node_id)), "%.2f" % value], timeout=5.0
-        )
-        if rc != 0:
-            raise BtError("设置节点 %s 音量失败：%s" % (node_id, (out or "").strip()))
+        v = max(0.0, min(MAX_GAIN, float(value)))
+        ok, out = await self._vol_cmd("set-volume", node_id, "%.2f" % v)
+        if not ok:
+            raise BtError("set node %s volume failed: %s" % (node_id, self._last_line(out)))
         return True
 
     async def step_volume_of(self, node_id, delta):
-        """给指定节点相对调节音量（不读取当前值）。
+        return await self._step(node_id, delta)
 
-        用 wpctl 的相对语法，加减由 wpctl 内部完成，
-        因此不受「读不到当前值」影响。
-        """
+    async def set_mute_of(self, node_id, muted):
+        ok, out = await self._vol_cmd("set-mute", node_id, "1" if muted else "0")
+        if not ok:
+            raise BtError("set node %s mute failed: %s" % (node_id, (out or "").strip()))
+        return True
+
+    # -- 共用 -----------------------------------------------------------
+
+    async def _step(self, node_id, delta):
+        """相对加减的共用实现（带 -l 限幅，失败自动回退）。"""
         try:
             d = int(delta)
         except (TypeError, ValueError):
-            raise BtError("音量增量不合法：%s" % delta)
+            raise BtError("invalid volume delta: %s" % delta)
         if d == 0:
             return True
-        sign = "+" if d > 0 else "-"
-        arg = "%d%%%s" % (abs(d), sign)
-        rc, out = await run_cmd(
-            ["wpctl", "set-volume", "-l", "%.2f" % MAX_GAIN, str(int(node_id)), arg],
-            timeout=5.0,
-        )
-        if rc != 0:
-            rc2, out2 = await run_cmd(
-                ["wpctl", "set-volume", str(int(node_id)), arg], timeout=5.0
-            )
-            if rc2 != 0:
-                raise BtError(
-                    "调节节点 %s 音量失败：%s"
-                    % (node_id, ((out2 or out or "").strip().splitlines() or ["未知错误"])[-1])
-                )
-        return True
-
-    async def set_mute_of(self, node_id, muted):
-        rc, out = await run_cmd(
-            ["wpctl", "set-mute", str(int(node_id)), "1" if muted else "0"], timeout=5.0
-        )
-        if rc != 0:
-            raise BtError("设置节点 %s 静音失败：%s" % (node_id, (out or "").strip()))
+        arg = "%d%%%s" % (abs(d), "+" if d > 0 else "-")
+        ok, out = await self._vol_cmd("set-volume", node_id, arg, limit=True)
+        if not ok:
+            where = "default sink" if node_id is None else "node %s" % node_id
+            raise BtError("step %s volume failed: %s" % (where, self._last_line(out)))
         return True
 
     async def status_text(self):

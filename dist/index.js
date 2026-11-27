@@ -111,39 +111,27 @@ const api = {
     unblockRfkill: () => call("unblock_rfkill"),
     restartAgent: () => call("restart_agent"),
     pairDevice: (mac) => call("pair_device", mac),
-    scanDevices: (timeout = 20) => call("scan_devices", timeout),
-    /** 启动扫描（非阻塞，立刻返回） */
     scanStart: (timeout = 20) => call("scan_start", timeout),
     /** 拉取当前扫描结果（边扫边出） */
     scanList: () => call("scan_list"),
     /** 停止扫描 */
     scanStop: () => call("scan_stop"),
-    stopScan: () => call("stop_scan"),
     pairDeviceFull: (mac) => call("pair_device_full", mac),
-    forgetDevice: (mac) => call("forget_device", mac),
     repairDevice: (mac) => call("repair_device", mac),
     setAlias: (alias) => call("set_alias", alias),
     deviceAction: (mac, action, value) => call("device_action", mac, action, value),
     /** 断开所有已连接设备 */
-    disconnectAll: () => call("disconnect_all"),
     setVolume: (v) => call("set_volume", v),
     /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
     stepVolume: (delta) => call("step_volume", delta),
     setMute: (m) => call("set_mute", m),
-    setSourceVolume: (nodeId, v) => call("set_source_volume", nodeId, v),
-    /** 外部源相对调节：同样不依赖读取当前值 */
     stepSourceVolume: (nodeId, delta) => call("step_source_volume", nodeId, delta),
     setSourceMute: (nodeId, m) => call("set_source_mute", nodeId, m),
     boostVolume: (gain = 1.5) => call("boost_volume", gain),
-    setAutoGain: (on) => call("set_auto_gain", on),
     diagnoseStutter: () => call("diagnose_stutter"),
     fixStutter: () => call("fix_stutter"),
     setCodecPreset: (preset) => call("set_codec_preset", preset),
-    removeQuality: () => call("remove_quality"),
-    getCodecInfo: () => call("get_codec_info"),
     setFocusMode: (mode) => call("set_focus_mode", mode),
-    getAutoswitch: () => call("get_autoswitch"),
-    setAutoswitch: (on) => call("set_autoswitch", on),
     setSilenceTimeout: (sec) => call("set_silence_timeout", sec),
     setVolumeBaseline: (v) => call("set_volume_baseline", v),
     resetVolumeBaseline: () => call("reset_volume_baseline"),
@@ -152,7 +140,6 @@ const api = {
     importAutoeq: (text) => call("import_autoeq", text),
     setLatencyProfile: (profile) => call("set_latency_profile", profile),
     setMultiOutput: (on) => call("set_multi_output", on),
-    listOutputs: () => call("list_outputs"),
     setSetting: (key, value) => call("set_setting", key, value),
     applyTuning: () => call("apply_tuning"),
     removeTuning: () => call("remove_tuning"),
@@ -296,6 +283,40 @@ const COLORS = {
     border: "rgba(255,255,255,0.07)",
 };
 
+// ---------------------------------------------------------------------------
+// 工具函数
+// ---------------------------------------------------------------------------
+/**
+ * 从 catch 到的任意值里取出可读的错误文本。
+ *
+ * 为什么需要它？
+ * ------------
+ * TS 4.4+ 的 `useUnknownInCatchVariables` 下，`catch (e)` 里的 e 是 `unknown`，
+ * 直接读 `e.message` 会编译报错。早期代码为了省事全写成 `catch (e: any)`，
+ * 但那等于关掉了类型检查 —— 后端返回什么形状都不会被发现。
+ *
+ * 统一走这个函数，既能拿到消息，又保持 unknown 的类型安全。
+ */
+function errMsg(e) {
+    if (e == null)
+        return "unknown error";
+    if (typeof e === "string")
+        return e;
+    if (e instanceof Error)
+        return e.message;
+    if (typeof e === "object") {
+        const m = e.message;
+        if (typeof m === "string")
+            return m;
+        try {
+            return JSON.stringify(e);
+        }
+        catch {
+            return String(e);
+        }
+    }
+    return String(e);
+}
 function Pill({ children, tone = "dim" }) {
     const map = {
         ok: { bg: "rgba(76,195,138,0.16)", fg: COLORS.ok },
@@ -930,7 +951,7 @@ function Speaker() {
                 toaster.toast({ title: okMsg, body: "" });
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
         finally {
             setBusy(false);
@@ -991,7 +1012,7 @@ function BtSpeakerPage() {
             setTimeout(refresh, 800);
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
         finally {
             setBusyMac(null);
@@ -1111,7 +1132,7 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
             setTimeout(() => finishScan(), 20500);
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             finishScan();
         }
     };
@@ -1163,7 +1184,7 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
         catch (e) {
             toaster.toast({
                 title: paired ? t("dev.connectFailed") : t("dev.pairFailed"),
-                body: e?.message || String(e),
+                body: errMsg(e),
             });
         }
         finally {
@@ -1220,7 +1241,7 @@ function SettingsTab({ state, refresh }) {
             toaster.toast({ title: label, body: "" });
         }
         catch (e) {
-            toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
         }
     };
     const changeFocus = async (mode) => {
@@ -1233,7 +1254,7 @@ function SettingsTab({ state, refresh }) {
             refresh();
         }
         catch (e) {
-            toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
         }
     };
     const setSilence = async (sec) => {
@@ -1242,7 +1263,7 @@ function SettingsTab({ state, refresh }) {
             refresh();
         }
         catch (e) {
-            toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
         }
     };
     const applyAlias = async () => {
@@ -1255,7 +1276,7 @@ function SettingsTab({ state, refresh }) {
             toaster.toast({ title: t("toast.nameChanged", { name: v }), body: "" });
         }
         catch (e) {
-            toaster.toast({ title: t("toast.renameFailed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.renameFailed"), body: errMsg(e) });
         }
         finally {
             setBusy(false);
@@ -1281,7 +1302,7 @@ function SettingsTab({ state, refresh }) {
                         refresh();
                     }
                     catch (e) {
-                        toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                        toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                     }
                 } }), SP_JSX.jsx(Hint, { children: t("set.tuningHint", { path: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }) }), SP_JSX.jsx(SectionTitle, { children: t("set.pairing") }), SP_JSX.jsx(Hint, { children: t("set.pairingHint") }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("div", { style: {
                             width: 8, height: 8, borderRadius: 4, flexShrink: 0,
@@ -1300,7 +1321,7 @@ function SettingsTab({ state, refresh }) {
                                 setTimeout(refresh, 800);
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1323,7 +1344,7 @@ function SettingsTab({ state, refresh }) {
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1355,7 +1376,7 @@ function SettingsTab({ state, refresh }) {
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1386,7 +1407,7 @@ function SettingsTab({ state, refresh }) {
                                 });
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1421,7 +1442,7 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1450,7 +1471,7 @@ function SettingsTab({ state, refresh }) {
                                 setTimeout(refresh, 1200);
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1470,7 +1491,7 @@ function SettingsTab({ state, refresh }) {
                         setTimeout(refresh, 1500);
                     }
                     catch (e) {
-                        toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                        toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                     }
                 } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
                     ? t("set.resumeDescOn", { backend: state.power.backend })
@@ -1506,7 +1527,7 @@ function EqTab({ state, refresh }) {
             setTimeout(refresh, 1500);
         }
         catch (e) {
-            toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
         }
         finally {
             setBusy(null);
@@ -1527,7 +1548,7 @@ function EqTab({ state, refresh }) {
             setTimeout(refresh, 1500);
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
         finally {
             setBusy(null);
@@ -1560,7 +1581,7 @@ function EqTab({ state, refresh }) {
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1586,7 +1607,7 @@ function DiagTab() {
             setData(await api.diagnose());
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
         finally {
             setLoading(false);
@@ -1597,7 +1618,7 @@ function DiagTab() {
             setLog(await api.getLog(200));
         }
         catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
     };
     SP_REACT.useEffect(() => { load(); }, []);
@@ -1619,7 +1640,7 @@ function DiagTab() {
                                 }
                             }
                             catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -1632,7 +1653,7 @@ function DiagTab() {
                                 borderRadius: 8, fontSize: 13,
                                 background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
                                 border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
-                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.key ? t(c.key) : c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || t("common.empty") }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || t("common.empty") })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
+                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: t(c.key) }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || t("common.empty") }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || t("common.empty") })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
 }
 
 var index = definePlugin(() => {

@@ -720,6 +720,33 @@ def test_settings_validation():
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 
 
+def test_wp_kernel():
+    print("音量统一内核（消除 10 处重复的 wpctl 调用）")
+    import bt
+
+    # _target：None 表示默认 sink，否则是节点 id
+    check("默认 sink target", bt.Wp._target(None) == "@DEFAULT_AUDIO_SINK@")
+    check("节点 id target", bt.Wp._target(51) == "51")
+    check("字符串 id 也接受", bt.Wp._target("51") == "51")
+    check("浮点 id 取整", bt.Wp._target(51.9) == "51")
+
+    # _parse_vol：正常 / 静音 / 解析不到
+    r = bt.Wp._parse_vol("Volume: 0.66")
+    check("解析音量", r["volume"] == 0.66)
+    check("未静音", r["muted"] is False)
+    r2 = bt.Wp._parse_vol("Volume: 0.66 [MUTED]")
+    check("解析静音标记", r2["muted"] is True)
+    r3 = bt.Wp._parse_vol("garbage")
+    check("解析不到返回 None", r3["volume"] is None)
+    check("空输入不崩", bt.Wp._parse_vol("")["volume"] is None)
+    check("None 不崩", bt.Wp._parse_vol(None)["volume"] is None)
+
+    # _last_line
+    check("取最后一行", bt.Wp._last_line("a\nb\nc") == "c")
+    check("空返回兜底", bt.Wp._last_line("") == "unknown error")
+    check("None 返回兜底", bt.Wp._last_line(None) == "unknown error")
+
+
 def test_classify_peer():
     print("对端设备类型识别（电脑推流音量低的关键）")
     import bt
@@ -907,7 +934,7 @@ if __name__ == "__main__":
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
-               test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
+               test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse):
         fn()
     print()

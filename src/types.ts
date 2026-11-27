@@ -8,6 +8,12 @@ export interface BtDevice {
   alias?: string;
   icon?: string;
   class?: string;
+  /** 信号强度 dBm（扫描时才有，部分设备不提供） */
+  rssi?: number | null;
+  /** 设备支持的服务短码，如 ['0000110b']（音频接收能力） */
+  uuids?: string[];
+  /** 服务是否已解析完成（连接成功后才有意义） */
+  services_resolved?: boolean;
   paired?: boolean;
   trusted?: boolean;
   connected?: boolean;
@@ -52,6 +58,8 @@ export interface Settings {
   latency_profile: string;
   multi_output: boolean;
   auto_gain: boolean;
+  /** 音质预设：balanced / quality / stable / ""（未设置） */
+  codec_preset: string;
 }
 
 export interface CodecInfo {
@@ -222,7 +230,8 @@ export interface SpeakerStatus {
 }
 
 export interface CheckItem {
-  name: string;
+  /** i18n key（后端只返回 key，前端按当前语言翻译） */
+  key: string;
   ok: boolean;
   detail: string;
 }
