@@ -59,8 +59,37 @@ def which(name):
     return shutil.which(name)
 
 
+def normalize_mac(s):
+    """把各种写法的 MAC 归一化成 `AA:BB:CC:DD:EE:FF`（大写冒号）。
+
+    为什么要这个？
+    ------------
+    BlueZ 在不同场合给出的 MAC 格式不一致：
+      - `bluetoothctl devices` 输出：`CC:42:10:8A:70:42`（大写冒号）
+      - 自动生成的 Alias：`CC-42-10-8A-70-42`（**横线**）
+      - 部分工具输出小写
+
+    早期 `is_mac()` 只接受「大写冒号」，前端传小写或横线就会报
+    「设备地址不合法」（真机配对电脑时踩到过）。
+
+    这里统一：去掉所有分隔符 -> 校验 12 位十六进制 -> 重新按冒号分组大写。
+    无法识别时返回空字符串。
+    """
+    if not s:
+        return ""
+    t = str(s).strip().upper()
+    for ch in (":", "-", ".", " ", "\t", "\n", "\r"):
+        t = t.replace(ch, "")
+    if len(t) != 12:
+        return ""
+    if not all(c in "0123456789ABCDEF" for c in t):
+        return ""
+    return ":".join(t[i:i + 2] for i in range(0, 12, 2))
+
+
 def is_mac(s):
-    return bool(s and _MAC_RE.match(s.strip()))
+    """是否是合法 MAC（接受冒号/横线/点分/纯 12 位等各种写法）。"""
+    return bool(normalize_mac(s))
 
 
 def is_mac_like(s):
@@ -76,15 +105,9 @@ def is_mac_like(s):
     「显示没有名称的设备」开关就失效了（真机反馈过这个问题）。
 
     这里把所有分隔符（冒号 / 横线 / 点 / 空格）统一去掉再判断。
+    实现直接复用 normalize_mac()，保证两处逻辑一致。
     """
-    if not s:
-        return False
-    t = str(s).strip().upper()
-    # 去掉常见分隔符
-    for ch in (":", "-", ".", " "):
-        t = t.replace(ch, "")
-    # 必须是 12 位十六进制
-    return len(t) == 12 and all(c in "0123456789ABCDEF" for c in t)
+    return bool(normalize_mac(s))
 
 
 def yes(s):
@@ -585,8 +608,10 @@ class BlueZ:
         return devs
 
     async def info(self, mac):
-        if not is_mac(mac):
-            raise BtError("设备地址不合法：%s" % mac)
+        mac = normalize_mac(mac)
+        if not mac:
+            raise BtError("设备地址不合法")
+
         rc, out = await self._ctl("info", mac)
         if rc != 0:
             raise BtError("读取设备 %s 信息失败" % mac)
@@ -635,8 +660,10 @@ class BlueZ:
           block / unblock        拉黑（拒绝连接）/ 解除拉黑
           alias                  设置设备别名（需要 value）
         """
-        if not is_mac(mac):
-            raise BtError("设备地址不合法：%s" % mac)
+        mac = normalize_mac(mac)
+        if not mac:
+            raise BtError("设备地址不合法")
+
         action = (action or "").strip().lower()
 
         # alias 需要额外参数，单独处理
@@ -803,8 +830,10 @@ class BlueZ:
 
     async def pair_and_trust(self, mac):
         """配对 + 信任（信任后设备可以自动重连）。"""
-        if not is_mac(mac):
-            raise BtError("设备地址不合法：%s" % mac)
+        mac = normalize_mac(mac)
+        if not mac:
+            raise BtError("设备地址不合法")
+
         # 确保 agent 就绪，否则配对请求无人应答
         if not self.agent_registered():
             try:
@@ -856,8 +885,10 @@ class BlueZ:
         解法就是**先在本机删掉这个设备**（`bluetoothctl remove`），
         让两端密钥状态一致，再重新配对。
         """
-        if not is_mac(mac):
-            raise BtError("设备地址不合法：%s" % mac)
+        mac = normalize_mac(mac)
+        if not mac:
+            raise BtError("设备地址不合法")
+
         try:
             await self._ctl("disconnect", mac, timeout=10.0)
         except BtError:
@@ -878,8 +909,10 @@ class BlueZ:
 
         适用于「配对码/通行密钥不正确」这类两端密钥不一致的情况。
         """
-        if not is_mac(mac):
-            raise BtError("设备地址不合法：%s" % mac)
+        mac = normalize_mac(mac)
+        if not mac:
+            raise BtError("设备地址不合法")
+
         self._log("开始修复配对：%s" % mac)
         await self.forget_device(mac)
         await self.stop_agent()

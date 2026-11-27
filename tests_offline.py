@@ -720,6 +720,49 @@ def test_settings_validation():
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 
 
+def test_normalize_mac():
+    print("MAC 归一化（修复「设备地址不合法」）")
+    import bt
+
+    # 标准
+    check("大写冒号保持不变",
+          bt.normalize_mac("CC:42:10:8A:70:42") == "CC:42:10:8A:70:42")
+    # 小写 -> 大写
+    check("小写转大写",
+          bt.normalize_mac("cc:42:10:8a:70:42") == "CC:42:10:8A:70:42")
+    # 横线（BlueZ 给无名设备生成的 Alias 格式）
+    check("横线转冒号",
+          bt.normalize_mac("CC-42-10-8A-70-42") == "CC:42:10:8A:70:42")
+    # 纯 12 位
+    check("纯十六进制加冒号",
+          bt.normalize_mac("CC42108A7042") == "CC:42:10:8A:70:42")
+    # 点分（Cisco 风格）
+    check("点分转冒号",
+          bt.normalize_mac("cc42.108a.7042") == "CC:42:10:8A:70:42")
+    # 前后空白 / 换行
+    check("去前后空白",
+          bt.normalize_mac("  CC:42:10:8A:70:42  ") == "CC:42:10:8A:70:42")
+    check("去换行",
+          bt.normalize_mac("CC:42:10:8A:70:42\n") == "CC:42:10:8A:70:42")
+
+    # 反例
+    check("空字符串返回空", bt.normalize_mac("") == "")
+    check("None 返回空", bt.normalize_mac(None) == "")
+    check("太短返回空", bt.normalize_mac("CC:42:10:8A:70") == "")
+    check("非十六进制返回空", bt.normalize_mac("GG:HH:II:JJ:KK:LL") == "")
+    check("普通单词返回空", bt.normalize_mac("Steam Deck") == "")
+
+    # is_mac 必须与 normalize_mac 一致
+    for v in ["CC:42:10:8A:70:42", "cc-42-10-8a-70-42", "abc", ""]:
+        check("is_mac 与 normalize 一致: %s" % v,
+              bt.is_mac(v) == bool(bt.normalize_mac(v)))
+
+    # is_mac_like 复用 normalize_mac
+    for v in ["AA-BB-CC-DD-EE-FF", "aa:bb:cc:dd:ee:ff", "iPhone"]:
+        check("is_mac_like 与 normalize 一致: %s" % v,
+              bt.is_mac_like(v) == bool(bt.normalize_mac(v)))
+
+
 def test_mac_like():
     print("MAC 各种写法识别（无名称设备过滤的关键）")
     import bt
@@ -835,7 +878,7 @@ if __name__ == "__main__":
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
-               test_mac_like, test_parse_uuids, test_parse_rssi,
+               test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse):
         fn()
     print()
