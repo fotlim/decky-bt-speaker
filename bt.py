@@ -320,8 +320,10 @@ def friendly_device_name(name, alias, icon, klass, mac):
     if label:
         return "%s · %s" % (label, tail)
     if tail:
-        return "未知设备 · %s" % tail
-    return "未知设备"
+        # 注意：这里用中性写法，不带语言。前端会按 has_real_name 决定
+        # 是否显示成「未知设备」（i18n），避免英文界面出现中文。
+        return "? · %s" % tail
+    return "?"
 
 
 # ---------------------------------------------------------------------------

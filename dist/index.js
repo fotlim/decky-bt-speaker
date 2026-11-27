@@ -424,6 +424,7 @@ const EN = {
     "dev.showUnnamed": "Show unnamed devices",
     "dev.showUnnamedDesc": "Devices that don't broadcast a name are shown with a type + MAC tail label. Turn off to hide clutter.",
     "dev.hiddenCount": "{n} unnamed devices hidden",
+    "dev.hiddenPaired": "{n} unnamed paired devices hidden",
     "dev.allHidden": "All {n} devices found are unnamed. Turn on \"Show unnamed devices\" to see them.",
     "dev.pair": "Pair",
     "dev.pairing": "Pairing…",
@@ -441,6 +442,7 @@ const EN = {
     "dev.repairing": "Repairing…",
     "dev.removed": "Pairing removed",
     "dev.noName": "device did not broadcast a name",
+    "dev.unknownLabel": "Unknown device · {mac}",
     "dev.pairedTag": "Paired",
     "dev.untrusted": "Untrusted",
     "dev.blocked": "Blocked",
@@ -623,6 +625,7 @@ const ZH = {
     "dev.showUnnamed": "显示没有名称的设备",
     "dev.showUnnamedDesc": "不广播名称的设备会用「类型 + MAC 后缀」标注。关掉可以过滤杂项。",
     "dev.hiddenCount": "已隐藏 {n} 个无名称设备",
+    "dev.hiddenPaired": "已隐藏 {n} 个无名称的已配对设备",
     "dev.allHidden": "找到的 {n} 个设备都没有名称。打开「显示没有名称的设备」即可看到。",
     "dev.pair": "配对",
     "dev.pairing": "配对中…",
@@ -640,6 +643,7 @@ const ZH = {
     "dev.repairing": "正在修复配对…",
     "dev.removed": "已移除配对",
     "dev.noName": "设备未广播名称",
+    "dev.unknownLabel": "未知设备 · {mac}",
     "dev.pairedTag": "已配对",
     "dev.untrusted": "未信任",
     "dev.blocked": "已拉黑",
@@ -1019,16 +1023,23 @@ function BtSpeakerPage() {
 }
 // ---------------------------------------------------------------------------
 function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
+    // 「显示没有名称的设备」开关放在外层，同时作用于「已配对列表」和「扫描结果」。
+    // 早期只作用于扫描结果，用户看到的「未知设备」其实来自已配对列表 —— 所以开关
+    // 看起来没生效。现在两边共用同一个状态。
+    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
+    const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
+    const hiddenPaired = paired.length - shownPaired.length;
+    const unnamedToggle = (SP_JSX.jsx("div", { style: { marginTop: 10, marginBottom: 4 }, children: SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }) }));
     if (!paired.length) {
-        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(Hint, { children: t("dev.noDevices") })] }));
+        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", ""), showUnnamed: showUnnamed }), unnamedToggle, SP_JSX.jsx(Hint, { children: t("dev.noDevices") })] }));
     }
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: paired.length }) }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", ""), showUnnamed: showUnnamed }), unnamedToggle, SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: shownPaired.length }) }), !showUnnamed && hiddenPaired > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenPaired", { n: hiddenPaired }) })), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: shownPaired.map((d) => {
                     const connected = connectedMacs.has(d.mac);
                     const busy = busyMac === d.mac;
                     return (SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
                             borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
-                        }, children: [SP_JSX.jsx(Avatar, { connected: connected, icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.trusted === false && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.untrusted") }), d.blocked && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.blocked") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: d.display || d.name })), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: d.display || d.name })), style: {
+                        }, children: [SP_JSX.jsx(Avatar, { connected: connected, icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: devLabel(d) }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.trusted === false && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.untrusted") }), d.blocked && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.blocked") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) })), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) })), style: {
                                     padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
                                     background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
                                     color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
@@ -1045,16 +1056,23 @@ function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, al
                                 }, children: t("common.remove") })] }, d.mac));
                 }) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }));
 }
+/** 设备显示名：无名设备用本地化的「未知设备 · XX:XX」而不是后端的裸 MAC 后缀。 */
+function devLabel(d) {
+    const disp = d.display || d.name || d.mac;
+    if (d.has_real_name === false) {
+        const tail = String(d.mac || "").slice(-5);
+        return t("dev.unknownLabel", { mac: tail });
+    }
+    return disp;
+}
 // ---------------------------------------------------------------------------
 // 扫描面板：流式扫描 + 可中途停止 + 信号强度 + 无名称设备开关
 // ---------------------------------------------------------------------------
-function ScanPanel({ alias, discoverable, onPaired }) {
+function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
     const [scanning, setScanning] = SP_REACT.useState(false);
     const [devices, setDevices] = SP_REACT.useState([]);
     const [scanned, setScanned] = SP_REACT.useState(false);
     const [busyMac, setBusyMac] = SP_REACT.useState(null);
-    // 是否显示没有广播名称的设备（默认显示，但可关闭以过滤杂项）
-    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
     const [elapsed, setElapsed] = SP_REACT.useState(0);
     const pollRef = SP_REACT.useRef(null);
     const tickRef = SP_REACT.useRef(null);
@@ -1156,7 +1174,7 @@ function ScanPanel({ alias, discoverable, onPaired }) {
                             color: scanning ? COLORS.accentWarm : "#fff", fontSize: 13.5,
                         }, children: scanning
                             ? `${t("dev.stopScan")} · ${elapsed}s`
-                            : t("dev.search") }), scanning && (SP_JSX.jsx("span", { style: { fontSize: 12, color: COLORS.dim }, children: t("dev.foundCount", { n: devices.length }) }))] }), SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }), !showUnnamed && hiddenCount > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenCount", { n: hiddenCount }) }))] }), shown.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: shown.map((d) => {
+                            : t("dev.search") }), scanning && (SP_JSX.jsx("span", { style: { fontSize: 12, color: COLORS.dim }, children: t("dev.foundCount", { n: devices.length }) }))] }), !showUnnamed && hiddenCount > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenCount", { n: hiddenCount }) })), shown.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: shown.map((d) => {
                     const busy = busyMac === d.mac;
                     const isPhone = (d.icon || "").includes("phone");
                     const isComputer = (d.icon || "").includes("computer");
@@ -1170,10 +1188,10 @@ function ScanPanel({ alias, discoverable, onPaired }) {
                                     width: 40, height: 40, borderRadius: 20, flexShrink: 0,
                                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
                                     background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), rssi !== null && (SP_JSX.jsxs("span", { style: { display: "inline-flex", alignItems: "flex-end", gap: 1 }, children: [[1, 2, 3, 4].map((b) => (SP_JSX.jsx("span", { style: {
+                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: devLabel(d) }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), rssi !== null && (SP_JSX.jsxs("span", { style: { display: "inline-flex", alignItems: "flex-end", gap: 1 }, children: [[1, 2, 3, 4].map((b) => (SP_JSX.jsx("span", { style: {
                                                             width: 3, height: 3 + b * 2, borderRadius: 1,
                                                             background: b <= bars ? COLORS.ok : "rgba(255,255,255,0.15)",
-                                                        } }, b))), SP_JSX.jsxs("span", { style: { marginLeft: 3 }, children: [rssi, " dBm"] })] })), d.paired && SP_JSX.jsx(Pill, { tone: "accent", children: t("dev.pairedTag") }), d.connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.display || d.name, !!d.paired), onActivate: () => pair(d.mac, d.display || d.name, !!d.paired), style: {
+                                                        } }, b))), SP_JSX.jsxs("span", { style: { marginLeft: 3 }, children: [rssi, " dBm"] })] })), d.paired && SP_JSX.jsx(Pill, { tone: "accent", children: t("dev.pairedTag") }), d.connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, devLabel(d), !!d.paired), onActivate: () => pair(d.mac, devLabel(d), !!d.paired), style: {
                                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                                     cursor: busy ? "default" : "pointer",
                                     background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,

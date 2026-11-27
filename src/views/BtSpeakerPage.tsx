@@ -135,10 +135,34 @@ function DevicesTab({
   discoverable: boolean;
   alias: string;
 }) {
+  // 「显示没有名称的设备」开关放在外层，同时作用于「已配对列表」和「扫描结果」。
+  // 早期只作用于扫描结果，用户看到的「未知设备」其实来自已配对列表 —— 所以开关
+  // 看起来没生效。现在两边共用同一个状态。
+  const [showUnnamed, setShowUnnamed] = useState(true);
+  const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
+  const hiddenPaired = paired.length - shownPaired.length;
+
+  const unnamedToggle = (
+    <div style={{ marginTop: 10, marginBottom: 4 }}>
+      <ToggleRow
+        label={t("dev.showUnnamed")}
+        desc={t("dev.showUnnamedDesc")}
+        checked={showUnnamed}
+        onChange={setShowUnnamed}
+      />
+    </div>
+  );
+
   if (!paired.length) {
     return (
       <div style={{ marginTop: 16 }}>
-        <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
+        <ScanPanel
+          alias={alias}
+          discoverable={discoverable}
+          onPaired={() => onAction("", "connect", "")}
+          showUnnamed={showUnnamed}
+        />
+        {unnamedToggle}
         <Hint>
           {t("dev.noDevices")}
         </Hint>
@@ -147,11 +171,20 @@ function DevicesTab({
   }
   return (
     <div style={{ marginTop: 16 }}>
-      <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
+      <ScanPanel
+        alias={alias}
+        discoverable={discoverable}
+        onPaired={() => onAction("", "connect", "")}
+        showUnnamed={showUnnamed}
+      />
+      {unnamedToggle}
 
-      <SectionTitle>{t("dev.pairedCount", { n: paired.length })}</SectionTitle>
+      <SectionTitle>{t("dev.pairedCount", { n: shownPaired.length })}</SectionTitle>
+      {!showUnnamed && hiddenPaired > 0 && (
+        <Hint>{t("dev.hiddenPaired", { n: hiddenPaired })}</Hint>
+      )}
       <Focusable flow-children="column">
-        {paired.map((d) => {
+        {shownPaired.map((d) => {
           const connected = connectedMacs.has(d.mac);
           const busy = busyMac === d.mac;
           return (
@@ -162,7 +195,7 @@ function DevicesTab({
               <Avatar connected={connected} icon={(d as any).icon} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {(d as any).display || d.name}
+                  {devLabel(d)}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }}>
                   <span>{d.mac}</span>
@@ -175,8 +208,8 @@ function DevicesTab({
                 </div>
               </div>
               <Focusable
-                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: (d as any).display || d.name }))}
-                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: (d as any).display || d.name }))}
+                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) }))}
+                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) }))}
                 style={{
                   padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
                   background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
@@ -224,18 +257,28 @@ function DevicesTab({
   );
 }
 
+/** 设备显示名：无名设备用本地化的「未知设备 · XX:XX」而不是后端的裸 MAC 后缀。 */
+function devLabel(d: any): string {
+  const disp = d.display || d.name || d.mac;
+  if (d.has_real_name === false) {
+    const tail = String(d.mac || "").slice(-5);
+    return t("dev.unknownLabel", { mac: tail });
+  }
+  return disp;
+}
+
 // ---------------------------------------------------------------------------
 // 扫描面板：流式扫描 + 可中途停止 + 信号强度 + 无名称设备开关
 // ---------------------------------------------------------------------------
-function ScanPanel({ alias, discoverable, onPaired }: {
+function ScanPanel({ alias, discoverable, onPaired, showUnnamed }: {
   alias: string; discoverable: boolean; onPaired: () => void;
+  /** 由父组件传入，保证「已配对列表」和「扫描结果」用同一个开关状态 */
+  showUnnamed: boolean;
 }) {
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<any[]>([]);
   const [scanned, setScanned] = useState(false);
   const [busyMac, setBusyMac] = useState<string | null>(null);
-  // 是否显示没有广播名称的设备（默认显示，但可关闭以过滤杂项）
-  const [showUnnamed, setShowUnnamed] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const pollRef = useRef<any>(null);
   const tickRef = useRef<any>(null);
@@ -346,18 +389,10 @@ function ScanPanel({ alias, discoverable, onPaired }: {
         )}
       </Focusable>
 
-      {/* 无名称设备开关 */}
-      <div style={{ marginTop: 10 }}>
-        <ToggleRow
-          label={t("dev.showUnnamed")}
-          desc={t("dev.showUnnamedDesc")}
-          checked={showUnnamed}
-          onChange={setShowUnnamed}
-        />
-        {!showUnnamed && hiddenCount > 0 && (
-          <Hint>{t("dev.hiddenCount", { n: hiddenCount })}</Hint>
-        )}
-      </div>
+      {/* 无名称设备开关已移到父组件，这里只显示被隐藏的数量提示 */}
+      {!showUnnamed && hiddenCount > 0 && (
+        <Hint>{t("dev.hiddenCount", { n: hiddenCount })}</Hint>
+      )}
 
       {shown.length > 0 && (
         <Focusable flow-children="column" style={{ marginTop: 12 }}>
@@ -380,7 +415,7 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                 }}>{isPhone ? "📱" : isComputer ? "💻" : "🔊"}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {d.display || d.name}
+                    {devLabel(d)}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }}>
                     <span>{d.mac}</span>
@@ -403,8 +438,8 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                   </div>
                 </div>
                 <Focusable
-                  onClick={() => pair(d.mac, d.display || d.name, !!d.paired)}
-                  onActivate={() => pair(d.mac, d.display || d.name, !!d.paired)}
+                  onClick={() => pair(d.mac, devLabel(d), !!d.paired)}
+                  onActivate={() => pair(d.mac, devLabel(d), !!d.paired)}
                   style={{
                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                     cursor: busy ? "default" : "pointer",

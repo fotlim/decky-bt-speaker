@@ -751,8 +751,13 @@ def test_mac_like():
     check("横线 MAC 会被当成无名设备", bt.is_mac_like("AA-BB-CC-DD-EE-FF"))
     # 而 friendly_device_name 应该给它拼标签
     disp = bt.friendly_device_name("", "AA-BB-CC-DD-EE-FF", "", "", "AA:BB:CC:DD:EE:FF")
-    check("无名设备得到可读标签", "EE:FF" in disp or "设备" in disp or "device" in disp.lower(),
+    check("无名设备得到可读标签", "EE:FF" in disp or "?" in disp,
           "实际: %s" % disp)
+    # 后端不再输出中文（避免英文界面出现中文）
+    import re as _re
+    check("后端标签不含中文", not _re.search(r"[\u4e00-\u9fff]", disp), "实际: %s" % disp)
+    check("有类型时给出类型标签",
+          "手机" in bt.friendly_device_name("", "", "", "0x005a020c", "11:22:33:44:55:66"))
 
 
 def test_parse_uuids():
