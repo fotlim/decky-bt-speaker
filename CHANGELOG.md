@@ -105,6 +105,363 @@
 
 ---
 
+## [2.4.5] - 2026-11-27
+
+真机反馈：音量调节正常了、卸载安装正常了。
+
+### Fixed
+
+- **卸载慢**
+
+  `_unload()` 里有两处阻塞等待，Decky 要等它返回才算卸载完：
+  - `bt.stop_agent()` → `await wait_for(proc.wait(), 3.0)` 最坏 3 秒
+  - `power.stop()` → `await wait_for(proc.wait(), 2.0)` 最坏 2 秒
+
+  合计最坏 **5 秒**。
+
+  修法：
+  - `stop_agent(quick=True)` / `SleepWatcher.stop(quick=True)`：
+    kill 后**不等子进程退出**（由系统回收）
+  - `_unload` 拆成 `_do_unload` + `asyncio.wait_for(..., timeout=2.0)` 整体兜底
+  - 正常路径等待也从 3.0s/2.0s 缩短到 1.5s/1.0s
+
+  这个 bug 从 v1.0.0 就存在（`stop_agent` 的 3 秒等待），一直没被发现，
+  因为之前没人真正卸载过。
+
+### Notes
+
+**一次误判的教训**
+
+真机曾出现 `TypeError: Failed to fetch dynamically imported module`，
+当时判断为「`plugin.json` 的 `name` 含空格导致 URL 404」，并把
+`Bluetooth Speaker` 改成了 `BluetoothSpeaker`。
+
+**这个判断是错的。** 实测证明 `name` 含空格完全正常（前端会做 URL 编码），
+那次加载失败是替换文件过程中的暂时状态。`name` 已改回 `Bluetooth Speaker`。
+
+`pack.py` 的自检也相应放宽：只拦截真正会破坏 URL 的字符
+（`/ \ ? # % & +`），空格与中文都放行。
+
+教训：**看到报错先要证据，不要凭症状联想就改配置。**
+
+---
+
+## [2.4.4] - 2026-11-27
+
+### Fixed
+
+- **外部音源滑条没删干净**
+
+  v2.4.3 只删了 QAM 的主音量滑条，「正在播放」卡片里还留了一个外部音源
+  `SliderField` —— 用户看到的就是这个。
+
+  外部源也改成 `-10% / 静音 / +10%` 三个按钮，新增
+  `bt.step_volume_of()` 与 `step_source_volume` RPC。
+  现在 QAM 面板里没有任何音量滑条。
+
+---
+
+## [2.4.3] - 2026-11-27
+
+### Changed
+
+- **删掉音量滑条，改为相对调节按钮**
+
+  真机上 `wpctl get-volume` 读取一直不可靠（滑杆在最右却显示 0%）。
+  与其显示错误数据，不如不显示。
+
+  - 移除主音量 `SliderField`（不再依赖读取当前值）
+  - 改为 5 个相对调节按钮：`-10% / -5% / 静音 / +5% / +10%`
+  - 新增 `bt.step_volume()`：用 wpctl 的相对语法（`10%+` / `5%-`），
+    加减由 wpctl 内部完成，**不需要先读到当前值**，因此永远有效
+  - 提示用户用 Steam 音量键查看精确数值
+
+---
+
+## [2.4.2] - 2026-11-27
+
+### Fixed
+
+- **`run_cmd()` 没传会话环境变量**（音量读取失败的真正根因）
+
+  真机现象：滑杆在最右边但显示 0%，Steam 自己的音量条是满的。
+  这说明 `wpctl` 读取失败被当成 0。
+
+  根因：所有 `wpctl` / `pactl` / `pw-dump` 调用都缺 `XDG_RUNTIME_DIR`。
+  PipeWire 客户端靠它定位 socket，缺失时报：
+
+  ```
+  pipewire-0 is not an absolute path and no runtime dir found.
+  Set one of PIPEWIRE_RUNTIME_DIR, XDG_RUNTIME_DIR
+  ```
+
+  之前只在 `systemctl --user` 那条路径补了环境变量，漏掉了 `wpctl`。
+
+  - `run_cmd()` 默认注入 `_user_session_env()`
+    （`XDG_RUNTIME_DIR` + `DBUS_SESSION_BUS_ADDRESS` + `PIPEWIRE_RUNTIME_DIR`）
+  - 配对 agent 的两处 `create_subprocess_exec` 同样补上
+  - `get_volume()` 读失败返回 `ok=False` + error，不再静默返回 0
+  - 前端读取失败显示「读取失败」而非误导性的 0%
+
+---
+
+## [2.4.1] - 2026-11-27
+
+### Fixed
+
+- **`auto_gain` 在 90 秒保护期后仍会覆盖用户设置**
+
+  用户把音量调到 50%，90 秒后自动增益发现 50% < 75% 阈值，又拉回 100%。
+  感受就是「调了没用、自己会跳」。
+
+  - `auto_gain` 默认改为 `False`
+  - 即使开启也只在「每个音源会话补一次」（`_auto_gain_done` 标记）
+  - 用户手动调过后，本次会话内永久不再干预
+  - 不再动总音量，只处理外部源偏轻
+
+- **前端 3 秒交还控制权，但空闲轮询间隔是 10 秒**
+
+  3 秒时后端读到的还是旧值，滑杆立刻跳回去。
+
+  - 改为「确认式交还」：后端值与我们设的值相差 ≤2% 才交还
+  - 15 秒上限兜底，防止写入失败时永远卡在本地值
+
+---
+
+## [2.4.0] - 2026-11-27
+
+按一份外部代码评审意见逐条自查，修复 3 项同类问题。
+
+### Changed
+
+- **依赖升级**
+  - `@decky/ui` 4.16.5 → **5.0.2**
+  - `@types/react` 18.3.31 → **19.1.1**
+  - `@types/react-dom` 18.3.7 → **19.1.1**
+  - `typescript` 5.6 → 5.9.3
+
+  验证：`@decky/ui` 5.x + React 19 类型对本插件无破坏性变更。
+
+- **轮询节流**（评审意见「2 秒轮询太频繁」）
+
+  后端每次 `status` 要 fork+exec 4~6 个外部命令，比网络请求更重。
+
+  - **可见性感知**：不可见时降频到 30s（不停掉，避免过期数据）
+  - **自适应**：有音源播放 4s / 空闲 10s
+  - `setTimeout` 链替代 `setInterval`，间隔可动态变化
+  - 请求去重：`_inflight` 保证同一时刻只有一个 `status`
+
+- **设置项类型校验**（评审意见「后端不该假设读到的是自己的数据」）
+
+  - 新增 `_setting_ok()`：逐项校验类型/范围/枚举白名单
+  - bool/int/str 严格区分（含 `bool` 是 `int` 子类这个 Python 坑）
+  - `last_device` 必须是空或合法 MAC
+  - 字符串长度上限 200
+  - 类型不对就丢弃该项回退默认值，并记日志
+
+### 未采纳的评审意见
+
+- **`ssl=False` 不安全** —— 本插件后端零网络请求，不适用
+- **列表要虚拟化** —— 设备列表通常 <10 条，EQ 预设固定 5 条
+- **`dist` 不该进仓库** —— Decky 商店要求装即可用，参考项目也提交产物
+
+---
+
+## [2.3.0] - 2026-11-27
+
+### Added
+
+- **无名称设备的可读标签**
+
+  `bluetoothctl devices` 对没广播名称的设备只输出 MAC，之前界面直接显示
+  一串地址，用户不知道是什么设备。
+
+  新增 `friendly_device_name()` 推断链：
+  1. `Name`（设备广播名）
+  2. `Alias`（BlueZ 侧别名）
+  3. **按 Icon / Class 推断类型 + MAC 后四位**，如「手机 · EE:FF」
+  4. 纯 MAC 兜底
+
+  无真实名称的设备标注「设备未广播名称」，排序时排在有名字的后面
+  （没名字的通常是不该连的杂项设备）。
+
+- **i18n：默认英文，跟随 Steam 界面语言**
+
+  新增 `src/i18n.ts`，**153 个 key** 的中英双语词典。
+
+  语言探测顺序：
+  1. `SteamClient.Settings.GetLanguage()`（最准）
+  2. `navigator.language`
+  3. 兜底 `en`
+
+  `schinese` / `tchinese` / `zh-*` 归一化为 `zh`。插件显示名也跟随语言。
+
+---
+
+## [2.2.1] - 2026-11-27
+
+### Fixed
+
+- **音量条与实际音量不同步**（第一次尝试，未彻底解决）
+
+  自动增益每轮轮询强行拉回 100%，用户刚拖动就被拽回去。
+  加了 90 秒保护期 + 前端拖动状态 —— 但没抓到真正根因，
+  最终在 v2.4.1 / v2.4.2 / v2.4.3 才彻底解决。
+
+- **滑杆下方横线遮挡音量数字**
+
+  去掉 `marginTop: -2` 负边距，音量数字移到滑杆上方，
+  避开 `SliderField` 自带底边框。
+
+### Added
+
+- **音质优化**（`quality.py`）
+  - 三档编码器预设：均衡（SBC-XQ + AAC）/ 音质优先（LDAC）/ 稳定（SBC）
+  - `bluez5.enable-sbc-xq = true`，码率 328 → 452 kbps
+  - `resample.quality` 提到 10，改善 44.1→48 重采样劣化
+
+- **Wi-Fi 干扰检测**（`wifi.py`）
+
+  蓝牙与 2.4GHz Wi-Fi 共用射频，是音频卡顿的头号原因。
+  插件检测 Wi-Fi 频段并提示切 5GHz。
+
+---
+
+## [2.1.1] - 2026-11-27
+
+### Fixed
+
+- **爆音**（部分是本鱼造成的）
+
+  v2.0.4 把 `MAX_GAIN` 提到 3.0，软件增益超 100% 必然削波。
+
+  - `SAFE_GAIN=1.5` / `MAX_GAIN=2.0`，一键增益默认 1.3
+  - EQ filter-chain 末尾串 `clamp`（内置零延迟硬限幅，钳 ±1.0）
+  - 左右声道各一个 clamp，正确连线
+  - 滑杆上限 300% → 150%，超 100% 明确标注「可能破音」
+
+- **卡顿**（`client too slow`）
+
+  - `node.pause-on-idle = false`（避免恢复播放爆点）
+  - `session.suspend-timeout-seconds = 0`（不自动挂起）
+  - `node.quantum = 1024`（给足缓冲）
+
+---
+
+## [2.1.0] - 2026-11-27
+
+### Added
+
+- **插件内搜索配对**
+
+  真机反馈：配对只能自己去系统蓝牙设置里手动做，体验很差。
+  根因是插件只有「被搜索」能力，没有「主动搜索对端」的能力。
+
+  - `bt.py` 新增 `start_discovery` / `stop_discovery` /
+    `list_discovered` / `pair_and_trust`
+  - 前端新增 `ScanPanel`：搜索 20 秒 → 列出未配对设备 →
+    一键配对 + 信任 + 连接
+  - 设备按类型显示图标（手机/电脑/音箱），已连接的排前面
+
+---
+
+## [2.0.5] - 2026-11-27
+
+### Fixed
+
+- **平直模式仍挂着空 EQ 虚拟 sink，导致声音偏小**
+
+  真机 `wpctl status` 显示即使选了「平直（关闭）」，
+  `filter-chain` 虚拟 sink 依然存在：
+
+  ```
+  effect_input.bt_speaker_eq   [Audio/Sink]
+  effect_output.bt_speaker_eq  [Stream/Output/Audio]
+  ```
+
+  这导致所有音频多绕一级虚拟设备，叠加总音量 0.75 后明显偏轻。
+
+  `eq.apply("flat")` 改为直接删除配置文件，不创建节点。
+
+---
+
+## [2.0.4] - 2026-11-27
+
+### Added
+
+- **音量增益**（解决蓝牙接收声音小）
+
+  - `MAX_GAIN` 提到 3.0（wpctl 软件音量可超 100%）
+  - QAM 滑杆上限 150% → 300%，显示当前百分比与增益标记
+  - 一键增益按钮（`boost_volume`，总音量 + 外部源同时拉高）
+  - 自动增益（`auto_gain`，外部源 <75% 时自动拉满）
+
+  > ⚠️ 这个版本的 3.0 上限后来在 v2.1.1 被降回 2.0 —— 它直接导致了爆音。
+
+---
+
+## [2.0.3] - 2026-11-27
+
+真机验证反馈的三个问题。
+
+### Fixed
+
+- **切换均衡器报「重启 PipeWire 失败」**
+
+  Decky 后端进程没继承 `XDG_RUNTIME_DIR`，`systemctl --user` 连不上
+  会话总线（`Failed to connect to bus: No medium found`）。
+
+  新增 `bt._user_session_env()`，`systemctl --user` 调用显式带环境变量，
+  并加 `sudo -n` 兜底。
+
+- **配对码 / 通行密钥不正确，无法配对**
+
+  BlueZ 的 Just-Works 重配对问题（[bluez#428](https://github.com/bluez/bluez/issues/428)、
+  [bluez#798](https://github.com/bluez/bluez/issues/798)）：两端密钥不一致时
+  `JustWorksRepairing = never` 拒绝替换。
+
+  新增「修复配对」（`repair_device`）：删记录（含密钥）→ 重启 agent →
+  重新配对 + 信任。
+
+- **全屏页标题被 Steam 状态栏遮挡**
+
+  外层容器用 padding 让位（顶 58px / 底 62px，叠加 `env(safe-area-inset-*)`），
+  内层单独做滚动容器。
+
+### Added
+
+- rfkill 阻挡识别（`PowerState: off-blocked` 时给出准确提示）
+- 配对 agent 改用 `bluetoothctl --agent=NoInputNoOutput` 启动参数
+- 配对状态显示，可一键重启 agent
+
+---
+
+## [2.0.1] - 2026-11-27
+
+**修复真机上「插件加载失败：SyntaxError: Unexpected token 'export'」**
+
+### Fixed
+
+- **`pack.py` 漏打 `package.json`**
+
+  Decky Loader 靠 `package.json` 的 `type` 字段决定前端加载方式：
+
+  | 条件 | 加载方式 | 结果 |
+  |---|---|---|
+  | 有 `package.json` 且 `type == "module"` | ESM：`import(url)` | ✅ |
+  | 没有 `package.json` | 旧版 IIFE：`eval(源码)` | ❌ ESM 产物抛语法错 |
+
+  rollup 产物是 ESM，但 zip 里没 `package.json`，于是走了 `eval()` 路径。
+
+  **对比验证**：`decky-netease-music.zip` 有 `package.json` + `type: module`
+  所以能加载；两个包的 `dist/index.js` 结尾格式完全一致，差异只在 `package.json`。
+
+  - `pack.py` 加入 `package.json`，新增 3 项自检
+    （存在性 / `type` 必须是 module / dist 必须是 ESM）
+  - `install.sh` 同步校验
+
+---
+
 ## [2.0.0] - 2026-11-26
 
 综合打磨：诊断完善、报告导出、文档重写。

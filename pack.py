@@ -1,4 +1,4 @@
-﻿"""
+"""
 把插件打包成 Decky 可安装的 zip。
 
 Decky 要求：zip 里恰好有一个 depth==1 的 plugin.json，即
@@ -152,6 +152,38 @@ def main():
     if "export {" not in dist_src and "export default" not in dist_src:
         print("警告：dist/index.js 看起来不是 ESM 产物（没有 export 语句）")
         print("  如果它是 IIFE，package.json 的 type=module 反而不对，请检查 rollup 配置")
+
+    # 自检 7：plugin.json 的 name 不能含「会破坏 URL 的字符」。
+    #
+    # 背景（一次误判的教训）
+    # --------------------
+    # Decky 用 name 拼前端资源 URL（loader.py）：
+    #     web.get("/plugins/{plugin_name}/dist/{path:.*}", handle_plugin_dist)
+    # 前端再 `import()` 这个 URL。
+    #
+    # 但实测证明：**name 含空格是安全的** —— 前端会做 URL 编码，
+    # 「Bluetooth Speaker」加载完全正常。
+    # 所以这里只拦截真正会出问题的字符：URL 保留字符与路径分隔符。
+    # 非 ASCII（中文）也放行，v2.3.0 之前的「蓝牙音箱」一直能用。
+    pj_entry = "%s/plugin.json" % PLUGIN_DIR_NAME
+    with zipfile.ZipFile(OUT_ZIP) as zf:
+        pj = json.loads(zf.read(pj_entry).decode("utf-8"))
+    pj_name = str(pj.get("name", ""))
+    problems = []
+    if not pj_name:
+        problems.append("name 为空")
+    for ch in ("/", "\\", "?", "#", "%", "&", "+"):
+        if ch in pj_name:
+            problems.append("含 URL 保留字符 %r（会破坏资源 URL）" % ch)
+    if problems:
+        print("自检失败：plugin.json 的 name 不合规（当前 %r）" % pj_name)
+        for p in problems:
+            print("  - " + p)
+        print()
+        print("Decky 用 name 拼前端资源 URL：/plugins/<name>/dist/index.js")
+        print("含 URL 保留字符会导致 404，前端报：")
+        print("  TypeError: Failed to fetch dynamically imported module")
+        return 1
 
     size = os.path.getsize(OUT_ZIP)
     print("已生成 %s" % OUT_ZIP)
