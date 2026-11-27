@@ -73,10 +73,17 @@ def _user_session_env():
     为什么需要这个？
     ----------------
     Decky 后端进程虽然以 deck 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**。
-    没有它，`systemctl --user` 会报 "Failed to connect to bus: No medium found"，
-    因为 systemctl 找不到会话总线的 socket。
+    而 PipeWire 客户端（`wpctl` / `pactl` / `pw-dump`）靠它定位 socket，
+    缺失时的典型报错：
 
-    所有 `systemctl --user` 调用都必须带上这两个变量。
+        pipewire-0 is not an absolute path and no runtime dir found.
+        Set one of PIPEWIRE_RUNTIME_DIR, XDG_RUNTIME_DIR
+
+    后果是 `wpctl get-volume` 读不到值（返回 0 或失败），
+    表现为插件音量条显示 0%，但 Steam 自己的音量条是满的。
+
+    同时设置 `PIPEWIRE_RUNTIME_DIR` 作为双保险 —— PipeWire 会先看它，
+    再看 `XDG_RUNTIME_DIR`。两个都设，任何版本都能连上。
     """
     env = {}
     uid = None
@@ -90,22 +97,48 @@ def _user_session_env():
             uid = pwd.getpwnam(os.environ.get("USER", "deck")).pw_uid
         except Exception:
             uid = 1000
-    env["XDG_RUNTIME_DIR"] = "/run/user/%d" % uid
-    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/%d/bus" % uid
+    runtime = "/run/user/%d" % uid
+    env["XDG_RUNTIME_DIR"] = runtime
+    env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=%s/bus" % runtime
+    # PipeWire 优先读这个；与 XDG_RUNTIME_DIR 一起设，兼容所有版本
+    env["PIPEWIRE_RUNTIME_DIR"] = runtime
     return env
 
 
-async def run_cmd(argv, timeout=8.0):
-    """执行外部命令，返回 (returncode, 合并后的输出)。找不到命令直接抛 BtError。"""
+async def run_cmd(argv, timeout=8.0, env_extra=None):
+    """执行外部命令，返回 (returncode, 合并后的输出)。找不到命令直接抛 BtError。
+
+    ⚠️ 关键：**默认注入用户会话环境变量**。
+
+    为什么必须这么做？
+    ----------------
+    Decky 的后端进程以 deck 用户运行，但**不继承 `XDG_RUNTIME_DIR`**。
+    而所有 PipeWire 工具（`wpctl` / `pactl` / `pw-dump`）都靠这个变量
+    找到会话总线与 PipeWire socket。
+
+    没有它，`wpctl get-volume` 会失败或返回 0，表现为：
+    - 插件音量条显示 0%，但 Steam 自己的音量条是满的
+    - 拖动滑杆「没反应」（其实是读写都失败了）
+
+    这就是真机反馈「音量调节还是不同步」的真正根因 —— 之前只在
+    `systemctl --user` 那条路径上补了环境变量，漏掉了 wpctl。
+    """
     exe = which(argv[0])
     if not exe:
         raise BtError("系统里找不到命令：%s" % argv[0])
+
+    env = dict(os.environ)
+    env.update(_user_session_env())
+    if env_extra:
+        env.update(env_extra)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             exe,
             *argv[1:],
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env,
         )
     except Exception as e:  # noqa: BLE001 - 兜底成可读错误
         raise BtError("启动 %s 失败：%s" % (argv[0], e))
@@ -723,11 +756,14 @@ class BlueZ:
         """尝试用 --agent 参数启动，不支持则退回 stdin 方式。"""
         # 方式 1：命令行参数
         try:
+            _env = dict(os.environ)
+            _env.update(_user_session_env())
             proc = await asyncio.create_subprocess_exec(
                 exe, "--agent=NoInputNoOutput",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=_env,
             )
             # 给进程一点时间，如果立刻退出说明参数不被支持
             await asyncio.sleep(0.35)
@@ -738,11 +774,14 @@ class BlueZ:
             self._log("--agent 启动失败：%s，退回 stdin 方式" % e)
 
         # 方式 2：stdin 发命令
+        _env = dict(os.environ)
+        _env.update(_user_session_env())
         proc = await asyncio.create_subprocess_exec(
             exe,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=_env,
         )
         try:
             proc.stdin.write(b"agent NoInputNoOutput\n")
@@ -858,14 +897,38 @@ class Wp:
         return which("wpctl") is not None
 
     async def get_volume(self):
-        """返回 {'volume': 0..1, 'muted': bool}。"""
+        """返回 {'volume': 0..MAX_GAIN, 'muted': bool, 'ok': bool, 'raw': str}。
+
+        ⚠️ 读不到时**不能静默返回 0** —— 那会让界面显示 0%，
+        用户以为音量真是 0，实际是命令失败了（真机反馈过这个问题）。
+        所以这里带 `ok` 标记，让调用方能区分「音量真的是 0」和「读失败」。
+        """
         rc, out = await run_cmd(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=5.0)
-        if rc != 0:
-            raise BtError("读取音量失败：%s" % (out or "").strip())
-        m = re.search(r"Volume:\s*([0-9.]+)", out)
-        vol = float(m.group(1)) if m else 0.0
-        # 允许超过 1.0（增益增强），但读回时不裁剪，交给前端决定显示
-        return {"volume": max(0.0, min(MAX_GAIN, vol)), "muted": "MUTED" in out.upper()}
+        text = (out or "").strip()
+        if rc != 0 or not text:
+            return {
+                "volume": 0.0,
+                "muted": False,
+                "ok": False,
+                "raw": text or "（无输出）",
+                "error": "读取音量失败：%s" % (text.splitlines()[0] if text else "wpctl 无输出"),
+            }
+        m = re.search(r"Volume:\s*([0-9.]+)", text)
+        if not m:
+            return {
+                "volume": 0.0,
+                "muted": False,
+                "ok": False,
+                "raw": text,
+                "error": "无法解析 wpctl 输出：%s" % text[:120],
+            }
+        vol = float(m.group(1))
+        return {
+            "volume": max(0.0, min(MAX_GAIN, vol)),
+            "muted": "MUTED" in text.upper(),
+            "ok": True,
+            "raw": text,
+        }
 
     async def set_volume(self, value):
         value = max(0.0, min(MAX_GAIN, float(value)))

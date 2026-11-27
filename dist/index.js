@@ -806,6 +806,8 @@ function Speaker() {
     const ad = state?.adapter;
     const connected = state?.connected || [];
     const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
+    // 后端读取失败时不能显示成 0%（会误导），单独标记
+    const volFailed = !!state && state.volume.ok === false;
     const act = async (fn, okMsg) => {
         if (busy)
             return;
@@ -870,11 +872,15 @@ function Speaker() {
                                     } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", justifyContent: "space-between",
                             marginBottom: 2, padding: "0 2px",
-                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: t("qam.volume") })] }), SP_JSX.jsxs("span", { style: {
+                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: t("qam.volume") })] }), SP_JSX.jsx("span", { style: {
                                     fontSize: 11.5,
-                                    color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
+                                    color: volFailed ? COLORS.accentWarm : (showVol > 100 ? COLORS.accentWarm : COLORS.sub),
                                     fontVariantNumeric: "tabular-nums",
-                                }, children: [showVol, "%", showVol > 100 ? " · " + t("qam.clipping") : ""] })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume })] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
+                                }, children: volFailed ? "读取失败" : `${showVol}%${showVol > 100 ? " · " + t("qam.clipping") : ""}` })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume }), volFailed && (SP_JSX.jsxs("div", { style: {
+                            marginTop: 6, padding: "8px 10px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+                            background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+                            color: "#ffb3b3",
+                        }, children: ["\u8BFB\u4E0D\u5230\u7CFB\u7EDF\u97F3\u91CF\uFF08wpctl \u5931\u8D25\uFF09\u3002\u8FD9\u901A\u5E38\u610F\u5473\u7740\u63D2\u4EF6\u540E\u7AEF\u7F3A\u5C11\u4F1A\u8BDD\u73AF\u5883\u53D8\u91CF\u3002", SP_JSX.jsx("br", {}), "\u8BF7\u5230\u5168\u5C4F\u9875 \u2192 \u8BCA\u65AD \u2192 \u590D\u5236\u8BCA\u65AD\u62A5\u544A\u53D1\u7ED9\u4F5C\u8005\u3002"] }))] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
                     marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",

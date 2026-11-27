@@ -73,6 +73,8 @@ export function Speaker() {
   const ad = state?.adapter;
   const connected = state?.connected || [];
   const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
+  // 后端读取失败时不能显示成 0%（会误导），单独标记
+  const volFailed = !!state && state.volume.ok === false;
 
   const act = async (fn: () => Promise<any>, okMsg?: string) => {
     if (busy) return;
@@ -278,10 +280,10 @@ export function Speaker() {
           </Focusable>
           <span style={{
             fontSize: 11.5,
-            color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
+            color: volFailed ? COLORS.accentWarm : (showVol > 100 ? COLORS.accentWarm : COLORS.sub),
             fontVariantNumeric: "tabular-nums",
           }}>
-            {showVol}%{showVol > 100 ? " · " + t("qam.clipping") : ""}
+            {volFailed ? "读取失败" : `${showVol}%${showVol > 100 ? " · " + t("qam.clipping") : ""}`}
           </span>
         </div>
         <SliderField
@@ -292,6 +294,16 @@ export function Speaker() {
           showValue={false}
           onChange={changeVolume}
         />
+        {volFailed && (
+          <div style={{
+            marginTop: 6, padding: "8px 10px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+            background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+            color: "#ffb3b3",
+          }}>
+            读不到系统音量（wpctl 失败）。这通常意味着插件后端缺少会话环境变量。
+            <br />请到全屏页 → 诊断 → 复制诊断报告发给作者。
+          </div>
+        )}
       </div>
 
       {/* 声音太小？一键增益到 130%（安全范围内） */}

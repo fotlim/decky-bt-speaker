@@ -33,6 +33,10 @@ export interface AdapterInfo {
 export interface VolumeInfo {
   volume: number;
   muted: boolean;
+  /** false 表示读取失败（此时 volume 无意义，不要显示成 0%） */
+  ok?: boolean;
+  error?: string;
+  raw?: string;
 }
 
 export interface Settings {
