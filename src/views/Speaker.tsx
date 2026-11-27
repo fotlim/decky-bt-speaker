@@ -274,6 +274,60 @@ export function Speaker() {
         </div>
       )}
 
+      {/* 已连接但 A2DP 还没就绪：显示「正在协商音频…」。
+          这不是错误 —— 蓝牙连上后还要走 SDP / AVDTP / 建卡三步，
+          常见 1~6 秒。以前界面只显示「已连接」，用户去电脑里找不到音箱
+          就以为坏了。 */}
+      {connected.length > 0 && state?.a2dp && !state.a2dp.ready && (
+        <div style={{
+          margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 11.5,
+          lineHeight: 1.6, background: "rgba(76,154,255,0.10)",
+          border: "1px solid rgba(76,154,255,0.28)", color: "#a8c8ff",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: 3, background: COLORS.accent,
+              animation: "pulse 1.2s ease-in-out infinite",
+            }} />
+            {t("qam.negotiating")}
+          </div>
+          <div style={{ marginTop: 5, color: COLORS.dim, fontSize: 11 }}>
+            {t("qam.negotiatingHint")}
+          </div>
+          <Focusable
+            onClick={() => act(async () => {
+              const r = await api.fixA2dp(connected[0]?.mac);
+              if (r.ok) {
+                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
+              } else {
+                toaster.toast({
+                  title: t("qam.a2dpFixFailed"),
+                  body: r.detail || r.reason || "",
+                });
+              }
+            })}
+            onActivate={() => act(async () => {
+              const r = await api.fixA2dp(connected[0]?.mac);
+              if (r.ok) {
+                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
+              } else {
+                toaster.toast({
+                  title: t("qam.a2dpFixFailed"),
+                  body: r.detail || r.reason || "",
+                });
+              }
+            })}
+            style={{
+              marginTop: 7, padding: "7px 11px", borderRadius: 7, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(76,154,255,0.18)", fontSize: 11.5, color: "#fff",
+            }}
+          >
+            {t("qam.a2dpForce")}
+          </Focusable>
+        </div>
+      )}
+
       {/* 谁在放歌：外部蓝牙源 */}
       {state?.live && (
         <div style={{

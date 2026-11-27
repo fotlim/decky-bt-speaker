@@ -75,6 +75,11 @@ const EN: Dict = {
   "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
   "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
   "qam.playingLabel": "Playing",
+  "qam.negotiating": "Negotiating audio (A2DP)…",
+  "qam.negotiatingHint": "The Bluetooth link is up, but the audio profile is still being negotiated. It usually takes 1-6 seconds before the Deck shows up as a speaker on your device. Just wait a moment.",
+  "qam.a2dpForce": "Force A2DP sink profile",
+  "qam.a2dpFixed": "Switched to A2DP sink",
+  "qam.a2dpFixFailed": "Could not switch profile",
 
   // 全屏页
   "page.title": "Bluetooth Speaker",
@@ -301,6 +306,11 @@ const ZH: Dict = {
   "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
   "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
   "qam.playingLabel": "正在播放",
+  "qam.negotiating": "正在协商音频（A2DP）…",
+  "qam.negotiatingHint": "蓝牙链路已连上，但音频 profile 还在协商。通常 1~6 秒后你的设备上才会出现这台 Deck 作为音箱。稍等一下就好。",
+  "qam.a2dpForce": "强制切到 A2DP 接收模式",
+  "qam.a2dpFixed": "已切到 A2DP 接收模式",
+  "qam.a2dpFixFailed": "切换 profile 失败",
 
   "page.title": "蓝牙音箱",
   "page.readingAdapter": "正在读取蓝牙适配器…",

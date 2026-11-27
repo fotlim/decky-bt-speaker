@@ -105,6 +105,89 @@
 
 ---
 
+## [2.9.0] - 2026-11-27
+
+**A2DP 协商过程变得可见，并在卡住时能一键补救**
+
+### 现象
+
+真机反馈：「连接了，但是电脑好像没有把它识别为音箱」，
+补充说明是「要一段时间才能识别为音箱」。
+
+### 这不是 bug，是协议流程本身要时间
+
+`bluetoothctl connect` 返回时只完成了第一步：
+
+```
+1. ACL 链路建立          bluetoothctl connect 返回时完成   ← 以前插件到这里就说「已连接」
+2. SDP 服务发现          对端要知道 Deck 提供 A2DP Sink
+3. AVDTP 能力协商        交换 SEP / 编码器能力，选定 codec
+4. WirePlumber 建卡      创建 bluez_input.<MAC>、切到 a2dp-sink profile  ← 到这里才算「能放歌」
+```
+
+第 2~4 步的耗时取决于对端实现，实测常见 1~6 秒。PipeWire 官方在
+[MR !1107](https://gitlab.freedesktop.org/pipewire/pipewire/-/merge_requests/1107)
+里把 device profile 超时从 3 秒**加到 6 秒**，理由正是：
+
+> In some cases, BlueZ can take more than the previous 3sec to connect all profiles.
+
+[bluez#205](https://github.com/bluez/bluez/issues/205) 也说明了原因：
+两端可能同时抢着连 profile，AVDTP 命令来回要好几秒。
+
+**所以以前的体验问题是**：插件发完 `connect` 立刻返回「已连接」，
+用户去电脑里找音箱找不到，就以为坏了 —— 而它其实正在协商。
+
+### Added
+
+- **`a2dp.py`：等待 A2DP Sink 就绪**
+
+  - 连接后轮询 `pactl list cards`，一旦 `a2dp-sink` profile 生效就**立刻返回**
+    （不必死等固定时长），并汇报实际耗时
+  - 超过 4 秒还没就绪就**主动切一次 profile** —— 有时 WirePlumber 建好了卡
+    却把 profile 留在 `off` 或停在 HFP，单纯等是等不好的，必须显式
+    `pactl set-card-profile`。这是社区脚本里最有效的补救手段
+  - 12 秒仍不就绪也**不报错**，返回 `ready=False` + 原因
+    （`negotiating` / `no-card` / `wrong-profile`）
+
+  ⚠️ 设计约束：**未就绪不等于失败**。蓝牙协商慢是常态，报错只会误导用户。
+
+- **界面显示「正在协商音频（A2DP）…」**
+
+  QAM 面板在「已连接但 profile 还没就绪」时显示这个状态 + 说明文字，
+  而不是干巴巴一个「已连接」。同时提供一个「强制切到 A2DP 接收模式」按钮，
+  协商卡住时手动补救。
+
+- **`status()` 新增 `a2dp` 字段**
+
+  轮询里顺带读一次卡片状态。为什么需要？因为用户可能在**电脑那边**发起连接
+  （不是从插件里点连接），那时 `device_action` 根本没被调用，
+  插件不知道协商进行到哪一步。开销：一次 `pactl list cards`，
+  且只在「有设备已连接」时才跑。
+
+- 新增 RPC：`wait_a2dp`（可反复调用来刷新）、`fix_a2dp`（强制切 profile）
+
+### Fixed
+
+- **`a2dp.parse_cards` 的 MAC 匹配只认冒号写法**
+
+  写测试时发现的：原来用 `mac.replace(":", "_")`，遇到横线 / 点分 / 小写
+  的 MAC 就匹配不上。改成复用 `btutil.normalize_mac()` ——
+  和 v2.5.3 修「设备地址不合法」是同一个坑，那次只修了 `bt.py`，漏了这里。
+
+### 测试
+
+新增 30 项 A2DP 测试，重点是**边界语义**：
+
+- `a2dp-sink` / `a2dp_sink`（下划线写法）都算就绪
+- `off` / `headset-head-unit` / 空 / `a2dp-source` **都不算就绪**
+  —— 尤其是 `a2dp-source`（Deck 推给耳机，方向相反），不能误判成接收端就绪
+- 挑 profile 时优先 SBC-XQ > LDAC > AAC > aptS > SBC；
+  **没有 sink profile 时返回空串，绝不瞎选 `a2dp-source`**
+- 等待上限 ≥ 6 秒（PipeWire 自己的超时）且 ≤ 30 秒
+- 修复时机必须早于超时
+
+---
+
 ## [2.8.3] - 2026-11-27
 
 **界面显示版本号；新增「产物冒烟测试」**

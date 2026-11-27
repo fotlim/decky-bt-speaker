@@ -54,6 +54,13 @@ except Exception:
     _INHIBIT_IMPORT_ERR = traceback.format_exc()
 
 try:
+    import a2dp  # type: ignore
+    _A2DP_IMPORT_ERR = None
+except Exception:
+    a2dp = None
+    _A2DP_IMPORT_ERR = traceback.format_exc()
+
+try:
     import nodes  # type: ignore
     _NODES_IMPORT_ERR = None
 except Exception:
@@ -851,6 +858,37 @@ class Plugin:
             except Exception as e:  # noqa: BLE001
                 self._log("读取编码器失败：%s" % e)
 
+        # A2DP 接收端是否真的就绪。
+        #
+        # 为什么要在 status 里也算一遍？
+        # ----------------------------
+        # 用户可能在**电脑那边**发起连接（不是从插件里点连接），
+        # 那时 device_action 根本没被调用，插件不知道协商进行到哪一步。
+        # 所以在轮询里顺带读一次卡片状态，界面就能显示
+        # 「正在协商音频…」而不是干巴巴一个「已连接」。
+        #
+        # 开销：一次 `pactl list cards`，已随 status 的其它命令一起轮询，
+        # 且只在「有设备已连接」时才跑，空闲时不产生额外进程。
+        a2dp_state = {"ready": False, "profile": "", "available": [], "reason": ""}
+        if a2dp is not None and connected:
+            try:
+                cards = await a2dp.read_cards()
+                card = a2dp.find_sink_card(cards, connected[0].get("mac"))
+                if card:
+                    a2dp_state = {
+                        "ready": a2dp.sink_ready(card),
+                        "profile": card.get("active", ""),
+                        "available": card.get("available", []),
+                        "reason": "" if a2dp.sink_ready(card) else "negotiating",
+                    }
+                else:
+                    a2dp_state = {"ready": False, "profile": "", "available": [],
+                                  "reason": "no-card"}
+            except Exception as e:  # noqa: BLE001
+                self._log("读取 A2DP 状态失败：%s" % e)
+                a2dp_state = {"ready": False, "profile": "", "available": [],
+                              "reason": "error: %s" % e}
+
         # 已连接设备的详情（图标/类别用来在 UI 上区分手机和电脑）
         #
         # 这里原来对每个已连接设备都跑一次 `bluetoothctl info`（一个进程），
@@ -887,6 +925,8 @@ class Plugin:
             "live": live,
             "track": track,
             "codec": codec,
+            # A2DP 接收端就绪状态（ready=False 表示还在协商，不是错误）
+            "a2dp": a2dp_state,
             "focus": {
                 "mode": self.settings.get("focus_mode", "coexist"),
                 "label": (focus.Focus.mode_label(self.settings.get("focus_mode", "coexist"))
@@ -1087,14 +1127,101 @@ class Plugin:
 
     @_safe
     async def device_action(self, mac, action, value=None):
+        """设备操作。连接后会等 A2DP 就绪再返回。
+
+        ⚠️ 为什么要等？
+        -------------
+        真机反馈「连接了，但电脑好像没有把它识别为音箱」，补充说明是
+        「要一段时间才能识别」。这不是 bug —— `bluetoothctl connect`
+        只建立了 ACL 链路，后面还有 SDP 服务发现、AVDTP 能力协商、
+        WirePlumber 建卡切 profile 三步（见 a2dp.py 开头的说明）。
+
+        以前这里是「发完 connect 立刻返回」，用户看到「已连接」就去电脑上找
+        音箱，找不到就以为坏了。现在等它就绪再返回，并把实际耗时告诉前端。
+
+        注意：**等不到也不算失败**。蓝牙协商慢是常态，所以 `a2dp.ready=False`
+        时仍然返回 ok，只是带上说明，由前端决定怎么提示。
+        """
+        mac_n = bt.normalize_mac(mac) or mac
         ok = await self.bz.device_action(mac, action, value)
-        return {"ok": ok}
+        result = {"ok": ok}
+
+        act = (action or "").strip().lower()
+        if ok and act in ("connect", "pair"):
+            a2 = {"ready": False, "seconds": 0.0, "profile": "", "reason": "skipped"}
+            if a2dp is not None:
+                try:
+                    a2 = await a2dp.wait_for_sink(mac_n, self._log)
+                except Exception as e:  # noqa: BLE001
+                    self._log("等待 A2DP 就绪异常：%s" % e)
+                    a2 = {"ready": False, "seconds": 0.0, "profile": "",
+                          "reason": "error: %s" % e}
+            result["a2dp"] = a2
+            # 就绪后记下这台设备，唤醒/重连时优先用它
+            if a2.get("ready"):
+                self.settings["last_device"] = mac_n
+                self._save_settings()
+        return result
 
     @_safe
     async def disconnect_all(self):
         """断开所有已连接设备。"""
         r = await self.bz.disconnect_all()
         return {"ok": True, **r}
+
+    # ------------------------------------------------------------------
+    # A2DP 协商
+    # ------------------------------------------------------------------
+    @_safe
+    async def wait_a2dp(self, mac=None, seconds=12):
+        """等 A2DP Sink 就绪（前端在「正在协商」时可以反复调这个刷新）。
+
+        ⚠️ `ready=False` **不是错误** —— 蓝牙协商慢是常态，
+        见 a2dp.py 开头对四步流程的说明。
+        """
+        if a2dp is None:
+            return {_ERR: "a2dp 模块未加载"}
+        try:
+            secs = max(1.0, min(30.0, float(seconds)))
+        except (TypeError, ValueError):
+            secs = a2dp.MAX_WAIT
+        return await a2dp.wait_for_sink(
+            bt.normalize_mac(mac) if mac else None, self._log, max_wait=secs
+        )
+
+    @_safe
+    async def fix_a2dp(self, mac=None):
+        """强制把蓝牙卡切到 a2dp-sink profile。
+
+        什么时候用？协商卡在 `off` 或掉到 HFP 通话 profile 时，
+        单纯等是等不好的 —— 必须显式 `pactl set-card-profile`。
+        这是社区脚本里最有效的补救手段。
+        """
+        if a2dp is None:
+            return {_ERR: "a2dp 模块未加载"}
+        cards = await a2dp.read_cards()
+        card = a2dp.find_sink_card(cards, bt.normalize_mac(mac) if mac else None)
+        if card is None:
+            return {"ok": False, "reason": "no-card",
+                    "detail": "没有找到蓝牙音频卡（设备可能还没连上）"}
+        if a2dp.sink_ready(card):
+            return {"ok": True, "profile": card.get("active", ""),
+                    "reason": "already-ready"}
+        target = a2dp.best_sink_profile(card)
+        if not target:
+            return {"ok": False, "reason": "no-sink-profile",
+                    "detail": "这张卡没有 a2dp-sink profile",
+                    "available": card.get("available", [])}
+        ok, out = await a2dp.set_profile(card.get("name", ""), target)
+        self._log("强制切换 A2DP：%s -> %s（%s）"
+                  % (card.get("active") or "无", target, "成功" if ok else "失败"))
+        return {
+            "ok": ok,
+            "profile": target,
+            "previous": card.get("active", ""),
+            "detail": out,
+            "reason": "" if ok else "set-profile-failed",
+        }
 
     @_safe
     async def set_volume(self, value):
@@ -1657,6 +1784,7 @@ class Plugin:
             "metadata": metadata is not None,
             "screen": screen is not None,
             "inhibit": inhibit is not None,
+            "a2dp": a2dp is not None,
         }
 
         try:

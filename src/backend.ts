@@ -30,7 +30,19 @@ export const api = {
     mac: string,
     action: "connect" | "disconnect" | "trust" | "untrust" | "pair" | "remove" | "block" | "unblock" | "alias",
     value?: string,
-  ) => call<[string, string, string?], { ok: boolean }>("device_action", mac, action, value),
+  ) => call<[string, string, string?], {
+    ok: boolean;
+    /** connect / pair 时会带回 A2DP 协商结果（ready=false 只是「还在协商」） */
+    a2dp?: { ready: boolean; seconds: number; profile: string; reason: string; repaired?: boolean };
+  }>("device_action", mac, action, value),
+  /** 等 A2DP 就绪（界面显示「正在协商」时可反复调用刷新） */
+  waitA2dp: (mac?: string, seconds = 12) =>
+    call<[string | undefined, number], { ready: boolean; seconds: number; profile: string; reason: string }>(
+      "wait_a2dp", mac, seconds),
+  /** 强制把蓝牙卡切到 a2dp-sink（协商卡在 off / HFP 时用） */
+  fixA2dp: (mac?: string) =>
+    call<[string | undefined], { ok: boolean; profile?: string; previous?: string; reason?: string; detail?: string; available?: string[] }>(
+      "fix_a2dp", mac),
   /** 断开所有已连接设备 */
   /** 息屏状态 */
   getScreen: () =>

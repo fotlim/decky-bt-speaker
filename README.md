@@ -228,6 +228,7 @@ Log path: `~/homebrew/logs/decky-bt-speaker/bt-speaker.log`
 |---|---|
 | Phone can't find the Deck | Check "Discoverable"; make sure keep-alive is on |
 | Pairing asks for a PIN | Check the "Pairing agent" row in Diagnostics; restart the agent |
+| **Connected, but the PC/phone does not list the Deck as a speaker** | This is normal for the first few seconds: the Bluetooth link is up but A2DP is still negotiating (SDP + AVDTP + card setup, usually 1-6s). v2.9.0 shows "Negotiating audio" while this happens. If it never resolves, tap "Force A2DP sink profile". |
 | Connected but no sound | ① Enable "Speaker optimization" and reconnect ② Check the default output ③ Phone volume isn't 0 |
 | Muffled, sounds like a phone call | Dropped to HFP mono. Enable "Speaker optimization" and disable "Call audio" in the phone's Bluetooth settings |
 | Audio stutters | 2.4 GHz interference — move away from the router / USB 3.0, or switch Wi-Fi to 5 GHz |
@@ -292,7 +293,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.3**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.0**.
 
 | Version | Contents |
 |---|---|
@@ -333,6 +334,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.3**.
 | 2.8.1 | Removed the misleading "fix bl_power permission" button (the driver ignores it anyway) |
 | 2.8.2 | **Fix plugin failing to load at all** — never call host APIs at module top level (DFL.findVar); overlay now a global component |
 | 2.8.3 | Version + build time shown in QAM (so you can tell which build is running); tests_bundle.py loads the real bundle against a mock old loader |
+| 2.9.0 | A2DP negotiation is now visible ("Negotiating audio") and waits for the sink profile; one-tap force-switch when it gets stuck |
 
 ---
 
@@ -581,6 +583,7 @@ python pack.py          # 打包
 |---|---|
 | 手机搜不到 | 检查「可被发现」；确认保活开着 |
 | 配对要 PIN | 诊断页看「配对 agent」是否 ✅，重开开关 |
+| **连上了，但电脑/手机里找不到这台 Deck 作为音箱** | 头几秒是正常的：蓝牙链路已通，但 A2DP 还在协商（SDP + AVDTP + 建卡，通常 1~6 秒）。v2.9.0 会显示「正在协商音频」。如果一直不就绪，点「强制切到 A2DP 接收模式」。 |
 | 连上没声音 | ①开「音箱优化」再重连 ②检查默认输出 ③手机音量不是 0 |
 | 声音发闷像打电话 | 掉到 HFP 单声道了。开「音箱优化」，并在手机蓝牙设置里关掉「通话音频」 |
 | 声音断续 | 2.4GHz 干扰，远离路由器 / USB 3.0；或用 5GHz Wi-Fi |
@@ -651,7 +654,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.3**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.9.0**。
 
 | 版本 | 内容 |
 |---|---|
@@ -692,6 +695,7 @@ python pack.py          # 打包 zip
 | 2.8.1 | 删掉误导性的「修复 bl_power 权限」按钮（驱动根本不认它） |
 | 2.8.2 | **修复插件完全无法加载** —— 禁止在模块顶层调宿主 API（DFL.findVar）；遮罩改挂全局组件 |
 | 2.8.3 | QAM 底部显示版本号+构建时间（一眼看出跑的是哪一版）；新增 tests_bundle.py 用假旧版 loader 真实加载产物 |
+| 2.9.0 | A2DP 协商过程可见（显示「正在协商音频」）并等待接收 profile；卡住时可一键强制切换 |
 
 ---
 

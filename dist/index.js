@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"2.8.3","build":"11-27 22:05"};
+var __BT_META__ = {"version":"2.9.0","build":"11-27 22:14"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -124,6 +124,10 @@ const api = {
     repairDevice: (mac) => call("repair_device", mac),
     setAlias: (alias) => call("set_alias", alias),
     deviceAction: (mac, action, value) => call("device_action", mac, action, value),
+    /** 等 A2DP 就绪（界面显示「正在协商」时可反复调用刷新） */
+    waitA2dp: (mac, seconds = 12) => call("wait_a2dp", mac, seconds),
+    /** 强制把蓝牙卡切到 a2dp-sink（协商卡在 off / HFP 时用） */
+    fixA2dp: (mac) => call("fix_a2dp", mac),
     /** 断开所有已连接设备 */
     /** 息屏状态 */
     getScreen: () => call("get_screen"),
@@ -452,6 +456,11 @@ const EN = {
     "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
     "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
     "qam.playingLabel": "Playing",
+    "qam.negotiating": "Negotiating audio (A2DP)…",
+    "qam.negotiatingHint": "The Bluetooth link is up, but the audio profile is still being negotiated. It usually takes 1-6 seconds before the Deck shows up as a speaker on your device. Just wait a moment.",
+    "qam.a2dpForce": "Force A2DP sink profile",
+    "qam.a2dpFixed": "Switched to A2DP sink",
+    "qam.a2dpFixFailed": "Could not switch profile",
     // 全屏页
     "page.title": "Bluetooth Speaker",
     "page.readingAdapter": "Reading Bluetooth adapter…",
@@ -668,6 +677,11 @@ const ZH = {
     "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
     "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
     "qam.playingLabel": "正在播放",
+    "qam.negotiating": "正在协商音频（A2DP）…",
+    "qam.negotiatingHint": "蓝牙链路已连上，但音频 profile 还在协商。通常 1~6 秒后你的设备上才会出现这台 Deck 作为音箱。稍等一下就好。",
+    "qam.a2dpForce": "强制切到 A2DP 接收模式",
+    "qam.a2dpFixed": "已切到 A2DP 接收模式",
+    "qam.a2dpFixFailed": "切换 profile 失败",
     "page.title": "蓝牙音箱",
     "page.readingAdapter": "正在读取蓝牙适配器…",
     "page.a2dpSink": "A2DP Sink",
@@ -1153,7 +1167,40 @@ function Speaker() {
                             : t("qam.rfkillSoft") })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), t("qam.btOn")), children: t("qam.turnOnBt") }) }), state?.rfkill?.soft && !state.rfkill.hard && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.unblockRfkill(), t("qam.unblockRfkill")), children: t("qam.unblockRfkill") }) }))] })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
                         borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
-                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), state?.live && (SP_JSX.jsxs("div", { style: {
+                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), connected.length > 0 && state?.a2dp && !state.a2dp.ready && (SP_JSX.jsxs("div", { style: {
+                    margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 11.5,
+                    lineHeight: 1.6, background: "rgba(76,154,255,0.10)",
+                    border: "1px solid rgba(76,154,255,0.28)", color: "#a8c8ff",
+                }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 7 }, children: [SP_JSX.jsx("span", { style: {
+                                    width: 6, height: 6, borderRadius: 3, background: COLORS.accent,
+                                    animation: "pulse 1.2s ease-in-out infinite",
+                                } }), t("qam.negotiating")] }), SP_JSX.jsx("div", { style: { marginTop: 5, color: COLORS.dim, fontSize: 11 }, children: t("qam.negotiatingHint") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(async () => {
+                            const r = await api.fixA2dp(connected[0]?.mac);
+                            if (r.ok) {
+                                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
+                            }
+                            else {
+                                toaster.toast({
+                                    title: t("qam.a2dpFixFailed"),
+                                    body: r.detail || r.reason || "",
+                                });
+                            }
+                        }), onActivate: () => act(async () => {
+                            const r = await api.fixA2dp(connected[0]?.mac);
+                            if (r.ok) {
+                                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
+                            }
+                            else {
+                                toaster.toast({
+                                    title: t("qam.a2dpFixFailed"),
+                                    body: r.detail || r.reason || "",
+                                });
+                            }
+                        }), style: {
+                            marginTop: 7, padding: "7px 11px", borderRadius: 7, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(76,154,255,0.18)", fontSize: 11.5, color: "#fff",
+                        }, children: t("qam.a2dpForce") })] })), state?.live && (SP_JSX.jsxs("div", { style: {
                     margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
                     background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {

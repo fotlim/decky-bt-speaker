@@ -231,6 +231,22 @@ export interface InhibitInfo {
   system?: string;
 }
 
+/** A2DP 接收端协商状态。
+ *
+ * `ready=false` **不是错误** —— 蓝牙连上后还要走 SDP 服务发现、
+ * AVDTP 能力协商、WirePlumber 建卡切 profile 三步，常见 1~6 秒。
+ * 界面应该显示「正在协商」，而不是「失败」。
+ */
+export interface A2dpInfo {
+  ready: boolean;
+  /** 当前生效的 profile，如 a2dp-sink-sbc_xq */
+  profile: string;
+  /** 这张卡支持的 profile 列表 */
+  available?: string[];
+  /** 未就绪的原因：negotiating / no-card / error */
+  reason: string;
+}
+
 export interface SpeakerStatus {
   ok: boolean;
   error: string | null;
@@ -242,6 +258,8 @@ export interface SpeakerStatus {
   live: LiveSource | null;
   track: TrackInfo | null;
   codec: CodecInfo;
+  /** A2DP 接收端就绪状态 */
+  a2dp?: A2dpInfo | null;
   focus: FocusInfo;
   silence: SilenceInfo | null;
   normalize: NormalizeInfo | null;

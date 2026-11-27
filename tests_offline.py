@@ -1034,13 +1034,111 @@ def test_inhibit():
     check("available 不崩", isinstance(inhibit.Inhibitor.available(), bool))
 
 
+def test_a2dp():
+    print("A2DP 就绪等待（连上不等于能用）")
+    import a2dp
+
+    # ---- pactl list cards 解析 ----
+    #
+    # 注意：这里用空格缩进而不是制表符 —— 真实 `pactl` 输出是 Tab 缩进的，
+    # 但解析器对两者一视同仁（只看「行首是否空白」），用空格能让测试源码
+    # 更易读，也避免在源码里混入不可见的制表符。
+    CARDS = """Card #52
+    Name: bluez_card.CC_42_10_8A_70_42
+    Driver: module-bluez5-device.c
+    Owner Module: n/a
+    Properties:
+        device.description = "Ciallo"
+    Profiles:
+        headset-head-unit: Headset Head Unit (HSP/HFP)
+        a2dp-sink-sbc: High Fidelity Playback (A2DP Sink, codec SBC)
+        a2dp-sink-sbc_xq: High Fidelity Playback (A2DP Sink, codec SBC-XQ)
+        a2dp-sink-aac: High Fidelity Playback (A2DP Sink, codec AAC)
+        a2dp-source-sbc: High Fidelity Capture (A2DP Source, codec SBC)
+        off: Off
+    Active Profile: a2dp-sink-sbc_xq
+
+Card #53
+    Name: alsa_card.pci-0000_04_00.6
+    Profiles:
+        off: Off
+    Active Profile: off
+"""
+    cards = a2dp.parse_cards(CARDS)
+    check("解析出 2 张卡", len(cards) == 2, "实际 %d" % len(cards))
+    check("认出蓝牙卡", cards[0]["is_bluez"])
+    check("非蓝牙卡标记正确", not cards[1]["is_bluez"])
+    check("读到 Active Profile", cards[0]["active"] == "a2dp-sink-sbc_xq",
+          cards[0]["active"])
+    check("读到 profile 列表", len(cards[0]["available"]) >= 5,
+          str(cards[0]["available"]))
+    # MAC 匹配必须**传入 mac** 才会有 —— 不传时 matches_mac 一律 False
+    check("不传 mac 时不做匹配", not cards[0]["matches_mac"])
+    cards_m = a2dp.parse_cards(CARDS, "CC:42:10:8A:70:42")
+    check("MAC 匹配", cards_m[0]["matches_mac"])
+    # 小写 / 横线写法也要能匹配（normalize 之后是同一张卡）
+    check("横线 MAC 也能匹配",
+          a2dp.parse_cards(CARDS, "cc-42-10-8a-70-42")[0]["matches_mac"])
+
+    # 空输入 / None 不崩
+    check("空输入返回空表", a2dp.parse_cards("") == [])
+    check("None 返回空表", a2dp.parse_cards(None) == [])
+
+    # ---- 找卡 ----
+    card = a2dp.find_sink_card(cards)
+    check("找到接收端卡", card is not None and card["is_bluez"])
+    # 按 MAC 精确匹配
+    card2 = a2dp.find_sink_card(cards, "CC:42:10:8A:70:42")
+    check("按 MAC 匹配到同一张", card2 is not None and card2["name"] == cards[0]["name"])
+    # 不存在的 MAC -> 回退到第一张有 a2dp-sink 的蓝牙卡（AVDTP 只允许一台）
+    card3 = a2dp.find_sink_card(cards, "AA:BB:CC:DD:EE:FF")
+    check("未知 MAC 回退到蓝牙卡", card3 is not None and card3["is_bluez"])
+    check("没有蓝牙卡时返回 None", a2dp.find_sink_card([cards[1]]) is None)
+
+    # ---- 就绪判断 ----
+    check("a2dp-sink 算就绪", a2dp.sink_ready({"active": "a2dp-sink-sbc_xq"}))
+    check("a2dp-sink 下划线写法也算", a2dp.sink_ready({"active": "a2dp_sink_sbc"}))
+    # ⚠️ 关键：off / HFP / 空 都不算就绪，但**都不是错误**
+    check("off 不算就绪", not a2dp.sink_ready({"active": "off"}))
+    check("HFP 不算就绪", not a2dp.sink_ready({"active": "headset-head-unit"}))
+    check("空 profile 不算就绪", not a2dp.sink_ready({"active": ""}))
+    check("None 卡不算就绪", not a2dp.sink_ready(None))
+    # a2dp-source 是反方向（Deck 推给耳机），不能算接收端就绪
+    check("a2dp-source 不算接收就绪", not a2dp.sink_ready({"active": "a2dp-source-sbc"}))
+
+    # ---- 挑最好的 profile ----
+    best = a2dp.best_sink_profile(cards[0])
+    check("优先选 SBC-XQ", best == "a2dp-sink-sbc_xq", best)
+    # 没有 XQ 时选 AAC
+    check("无 XQ 时选 AAC",
+          a2dp.best_sink_profile({"available": ["a2dp-sink-sbc", "a2dp-sink-aac"]})
+          == "a2dp-sink-aac")
+    # 只有 SBC 就选 SBC
+    check("只有 SBC 时选 SBC",
+          a2dp.best_sink_profile({"available": ["a2dp-sink-sbc"]}) == "a2dp-sink-sbc")
+    # 没有 a2dp-sink profile 时返回空串（不能瞎选 a2dp-source）
+    check("无 sink profile 返回空",
+          a2dp.best_sink_profile({"available": ["a2dp-source-sbc", "off"]}) == "")
+    check("None 返回空", a2dp.best_sink_profile(None) == "")
+
+    # ---- 安全边界 ----
+    check("等待上限合理（>=6s，PipeWire 自己是 6s）", a2dp.MAX_WAIT >= 6.0,
+          "实际 %s" % a2dp.MAX_WAIT)
+    check("等待上限不过长（<=30s）", a2dp.MAX_WAIT <= 30.0,
+          "实际 %s（太长用户会以为卡死）" % a2dp.MAX_WAIT)
+    check("轮询间隔合理", 0.1 <= a2dp.POLL_INTERVAL <= 2.0,
+          "实际 %s" % a2dp.POLL_INTERVAL)
+    check("修复时机早于超时", a2dp.REPAIR_AFTER < a2dp.MAX_WAIT,
+          "%s vs %s" % (a2dp.REPAIR_AFTER, a2dp.MAX_WAIT))
+
+
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
                test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
-               test_settings_validation, test_power_parse, test_inhibit):
+               test_settings_validation, test_power_parse, test_inhibit, test_a2dp):
         fn()
     print()
     if FAILED:
