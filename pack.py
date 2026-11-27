@@ -21,6 +21,7 @@ Decky 后端解压 zip 时按 ASCII 处理文件名，含非 ASCII 字符的路�
 """
 
 import os
+import re
 import sys
 import json
 import zipfile
@@ -155,6 +156,57 @@ def main():
     if "export {" not in dist_src and "export default" not in dist_src:
         print("警告：dist/index.js 看起来不是 ESM 产物（没有 export 语句）")
         print("  如果它是 IIFE，package.json 的 type=module 反而不对，请检查 rollup 配置")
+
+    # 自检 8（v2.8.2 事故后新增）：不许在**模块顶层**裸调宿主 API。
+    #
+    # 背景
+    # ----
+    # v2.8.0 里写了这么一行（在模块顶层执行）：
+    #
+    #     const resolvedHook = findVar(f) ?? findModuleExport(f);
+    #
+    # rollup 用 external-globals 把 `@decky/ui` 映射成全局 `DFL`，于是产物是：
+    #
+    #     const resolvedHook = DFL.findVar(f) ?? DFL.findModuleExport(f);
+    #
+    # 但 `findVar` 是 @decky/ui **5.x** 才有的 API，旧版 loader 的 `DFL` 上
+    # 没有这个函数 —— 插件一加载就 `TypeError: DFL.findVar is not a function`，
+    # **整个插件包挂掉，连 QAM 面板都打不开**（真机截图确认）。
+    #
+    # 正确做法：把可选 API 访问包进函数，先 `typeof === "function"` 判断。
+    # 这里做静态检查，把「顶层直接调用 DFL.<可能不存在的 API>」拦下来。
+    #
+    # 白名单是那些**所有 loader 版本都保证存在**的 UI 组件（只在渲染时用，
+    # 而且即使缺失也只是渲染报错，不会导致插件加载失败）。
+    SAFE_DFL = {
+        "PanelSection", "PanelSectionRow", "ButtonItem", "ToggleField",
+        "SliderField", "Focusable", "Navigation", "Dropdown", "Field",
+        "TextField", "DialogButton", "staticClasses", "ModalRoot",
+        "showModal", "joinClassNames", "gamepadDialogClasses",
+        "quickAccessControlsClasses", "ScrollPanel", "ScrollPanelGroup",
+        "ConfirmModal", "Menu", "MenuItem", "ProgressBar", "Spinner",
+        "ToggleFieldProps", "createReactTreePatcher",
+    }
+    # 只检查「缩进为 0 的行」= 模块顶层
+    bad_calls = []
+    for raw in dist_src.splitlines():
+        if raw[:1] in (" ", "\t", "/", "*"):
+            continue
+        for m in re.finditer(r"DFL\.([A-Za-z_$][\w$]*)", raw):
+            name = m.group(1)
+            if name not in SAFE_DFL:
+                bad_calls.append((name, raw.strip()[:110]))
+    if bad_calls:
+        print("自检失败：模块顶层直接调用了不保证存在的 DFL API")
+        for name, line in bad_calls:
+            print("  DFL.%s  <-  %s" % (name, line))
+        print()
+        print("旧版 Decky loader 的 DFL 上没有这些新 API（如 findVar 是 5.x 才有的），")
+        print("顶层调用会让整个插件加载失败：TypeError: DFL.xxx is not a function")
+        print("修法：包进函数 + typeof 判断，例如")
+        print("    const fn = (DFL as any)[\"findVar\"];")
+        print("    if (typeof fn === \"function\") { ... }")
+        return 1
 
     # 自检 7：plugin.json 的 name 不能含「会破坏 URL 的字符」。
     #

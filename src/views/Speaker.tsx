@@ -9,7 +9,7 @@ import { useSpeaker, setPanelVisible } from "../store";
 import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
-import { DimOverlay } from "./DimOverlay";
+import { subscribeDim, setDimmed as setDimState } from "../dimState";
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
@@ -48,8 +48,16 @@ export function Speaker() {
   }, []);
 
   // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
-  const [dimmed, setDimmed] = useState(false);
+  //
+  // ⚠️ 遮罩不在这里渲染。它挂成**全局组件**（见 index.tsx），
+  //    因为 QAM 面板的 DOM 被 Steam 容器包着、容器带 transform，
+  //    会让 position:fixed 的包含块退化，盖不住顶栏。
+  //    这里只负责「按按钮 → 调后端 → 更新共享状态」。
+  const [dimmed, setDimmedState] = useState(false);
   const dimTimer = useRef<any>(null);
+
+  // 跟随共享状态（全局遮罩被输入唤醒时，按钮文案也要跟着变回来）
+  useEffect(() => subscribeDim((v) => setDimmedState(v)), []);
 
   // 组件卸载时一定恢复背光，避免留下黑屏
   useEffect(() => () => {
@@ -59,7 +67,9 @@ export function Speaker() {
   const enterDim = async () => {
     try {
       const r: any = await api.dimScreen();
-      setDimmed(true);
+      // 先通知全局遮罩显示，再更新本地按钮状态
+      setDimState(true);
+      setDimmedState(true);
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
       dimTimer.current = setTimeout(() => { exitDim(); }, secs);
@@ -78,7 +88,8 @@ export function Speaker() {
 
   const exitDim = async () => {
     if (dimTimer.current) { clearTimeout(dimTimer.current); dimTimer.current = null; }
-    setDimmed(false);
+    setDimState(false);
+    setDimmedState(false);
     try { await api.undimScreen(); } catch { /* ignore */ }
   };
 
@@ -388,9 +399,9 @@ export function Speaker() {
         </ButtonItem>
       </PanelSectionRow>
 
-      {/* 息屏遮罩：独立组件，用 Steam 的 UIComposition 提升合成层，
-          这样能盖住顶栏和 QAM 面板（单纯高 z-index 做不到）。 */}
-      {dimmed && <DimOverlay onWake={exitDim} hint={t("qam.dimHint")} />}
+      {/* 息屏遮罩**不在这里渲染** —— 它挂在全局组件上（见 index.tsx），
+          因为 QAM 面板的 DOM 被 Steam 容器包着且带 transform，
+          position:fixed 的包含块会退化，盖不住顶栏和 QAM 自己。 */}
     </PanelSection>
   );
 }

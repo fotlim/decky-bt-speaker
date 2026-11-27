@@ -1,12 +1,10 @@
 /**
- * 调用 Steam 内部的 UI 合成层级 hook。
+ * 调用 Steam 内部的 UI 合成层级 hook —— 但**必须能在旧版 loader 上安全降级**。
  *
  * 为什么必须用这个？
  * ----------------
  * 息屏遮罩如果只靠 `position: fixed` + 高 z-index，**盖不住 Steam 的
  * 顶栏和 QAM 面板** —— 它们在自己的合成层里，层级比插件的 DOM 更高。
- * 真机反馈「还能看到 Steam 头像和菜单图标」就是这个原因。
- *
  * `createPortal` 到 document.body 也没用，因为问题不在 DOM 层级，
  * 而在 Steam 的 **compositing layer**（合成层）。
  *
@@ -15,15 +13,29 @@
  *   / RemoveMinimumCompositionStateRequest
  * 调用它可以把内容提升到指定合成层（Overlay / Opaque 等）。
  *
- * 参考实现：steam3d/MagicBlackDecky 的 uiComposition.tsx
- * 它在 OLED 机型上验证有效。
+ * ⚠️⚠️ 血泪教训（v2.8.2）
+ * ----------------------
+ * v2.8.0 里本文件是这样写的：
  *
- * ⚠️ 这是 Steam 的**内部 API**，不是公开接口。Steam 更新后可能失效，
- * 所以这里做了完整的降级：找不到 hook 就只用普通遮罩（至少能变黑），
- * 并且只警告一次，不刷屏。
+ *     const resolvedHook = findVar(isUICompositionHook) ?? findModuleExport(...);
+ *
+ * 这行在**模块顶层**执行。而 `findVar` 是 `@decky/ui` **5.x** 才有的 API，
+ * 旧版 loader 提供的 `DFL` 全局对象里根本没有这个函数 —— 于是插件一加载就：
+ *
+ *     TypeError: DFL.findVar is not a function
+ *
+ * 整个插件包直接挂掉，连 QAM 面板都打不开。
+ *
+ * 教训：
+ *   1. **不要**在模块顶层调用任何来自宿主（loader / Steam）的可选 API
+ *   2. 每次访问可选 API 都必须先 `typeof === "function"` 判断
+ *   3. 找不到就必须**静默降级**，绝不能让插件加载失败
+ *
+ * 所以现在所有解析都是**惰性**的、包在 try/catch 里的、逐级降级的。
+ * 找不到 hook 时遮罩依然工作（只是盖不住顶栏），功能不受影响。
  */
 
-import { findModuleExport, findVar } from "@decky/ui";
+import * as DeckyUI from "@decky/ui";
 
 /** Steam 的合成层级。数值越大越靠上。 */
 export enum UIComposition {
@@ -39,7 +51,7 @@ export enum UIComposition {
 type UICompositionHook = (
   composition: UIComposition,
   requestName?: string,
-) => { releaseComposition: () => void };
+) => { releaseComposition: () => void } | void;
 
 /**
  * 靠特征识别 composition hook。
@@ -50,46 +62,132 @@ type UICompositionHook = (
  */
 const isUICompositionHook = (candidate: unknown): candidate is UICompositionHook => {
   if (typeof candidate !== "function") return false;
-  const source = candidate.toString();
-  return (
-    source.includes("AddMinimumCompositionStateRequest") &&
-    source.includes("ChangeMinimumCompositionStateRequest") &&
-    source.includes("RemoveMinimumCompositionStateRequest") &&
-    !source.includes("m_mapCompositionStateRequests")
-  );
+  try {
+    const source = (candidate as Function).toString();
+    return (
+      source.includes("AddMinimumCompositionStateRequest") &&
+      source.includes("ChangeMinimumCompositionStateRequest") &&
+      source.includes("RemoveMinimumCompositionStateRequest") &&
+      !source.includes("m_mapCompositionStateRequests")
+    );
+  } catch {
+    return false;
+  }
 };
 
-const resolvedHook =
-  findVar(isUICompositionHook) ?? findModuleExport(isUICompositionHook);
+/**
+ * 安全地取 `@decky/ui` 上的一个可选函数。
+ *
+ * `DeckyUI` 是 rollup 用 external-globals 映射到全局 `DFL` 的对象。
+ * 旧版 loader 里这个对象存在（面板组件都在用），但**可能缺少新 API**，
+ * 所以这里逐个 `typeof` 判断，绝不直接调用。
+ */
+function optionalFn(name: string): ((...args: any[]) => any) | null {
+  try {
+    const mod: any = DeckyUI as any;
+    if (!mod) return null;
+    const fn = mod[name];
+    return typeof fn === "function" ? fn : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 已解析结果缓存：`undefined` = 还没找过，`null` = 找过但没有。 */
+let _resolved: UICompositionHook | null | undefined = undefined;
+
+/**
+ * 惰性解析 composition hook。
+ *
+ * 降级链（每一步都可能不存在，全部安全）：
+ *   1. `findVar`          —— @decky/ui 5.x，最准
+ *   2. `findModuleExport` —— 老版本 loader 也有
+ *   3. `findModuleChild`  —— 更老（已废弃但仍可用）
+ *   4. 都没有 → null，调用方静默降级
+ */
+function resolveHook(): UICompositionHook | null {
+  if (_resolved !== undefined) return _resolved;
+
+  const probes: Array<() => any> = [
+    () => {
+      const fn = optionalFn("findVar");
+      return fn ? fn(isUICompositionHook) : undefined;
+    },
+    () => {
+      const fn = optionalFn("findModuleExport");
+      return fn ? fn(isUICompositionHook) : undefined;
+    },
+    () => {
+      const fn = optionalFn("findModuleChild");
+      return fn ? fn(isUICompositionHook) : undefined;
+    },
+  ];
+
+  for (const probe of probes) {
+    try {
+      const found = probe();
+      if (isUICompositionHook(found)) {
+        _resolved = found;
+        return found;
+      }
+    } catch {
+      // 这个探测途径不可用（函数不存在 / 内部报错），继续下一个
+      continue;
+    }
+  }
+
+  _resolved = null;
+  return null;
+}
 
 let warned = false;
 
-/** hook 是否可用（Steam 版本兼容性探测）。 */
+/** hook 是否可用（Steam / loader 版本兼容性探测）。 */
 export function compositionAvailable(): boolean {
-  return isUICompositionHook(resolvedHook);
+  return isUICompositionHook(resolveHook());
 }
 
 /**
  * 把当前组件提升到指定合成层。
  *
- * 注意：这个 hook 在 React 里是按「调用即注册」的方式工作，
- * 组件卸载时需要调用返回的 `releaseComposition()`。
- * 这里用 useEffect 包裹，由调用方保证生命周期正确。
+ * ⚠️ 内部已做完整保护：hook 不存在、调用抛错，都只会**静默降级**，
+ * 绝不会让插件加载失败。这是 v2.8.0 崩溃事故的修复点。
  */
 export function useUIComposition(composition: UIComposition): void {
-  if (!isUICompositionHook(resolvedHook)) {
+  const hook = resolveHook();
+  if (!isUICompositionHook(hook)) {
     if (!warned) {
       warned = true;
-      console.warn("[bt-speaker] Steam UI composition hook 未找到，息屏遮罩可能盖不住顶栏");
+      // 只警告一次，不刷屏。用 console.warn 而不是 error ——
+      // 这是「旧版 loader 的正常降级」，不是错误。
+      console.warn(
+        "[bt-speaker] Steam UI composition hook 不可用（loader 版本较旧？），" +
+        "息屏遮罩将无法盖住顶栏，但息屏功能本身正常。",
+      );
     }
     return;
   }
   try {
-    resolvedHook(composition, "bt-speaker");
+    hook(composition, "bt-speaker");
   } catch (e) {
     if (!warned) {
       warned = true;
-      console.warn("[bt-speaker] 调用 UI composition 失败", e);
+      console.warn("[bt-speaker] 调用 UI composition 失败，已降级", e);
     }
   }
+}
+
+/** 供诊断页显示：当前环境到底能不能用合成层提升。 */
+export function compositionDiagnostics(): {
+  available: boolean;
+  findVar: boolean;
+  findModuleExport: boolean;
+  findModuleChild: boolean;
+} {
+  return {
+    available: compositionAvailable(),
+    findVar: optionalFn("findVar") !== null,
+    findModuleExport: optionalFn("findModuleExport") !== null,
+    findModuleChild: optionalFn("findModuleChild") !== null,
+  };
 }

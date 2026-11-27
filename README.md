@@ -234,6 +234,7 @@ Log path: `~/homebrew/logs/decky-bt-speaker/bt-speaker.log`
 | No sound after switching EQ | PipeWire needs a second or two to restart; if it persists, reboot the Deck |
 | Link lost after closing the lid | Confirm "Restore after sleep" is on; check the captured event count in Diagnostics |
 | **Bluetooth drops a few minutes after turning the screen off** | The Deck fell asleep on the idle timer, not a Bluetooth bug. v2.8.0+ holds a suspend inhibitor while the screen is off. If it still happens, check `chk.inhibit` in Diagnostics — if `systemd-inhibit` is missing, set "Sleep after idle" to Off in Steam > Settings > Power |
+| **Plugin panel shows an error and never loads** | If the message is TypeError: DFL.xxx is not a function, your Decky loader is older than the plugin expects. Fixed in v2.8.2 — never call host APIs at module top level, always degrade gracefully. Update the plugin. |
 | Volume slider showed 0% | Fixed in v2.4.3+ — replaced with relative-step buttons |
 
 ---
@@ -291,7 +292,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.1**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.2**.
 
 | Version | Contents |
 |---|---|
@@ -330,6 +331,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.1**.
 | 2.7.2 | Streaming scan; unnamed-device toggle; backend i18n cleanup |
 | 2.8.0 | **Screen-off no longer drops Bluetooth** — logind suspend inhibitor + link watchdog; `UIComposition` overlay; gamepad wake |
 | 2.8.1 | Removed the misleading "fix bl_power permission" button (the driver ignores it anyway) |
+| 2.8.2 | **Fix plugin failing to load at all** — never call host APIs at module top level (DFL.findVar); overlay now a global component |
 
 ---
 
@@ -584,6 +586,7 @@ python pack.py          # 打包
 | 切 EQ 后没声音 | PipeWire 重启需要一两秒，等一下；还不行就重启 Deck |
 | 合盖再开盖失联 | 确认「睡眠唤醒后自动恢复」开着，诊断页看已捕获事件数 |
 | **息屏几分钟后蓝牙自动断** | Deck 在闲置计时器上睡着了，不是蓝牙问题。v2.8.0+ 息屏时会持休眠抑制锁。若仍出现，看诊断页的 `chk.inhibit` —— 没有 `systemd-inhibit` 就去 Steam > 设置 > 电源 把「闲置后休眠」关掉 |
+| **插件面板报错、完全打不开** | 若报 TypeError: DFL.xxx is not a function，说明 Decky loader 比插件预期的旧。v2.8.2 已修复 —— 不在模块顶层调宿主 API，缺失时静默降级。请更新插件。 |
 | 音量滑条显示 0% | v2.4.3+ 已修复 —— 改成相对调节按钮 |
 
 ---
@@ -647,7 +650,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.1**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.2**。
 
 | 版本 | 内容 |
 |---|---|
@@ -686,6 +689,7 @@ python pack.py          # 打包 zip
 | 2.7.2 | 流式扫描；无名称设备开关；后端英文化收尾 |
 | 2.8.0 | **息屏后蓝牙不再断** —— logind 休眠抑制锁 + 链路看护；`UIComposition` 遮罩；手柄唤醒 |
 | 2.8.1 | 删掉误导性的「修复 bl_power 权限」按钮（驱动根本不认它） |
+| 2.8.2 | **修复插件完全无法加载** —— 禁止在模块顶层调宿主 API（DFL.findVar）；遮罩改挂全局组件 |
 
 ---
 

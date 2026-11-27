@@ -892,167 +892,44 @@ function t(key, vars) {
 }
 
 /**
- * 调用 Steam 内部的 UI 合成层级 hook。
+ * 息屏状态的共享单例。
  *
- * 为什么必须用这个？
- * ----------------
- * 息屏遮罩如果只靠 `position: fixed` + 高 z-index，**盖不住 Steam 的
- * 顶栏和 QAM 面板** —— 它们在自己的合成层里，层级比插件的 DOM 更高。
- * 真机反馈「还能看到 Steam 头像和菜单图标」就是这个原因。
+ * 为什么要单独抽出来？
+ * ------------------
+ * 息屏遮罩现在挂在**全局组件**上（`routerHook.addGlobalComponent`），
+ * 而不是 QAM 面板内部 —— 因为 QAM 面板的 DOM 被 Steam 的容器包着，
+ * 还可能带 `transform`，会让 `position: fixed` 失效、也盖不住顶栏。
  *
- * `createPortal` 到 document.body 也没用，因为问题不在 DOM 层级，
- * 而在 Steam 的 **compositing layer**（合成层）。
- *
- * Steam 内部有一个 composition state 机制：
- *   AddMinimumCompositionStateRequest / ChangeMinimumCompositionStateRequest
- *   / RemoveMinimumCompositionStateRequest
- * 调用它可以把内容提升到指定合成层（Overlay / Opaque 等）。
- *
- * 参考实现：steam3d/MagicBlackDecky 的 uiComposition.tsx
- * 它在 OLED 机型上验证有效。
- *
- * ⚠️ 这是 Steam 的**内部 API**，不是公开接口。Steam 更新后可能失效，
- * 所以这里做了完整的降级：找不到 hook 就只用普通遮罩（至少能变黑），
- * 并且只警告一次，不刷屏。
+ * 于是「QAM 里的按钮」和「全局遮罩」成了两个互不相邻的组件，
+ * 需要一个共享状态来通信。用极小的观察者模式即可，不引入任何依赖。
  */
-
-/** Steam 的合成层级。数值越大越靠上。 */
-var UIComposition;
-(function (UIComposition) {
-    UIComposition[UIComposition["Hidden"] = 0] = "Hidden";
-    UIComposition[UIComposition["Notification"] = 1] = "Notification";
-    UIComposition[UIComposition["Overlay"] = 2] = "Overlay";
-    UIComposition[UIComposition["Opaque"] = 3] = "Opaque";
-    UIComposition[UIComposition["OverlayKeyboard"] = 4] = "OverlayKeyboard";
-    UIComposition[UIComposition["OverlayQAM"] = 5] = "OverlayQAM";
-    UIComposition[UIComposition["OverlayKeyboard1"] = 6] = "OverlayKeyboard1";
-})(UIComposition || (UIComposition = {}));
-/**
- * 靠特征识别 composition hook。
- *
- * 不能按名字找 —— 打包后函数名会被压缩。这里按**源码特征**匹配：
- * 函数体里同时出现三个 CompositionStateRequest 调用，且不含
- * `m_mapCompositionStateRequests`（那是另一个相似函数）。
- */
-const isUICompositionHook = (candidate) => {
-    if (typeof candidate !== "function")
-        return false;
-    const source = candidate.toString();
-    return (source.includes("AddMinimumCompositionStateRequest") &&
-        source.includes("ChangeMinimumCompositionStateRequest") &&
-        source.includes("RemoveMinimumCompositionStateRequest") &&
-        !source.includes("m_mapCompositionStateRequests"));
-};
-const resolvedHook = DFL.findVar(isUICompositionHook) ?? DFL.findModuleExport(isUICompositionHook);
-let warned = false;
-/**
- * 把当前组件提升到指定合成层。
- *
- * 注意：这个 hook 在 React 里是按「调用即注册」的方式工作，
- * 组件卸载时需要调用返回的 `releaseComposition()`。
- * 这里用 useEffect 包裹，由调用方保证生命周期正确。
- */
-function useUIComposition(composition) {
-    if (!isUICompositionHook(resolvedHook)) {
-        if (!warned) {
-            warned = true;
-            console.warn("[bt-speaker] Steam UI composition hook 未找到，息屏遮罩可能盖不住顶栏");
-        }
+let _dimmed = false;
+const _listeners = new Set();
+function setDimmed(v) {
+    if (_dimmed === v)
         return;
-    }
-    try {
-        resolvedHook(composition, "bt-speaker");
-    }
-    catch (e) {
-        if (!warned) {
-            warned = true;
-            console.warn("[bt-speaker] 调用 UI composition 失败", e);
-        }
-    }
-}
-
-/** SetCatchAllGamepadInput 的返回值形态不固定，这里统一成「释放函数」。 */
-function buildReleaseHandle(handle) {
-    if (typeof handle === "function")
-        return handle;
-    const h = handle;
-    if (h && typeof h.Unregister === "function")
-        return () => h.Unregister();
-    if (h && typeof h.unregister === "function")
-        return () => h.unregister();
-    return null;
-}
-function DimOverlay({ onWake, hint }) {
-    const ref = SP_REACT.useRef(null);
-    const releaseRef = SP_REACT.useRef(null);
-    // 用 ref 存回调，避免 onWake 每次重建导致重复订阅
-    const wakeRef = SP_REACT.useRef(onWake);
-    wakeRef.current = onWake;
-    // 提升到 Steam 的 Overlay 合成层，这样能盖住顶栏和 QAM 面板。
-    // 单纯的高 z-index 做不到 —— Steam 的 UI 在更高的合成层里。
-    useUIComposition(UIComposition.Overlay);
-    // 聚焦遮罩，让键盘事件能落到这里
-    SP_REACT.useEffect(() => {
+    _dimmed = v;
+    _listeners.forEach((f) => {
         try {
-            ref.current?.focus();
-        }
-        catch { /* ignore */ }
-    }, []);
-    // DOM 事件（键盘 / 鼠标 / 触摸）
-    SP_REACT.useEffect(() => {
-        const wake = () => wakeRef.current();
-        window.addEventListener("keydown", wake, true);
-        window.addEventListener("pointerdown", wake, true);
-        window.addEventListener("touchstart", wake, true);
-        window.addEventListener("wheel", wake, true);
-        return () => {
-            window.removeEventListener("keydown", wake, true);
-            window.removeEventListener("pointerdown", wake, true);
-            window.removeEventListener("touchstart", wake, true);
-            window.removeEventListener("wheel", wake, true);
-        };
-    }, []);
-    // 手柄事件（Steam 不走 DOM，必须走 NavigationManager）
-    SP_REACT.useEffect(() => {
-        const navManager = window?.SteamUIStore?.NavigationManager;
-        if (!navManager?.SetCatchAllGamepadInput)
-            return;
-        try {
-            releaseRef.current = buildReleaseHandle(navManager.SetCatchAllGamepadInput(() => wakeRef.current()));
+            f(v);
         }
         catch {
-            /* 拿不到就只靠 DOM 事件兜着 */
+            /* 单个订阅者出错不影响其他人 */
         }
-        return () => {
-            const rel = releaseRef.current;
-            releaseRef.current = null;
-            try {
-                rel?.();
-            }
-            catch { /* ignore */ }
-        };
-    }, []);
-    const wake = SP_REACT.useCallback(() => wakeRef.current(), []);
-    return (SP_JSX.jsx("div", { ref: ref, tabIndex: 0, onPointerDown: wake, onKeyDown: wake, onClick: wake, onTouchStart: wake, style: {
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "#000",
-            // z-index 只是第二道保险；真正起作用的是上面的 UIComposition
-            zIndex: 2147483647,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "rgba(255,255,255,0.18)",
-            fontSize: 13,
-            cursor: "pointer",
-            outline: "none",
-            // 避免被父容器的 transform 影响
-            transform: "none",
-            willChange: "auto",
-        }, children: hint }));
+    });
+}
+function subscribeDim(f) {
+    _listeners.add(f);
+    // 立即同步一次当前值，避免挂载时机差异导致状态不一致
+    try {
+        f(_dimmed);
+    }
+    catch {
+        /* ignore */
+    }
+    return () => {
+        _listeners.delete(f);
+    };
 }
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
@@ -1081,8 +958,15 @@ function Speaker() {
         return () => setPanelVisible(false);
     }, []);
     // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
-    const [dimmed, setDimmed] = SP_REACT.useState(false);
+    //
+    // ⚠️ 遮罩不在这里渲染。它挂成**全局组件**（见 index.tsx），
+    //    因为 QAM 面板的 DOM 被 Steam 容器包着、容器带 transform，
+    //    会让 position:fixed 的包含块退化，盖不住顶栏。
+    //    这里只负责「按按钮 → 调后端 → 更新共享状态」。
+    const [dimmed, setDimmedState] = SP_REACT.useState(false);
     const dimTimer = SP_REACT.useRef(null);
+    // 跟随共享状态（全局遮罩被输入唤醒时，按钮文案也要跟着变回来）
+    SP_REACT.useEffect(() => subscribeDim((v) => setDimmedState(v)), []);
     // 组件卸载时一定恢复背光，避免留下黑屏
     SP_REACT.useEffect(() => () => {
         if (dimTimer.current)
@@ -1091,7 +975,9 @@ function Speaker() {
     const enterDim = async () => {
         try {
             const r = await api.dimScreen();
+            // 先通知全局遮罩显示，再更新本地按钮状态
             setDimmed(true);
+            setDimmedState(true);
             const secs = (r.max_seconds || 300) * 1000;
             if (dimTimer.current)
                 clearTimeout(dimTimer.current);
@@ -1115,6 +1001,7 @@ function Speaker() {
             dimTimer.current = null;
         }
         setDimmed(false);
+        setDimmedState(false);
         try {
             await api.undimScreen();
         }
@@ -1228,7 +1115,7 @@ function Speaker() {
                             ? t("qam.dimKeepAwake")
                             : (state.screen.inhibit_available === false
                                 ? t("qam.inhibitFailedBody")
-                                : t("qam.dimScreenHint")) })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && SP_JSX.jsx(DimOverlay, { onWake: exitDim, hint: t("qam.dimHint") })] }));
+                                : t("qam.dimScreenHint")) })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
 }
 
 function BtSpeakerPage() {
@@ -1897,12 +1784,308 @@ function DiagTab() {
                             }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: t(c.key) }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || t("common.empty") }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || t("common.empty") })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
 }
 
+/**
+ * 调用 Steam 内部的 UI 合成层级 hook —— 但**必须能在旧版 loader 上安全降级**。
+ *
+ * 为什么必须用这个？
+ * ----------------
+ * 息屏遮罩如果只靠 `position: fixed` + 高 z-index，**盖不住 Steam 的
+ * 顶栏和 QAM 面板** —— 它们在自己的合成层里，层级比插件的 DOM 更高。
+ * `createPortal` 到 document.body 也没用，因为问题不在 DOM 层级，
+ * 而在 Steam 的 **compositing layer**（合成层）。
+ *
+ * Steam 内部有一个 composition state 机制：
+ *   AddMinimumCompositionStateRequest / ChangeMinimumCompositionStateRequest
+ *   / RemoveMinimumCompositionStateRequest
+ * 调用它可以把内容提升到指定合成层（Overlay / Opaque 等）。
+ *
+ * ⚠️⚠️ 血泪教训（v2.8.2）
+ * ----------------------
+ * v2.8.0 里本文件是这样写的：
+ *
+ *     const resolvedHook = findVar(isUICompositionHook) ?? findModuleExport(...);
+ *
+ * 这行在**模块顶层**执行。而 `findVar` 是 `@decky/ui` **5.x** 才有的 API，
+ * 旧版 loader 提供的 `DFL` 全局对象里根本没有这个函数 —— 于是插件一加载就：
+ *
+ *     TypeError: DFL.findVar is not a function
+ *
+ * 整个插件包直接挂掉，连 QAM 面板都打不开。
+ *
+ * 教训：
+ *   1. **不要**在模块顶层调用任何来自宿主（loader / Steam）的可选 API
+ *   2. 每次访问可选 API 都必须先 `typeof === "function"` 判断
+ *   3. 找不到就必须**静默降级**，绝不能让插件加载失败
+ *
+ * 所以现在所有解析都是**惰性**的、包在 try/catch 里的、逐级降级的。
+ * 找不到 hook 时遮罩依然工作（只是盖不住顶栏），功能不受影响。
+ */
+
+/** Steam 的合成层级。数值越大越靠上。 */
+var UIComposition;
+(function (UIComposition) {
+    UIComposition[UIComposition["Hidden"] = 0] = "Hidden";
+    UIComposition[UIComposition["Notification"] = 1] = "Notification";
+    UIComposition[UIComposition["Overlay"] = 2] = "Overlay";
+    UIComposition[UIComposition["Opaque"] = 3] = "Opaque";
+    UIComposition[UIComposition["OverlayKeyboard"] = 4] = "OverlayKeyboard";
+    UIComposition[UIComposition["OverlayQAM"] = 5] = "OverlayQAM";
+    UIComposition[UIComposition["OverlayKeyboard1"] = 6] = "OverlayKeyboard1";
+})(UIComposition || (UIComposition = {}));
+/**
+ * 靠特征识别 composition hook。
+ *
+ * 不能按名字找 —— 打包后函数名会被压缩。这里按**源码特征**匹配：
+ * 函数体里同时出现三个 CompositionStateRequest 调用，且不含
+ * `m_mapCompositionStateRequests`（那是另一个相似函数）。
+ */
+const isUICompositionHook = (candidate) => {
+    if (typeof candidate !== "function")
+        return false;
+    try {
+        const source = candidate.toString();
+        return (source.includes("AddMinimumCompositionStateRequest") &&
+            source.includes("ChangeMinimumCompositionStateRequest") &&
+            source.includes("RemoveMinimumCompositionStateRequest") &&
+            !source.includes("m_mapCompositionStateRequests"));
+    }
+    catch {
+        return false;
+    }
+};
+/**
+ * 安全地取 `@decky/ui` 上的一个可选函数。
+ *
+ * `DeckyUI` 是 rollup 用 external-globals 映射到全局 `DFL` 的对象。
+ * 旧版 loader 里这个对象存在（面板组件都在用），但**可能缺少新 API**，
+ * 所以这里逐个 `typeof` 判断，绝不直接调用。
+ */
+function optionalFn(name) {
+    try {
+        const mod = DFL;
+        if (!mod)
+            return null;
+        const fn = mod[name];
+        return typeof fn === "function" ? fn : null;
+    }
+    catch {
+        return null;
+    }
+}
+/** 已解析结果缓存：`undefined` = 还没找过，`null` = 找过但没有。 */
+let _resolved = undefined;
+/**
+ * 惰性解析 composition hook。
+ *
+ * 降级链（每一步都可能不存在，全部安全）：
+ *   1. `findVar`          —— @decky/ui 5.x，最准
+ *   2. `findModuleExport` —— 老版本 loader 也有
+ *   3. `findModuleChild`  —— 更老（已废弃但仍可用）
+ *   4. 都没有 → null，调用方静默降级
+ */
+function resolveHook() {
+    if (_resolved !== undefined)
+        return _resolved;
+    const probes = [
+        () => {
+            const fn = optionalFn("findVar");
+            return fn ? fn(isUICompositionHook) : undefined;
+        },
+        () => {
+            const fn = optionalFn("findModuleExport");
+            return fn ? fn(isUICompositionHook) : undefined;
+        },
+        () => {
+            const fn = optionalFn("findModuleChild");
+            return fn ? fn(isUICompositionHook) : undefined;
+        },
+    ];
+    for (const probe of probes) {
+        try {
+            const found = probe();
+            if (isUICompositionHook(found)) {
+                _resolved = found;
+                return found;
+            }
+        }
+        catch {
+            // 这个探测途径不可用（函数不存在 / 内部报错），继续下一个
+            continue;
+        }
+    }
+    _resolved = null;
+    return null;
+}
+let warned = false;
+/**
+ * 把当前组件提升到指定合成层。
+ *
+ * ⚠️ 内部已做完整保护：hook 不存在、调用抛错，都只会**静默降级**，
+ * 绝不会让插件加载失败。这是 v2.8.0 崩溃事故的修复点。
+ */
+function useUIComposition(composition) {
+    const hook = resolveHook();
+    if (!isUICompositionHook(hook)) {
+        if (!warned) {
+            warned = true;
+            // 只警告一次，不刷屏。用 console.warn 而不是 error ——
+            // 这是「旧版 loader 的正常降级」，不是错误。
+            console.warn("[bt-speaker] Steam UI composition hook 不可用（loader 版本较旧？），" +
+                "息屏遮罩将无法盖住顶栏，但息屏功能本身正常。");
+        }
+        return;
+    }
+    try {
+        hook(composition, "bt-speaker");
+    }
+    catch (e) {
+        if (!warned) {
+            warned = true;
+            console.warn("[bt-speaker] 调用 UI composition 失败，已降级", e);
+        }
+    }
+}
+
+/** SetCatchAllGamepadInput 的返回值形态不固定，统一成「释放函数」。 */
+function buildReleaseHandle(handle) {
+    if (typeof handle === "function")
+        return handle;
+    const h = handle;
+    if (h && typeof h.Unregister === "function")
+        return () => h.Unregister();
+    if (h && typeof h.unregister === "function")
+        return () => h.unregister();
+    return null;
+}
+/** 唤醒时的回调（由 index.tsx 注入，用于调后端恢复背光）。 */
+let _onWake = null;
+function setWakeHandler(fn) {
+    _onWake = fn;
+}
+function wake() {
+    try {
+        _onWake?.();
+    }
+    catch {
+        /* ignore */
+    }
+}
+function DimOverlay() {
+    const [visible, setVisible] = SP_REACT.useState(false);
+    const ref = SP_REACT.useRef(null);
+    const releaseRef = SP_REACT.useRef(null);
+    const visibleRef = SP_REACT.useRef(false);
+    visibleRef.current = visible;
+    // 订阅共享状态
+    SP_REACT.useEffect(() => {
+        return subscribeDim((v) => setVisible(v));
+    }, []);
+    // 提升到 Steam 的 Overlay 合成层（拿不到就静默降级）
+    useUIComposition(UIComposition.Overlay);
+    // 聚焦遮罩，让键盘事件能落到这里
+    SP_REACT.useEffect(() => {
+        if (!visible)
+            return;
+        try {
+            ref.current?.focus();
+        }
+        catch {
+            /* ignore */
+        }
+    }, [visible]);
+    // DOM 事件（键盘 / 鼠标 / 触摸）
+    SP_REACT.useEffect(() => {
+        if (!visible)
+            return;
+        const onAny = () => wake();
+        window.addEventListener("keydown", onAny, true);
+        window.addEventListener("pointerdown", onAny, true);
+        window.addEventListener("touchstart", onAny, true);
+        window.addEventListener("wheel", onAny, true);
+        return () => {
+            window.removeEventListener("keydown", onAny, true);
+            window.removeEventListener("pointerdown", onAny, true);
+            window.removeEventListener("touchstart", onAny, true);
+            window.removeEventListener("wheel", onAny, true);
+        };
+    }, [visible]);
+    // 手柄事件（Steam 不走 DOM，必须走 NavigationManager）
+    SP_REACT.useEffect(() => {
+        if (!visible)
+            return;
+        let release = null;
+        try {
+            const navManager = window?.SteamUIStore?.NavigationManager;
+            if (navManager && typeof navManager.SetCatchAllGamepadInput === "function") {
+                release = buildReleaseHandle(navManager.SetCatchAllGamepadInput(() => wake()));
+            }
+        }
+        catch {
+            /* 拿不到就只靠 DOM 事件兜着 */
+        }
+        releaseRef.current = release;
+        return () => {
+            releaseRef.current = null;
+            try {
+                release?.();
+            }
+            catch {
+                /* ignore */
+            }
+        };
+    }, [visible]);
+    if (!visible)
+        return null;
+    return (SP_JSX.jsx("div", { ref: ref, tabIndex: 0, onPointerDown: wake, onKeyDown: wake, onClick: wake, onTouchStart: wake, style: {
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "#000",
+            // z-index 是第二道保险；真正起作用的是 UIComposition + 全局组件挂载点
+            zIndex: 2147483647,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "rgba(255,255,255,0.18)",
+            fontSize: 13,
+            cursor: "pointer",
+            outline: "none",
+            transform: "none",
+            willChange: "auto",
+            // 防止被祖先的 pointer-events / transform 影响
+            pointerEvents: "auto",
+            isolation: "isolate",
+        }, children: SP_JSX.jsx("span", { style: { opacity: 0.001, userSelect: "none" }, children: "\u00B7" }) }));
+}
+
+const OVERLAY_KEY = "bt-speaker-dim-overlay";
 var index = definePlugin(() => {
     try {
         routerHook.removeRoute(ROUTE);
     }
     catch { /* ignore */ }
     routerHook.addRoute(ROUTE, BtSpeakerPage);
+    // 息屏遮罩挂成**全局组件**，而不是塞在 QAM 面板里。
+    //
+    // 为什么？QAM 面板的 DOM 被 Steam 的容器包着，容器还带 `transform`，
+    // 会让 `position: fixed` 的包含块退化成那个容器 —— 结果就是
+    // 「遮罩盖不住顶栏和 QAM 面板」。挂到全局 React 树里才不受祖先布局影响。
+    // 参考：steam3d/MagicBlackDecky 的 routerHook.addGlobalComponent 用法。
+    try {
+        routerHook.removeGlobalComponent(OVERLAY_KEY);
+    }
+    catch { /* ignore */ }
+    try {
+        routerHook.addGlobalComponent(OVERLAY_KEY, () => SP_JSX.jsx(DimOverlay, {}));
+    }
+    catch { /* older loader may not expose this API; run without overlay */ }
+    // 遮罩被任何输入唤醒时：通知后端恢复背光 + 释放休眠抑制锁。
+    setWakeHandler(() => {
+        setDimmed(false);
+        api.undimScreen().catch(() => { });
+    });
     return {
         // 名称跟随 Steam 界面语言：英文环境显示 "Bluetooth Speaker"，中文显示「蓝牙音箱」
         name: t("plugin.name"),
@@ -1913,6 +2096,11 @@ var index = definePlugin(() => {
                 routerHook.removeRoute(ROUTE);
             }
             catch { /* ignore */ }
+            try {
+                routerHook.removeGlobalComponent(OVERLAY_KEY);
+            }
+            catch { /* ignore */ }
+            setWakeHandler(null);
             stopPolling();
         },
     };

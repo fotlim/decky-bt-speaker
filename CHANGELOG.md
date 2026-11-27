@@ -105,6 +105,90 @@
 
 ---
 
+## [2.8.2] - 2026-11-27
+
+**修复 v2.8.0 / v2.8.1 导致插件完全无法加载的事故**
+
+### 现象
+
+真机截图：打开 QAM 面板直接报错，连插件界面都出不来。
+
+```
+错误
+TypeError: DFL.findVar is not a function
+    at http://127.0.0.1:1337/plugins/Bluetooth Speaker/dist/index.js
+
+加载 Bluetooth Speaker 时引起了上述异常。这通常意味着插件需要更新
+以适应 SteamUI 的新版本。
+```
+
+### 原因
+
+v2.8.0 为了做息屏遮罩，引入了 `src/uiComposition.ts`，里面有这么一行：
+
+```ts
+const resolvedHook = findVar(isUICompositionHook) ?? findModuleExport(isUICompositionHook);
+```
+
+它在**模块顶层**执行。rollup 用 `external-globals` 把 `@decky/ui`
+映射成全局对象 `DFL`，所以产物变成：
+
+```js
+const resolvedHook = DFL.findVar(isUICompositionHook) ?? DFL.findModuleExport(isUICompositionHook);
+```
+
+而 `findVar` 是 `@decky/ui` **5.x** 才有的 API。用户机器上那版 Decky loader
+提供的 `DFL` 对象里**没有这个函数**（但 `PanelSection` 等组件都在，所以
+`DFL` 本身是存在的）。于是模块一加载就抛 `TypeError`，
+**整个插件包挂掉** —— 不只是遮罩不工作，是插件完全打不开。
+
+`@decky/ui` 的类型声明里确实写了 `findVar`（我们的 `node_modules` 是 5.0.2），
+所以 `tsc` 检查通过、构建也没报错。**类型检查查不出「运行时没有」这件事。**
+
+### 修复
+
+1. **`uiComposition.ts` 全部重写**：所有对宿主 API 的访问都改成
+   - 惰性（第一次真正用到时才解析，不在模块顶层）
+   - 带 `typeof === "function"` 判断
+   - 包在 try/catch 里
+   - 逐级降级：`findVar` → `findModuleExport` → `findModuleChild` → 放弃
+
+2. **遮罩改挂全局组件**（`routerHook.addGlobalComponent`）
+
+   顺便解决了 v2.8.0 遗留的「遮罩盖不住顶栏」问题。原因不是 z-index 不够，
+   而是 QAM 面板的 DOM 被 Steam 容器包着、容器带 `transform`，
+   会让 `position: fixed` 的包含块退化成那个容器。
+   挂到 Steam UI 顶层的 React 树里才不受祖先布局影响
+   （参考 [steam3d/MagicBlackDecky](https://github.com/steam3d/MagicBlackDecky) 的 `BlackOverlay`）。
+
+   新增 `src/dimState.ts` 作为 QAM 按钮与全局遮罩之间的共享状态。
+
+3. **`pack.py` 新增自检 8：禁止在模块顶层裸调宿主 API**
+
+   静态扫描产物里「缩进为 0 的行」，只要出现 `DFL.<不在白名单里的名字>`
+   就拒绝打包，并打印修法。已验证：**旧的错误写法会被拦住，
+   新写法能通过**。
+
+   白名单只放所有 loader 版本都保证存在的 UI 组件
+   （`PanelSection` / `Focusable` / `Navigation` 等）。
+
+### 教训
+
+- **类型检查通过 ≠ 运行时存在**。宿主（loader / Steam）注入的全局对象
+  必须按「可能缺字段」对待，永远先 `typeof` 判断
+- **不要在模块顶层调用任何可选 API**。顶层抛错 = 整个插件加载失败，
+  而且用户看到的是「插件坏了」，不是「某个功能不可用」
+- 可选功能必须能**静默降级**：拿不到合成层 hook 就只用普通遮罩，
+  息屏功能照样能用
+
+### 测试
+
+- 用模拟的旧版 loader 对象（`DFL` 上无 `findVar`）验证：
+  旧写法 → 崩溃；新写法 → 降级为 `null` 并继续工作
+- `pack.py` 自检 8 验证：旧写法被拦截，新写法通过
+
+---
+
 ## [2.8.1] - 2026-11-27
 
 **删掉一个「照着做也没用」的误导入口**

@@ -1,31 +1,38 @@
 /**
  * 息屏遮罩：盖满整个 Steam UI，并接住任何输入来唤醒。
  *
- * 为什么单独成文件？
- * ----------------
- * 遮罩需要调用 `useUIComposition` 提升合成层级，还要管理手柄捕获、
- * 超时兜底、卸载清理。塞在 Speaker.tsx 里会让那个文件更难读。
+ * 为什么做成**全局组件**（`routerHook.addGlobalComponent`）？
+ * ------------------------------------------------------
+ * v2.8.0 把遮罩塞在 QAM 面板里，结果盖不住 Steam 顶栏和 QAM 自己 ——
+ * 因为面板 DOM 被 Steam 的容器包着，容器还带 `transform`，
+ * 会让 `position: fixed` 的包含块退化成那个容器。
  *
- * 三层保障（背光在 Deck OLED 上关不掉，所以遮罩是主要的「视觉关屏」手段）：
- *   1. `UIComposition.Overlay` 提升合成层 —— 盖住 Steam 顶栏和 QAM
- *   2. 全屏纯黑 DOM —— 即使 hook 失效也至少是黑的
+ * 挂成全局组件后，遮罩渲染在 Steam UI 的顶层 React 树里，
+ * 不依赖任何祖先容器的布局，这才是「真·全屏」。
+ * 参考实现：steam3d/MagicBlackDecky 的 `BlackOverlay`。
+ *
+ * 三层保障：
+ *   1. `UIComposition.Overlay` 提升合成层（拿不到就降级，见 uiComposition.ts）
+ *   2. 全屏纯黑 DOM + 全局组件挂载点 —— 即使 hook 失效也至少是黑的
  *   3. 多路输入监听（指针 / 键盘 / 触摸 / **手柄**）—— 任何操作都唤醒
  *
  * ⚠️ 手柄为什么不走 DOM 事件？
  * ---------------------------
  * Steam 的手柄输入由 `SteamUIStore.NavigationManager` 统一分发，
- * **不产生 DOM keydown**。只监听 window 的键盘事件时，息屏后按 A 键
+ * **不产生 DOM keydown**。只监听 window 键盘事件时，息屏后按 A 键
  * 屏幕不会亮 —— 而手柄恰好是 Deck 上最常用的唤醒方式。
- * 所以这里额外用 `SetCatchAllGamepadInput` 捕获全部手柄输入。
- * 做法参考 MagicBlackDecky 的 useCatchAllGamepad。
+ *
+ * ⚠️ 所有对宿主 API 的访问都必须先判断存在性。
+ * v2.8.0 就是因为直接调用 `DFL.findVar` 导致整个插件加载失败。
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useUIComposition, UIComposition } from "../uiComposition";
+import { subscribeDim, setDimmed as setDimState } from "../dimState";
 
 type ReleaseHandle = (() => void) | null;
 
-/** SetCatchAllGamepadInput 的返回值形态不固定，这里统一成「释放函数」。 */
+/** SetCatchAllGamepadInput 的返回值形态不固定，统一成「释放函数」。 */
 function buildReleaseHandle(handle: unknown): ReleaseHandle {
   if (typeof handle === "function") return handle as () => void;
   const h = handle as any;
@@ -34,56 +41,86 @@ function buildReleaseHandle(handle: unknown): ReleaseHandle {
   return null;
 }
 
-export function DimOverlay({ onWake, hint }: { onWake: () => void; hint: string }) {
+/** 唤醒时的回调（由 index.tsx 注入，用于调后端恢复背光）。 */
+let _onWake: (() => void) | null = null;
+
+export function setWakeHandler(fn: (() => void) | null) {
+  _onWake = fn;
+}
+
+function wake() {
+  try {
+    _onWake?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+export function DimOverlay() {
+  const [visible, setVisible] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const releaseRef = useRef<ReleaseHandle>(null);
-  // 用 ref 存回调，避免 onWake 每次重建导致重复订阅
-  const wakeRef = useRef(onWake);
-  wakeRef.current = onWake;
+  const visibleRef = useRef(false);
+  visibleRef.current = visible;
 
-  // 提升到 Steam 的 Overlay 合成层，这样能盖住顶栏和 QAM 面板。
-  // 单纯的高 z-index 做不到 —— Steam 的 UI 在更高的合成层里。
+  // 订阅共享状态
+  useEffect(() => {
+    return subscribeDim((v) => setVisible(v));
+  }, []);
+
+  // 提升到 Steam 的 Overlay 合成层（拿不到就静默降级）
   useUIComposition(UIComposition.Overlay);
 
   // 聚焦遮罩，让键盘事件能落到这里
   useEffect(() => {
-    try { ref.current?.focus(); } catch { /* ignore */ }
-  }, []);
+    if (!visible) return;
+    try {
+      ref.current?.focus();
+    } catch {
+      /* ignore */
+    }
+  }, [visible]);
 
   // DOM 事件（键盘 / 鼠标 / 触摸）
   useEffect(() => {
-    const wake = () => wakeRef.current();
-    window.addEventListener("keydown", wake, true);
-    window.addEventListener("pointerdown", wake, true);
-    window.addEventListener("touchstart", wake, true);
-    window.addEventListener("wheel", wake, true);
+    if (!visible) return;
+    const onAny = () => wake();
+    window.addEventListener("keydown", onAny, true);
+    window.addEventListener("pointerdown", onAny, true);
+    window.addEventListener("touchstart", onAny, true);
+    window.addEventListener("wheel", onAny, true);
     return () => {
-      window.removeEventListener("keydown", wake, true);
-      window.removeEventListener("pointerdown", wake, true);
-      window.removeEventListener("touchstart", wake, true);
-      window.removeEventListener("wheel", wake, true);
+      window.removeEventListener("keydown", onAny, true);
+      window.removeEventListener("pointerdown", onAny, true);
+      window.removeEventListener("touchstart", onAny, true);
+      window.removeEventListener("wheel", onAny, true);
     };
-  }, []);
+  }, [visible]);
 
   // 手柄事件（Steam 不走 DOM，必须走 NavigationManager）
   useEffect(() => {
-    const navManager = (window as any)?.SteamUIStore?.NavigationManager;
-    if (!navManager?.SetCatchAllGamepadInput) return;
+    if (!visible) return;
+    let release: ReleaseHandle = null;
     try {
-      releaseRef.current = buildReleaseHandle(
-        navManager.SetCatchAllGamepadInput(() => wakeRef.current()),
-      );
+      const navManager = (window as any)?.SteamUIStore?.NavigationManager;
+      if (navManager && typeof navManager.SetCatchAllGamepadInput === "function") {
+        release = buildReleaseHandle(navManager.SetCatchAllGamepadInput(() => wake()));
+      }
     } catch {
       /* 拿不到就只靠 DOM 事件兜着 */
     }
+    releaseRef.current = release;
     return () => {
-      const rel = releaseRef.current;
       releaseRef.current = null;
-      try { rel?.(); } catch { /* ignore */ }
+      try {
+        release?.();
+      } catch {
+        /* ignore */
+      }
     };
-  }, []);
+  }, [visible]);
 
-  const wake = useCallback(() => wakeRef.current(), []);
+  if (!visible) return null;
 
   return (
     <div
@@ -100,7 +137,7 @@ export function DimOverlay({ onWake, hint }: { onWake: () => void; hint: string 
         width: "100vw",
         height: "100vh",
         background: "#000",
-        // z-index 只是第二道保险；真正起作用的是上面的 UIComposition
+        // z-index 是第二道保险；真正起作用的是 UIComposition + 全局组件挂载点
         zIndex: 2147483647,
         display: "flex",
         alignItems: "center",
@@ -109,12 +146,22 @@ export function DimOverlay({ onWake, hint }: { onWake: () => void; hint: string 
         fontSize: 13,
         cursor: "pointer",
         outline: "none",
-        // 避免被父容器的 transform 影响
         transform: "none",
         willChange: "auto",
+        // 防止被祖先的 pointer-events / transform 影响
+        pointerEvents: "auto",
+        isolation: "isolate",
       }}
     >
-      {hint}
+      {/* 提示文案由 index.tsx 通过 i18n 提供；这里留一个极淡的占位，
+          避免遮罩完全没有任何内容导致某些渲染器优化掉它 */}
+      <span style={{ opacity: 0.001, userSelect: "none" }}>·</span>
     </div>
   );
+}
+
+/** 供外部（QAM 按钮）触发唤醒。 */
+export function forceWake() {
+  setDimState(false);
+  wake();
 }
