@@ -739,24 +739,70 @@ function t(key, vars) {
 function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
+    // 本地音量值：用户拖动后一直保留，直到「后端确认读到我们设的值」才交还
     const [vol, setVol] = SP_REACT.useState(null);
-    // 拖动中标记：拖动期间完全用本地值，防止轮询把滑块拽回去
     const [dragging, setDragging] = SP_REACT.useState(false);
     const dragTimer = SP_REACT.useRef(null);
+    const settleTimer = SP_REACT.useRef(null);
+    // 外部音源音量：同样的确认式交还
+    const [srcVol, setSrcVol] = SP_REACT.useState(null);
+    const srcTimer = SP_REACT.useRef(null);
     // QAM 面板挂载即视为可见；卸载时通知 store 降频
     SP_REACT.useEffect(() => {
         setPanelVisible(true);
         return () => setPanelVisible(false);
     }, []);
     const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
-    // 松手后 3 秒内仍用本地值，给后端足够时间回传真实值
-    // （后端写 wpctl 是异步的，轮询可能早一步读到旧值）
+    // ⚠️ 同步策略（真机反馈「音量调节没同步」的修复核心）
+    // 之前是「松手后固定 3 秒交还」，但空闲时轮询间隔是 10 秒，
+    // 3 秒时后端读到的还是旧值 -> 滑杆立刻跳回去。
+    //
+    // 现在改为「**确认式交还**」：只有当后端读到的值和我们设的值足够接近
+    // （±2% 容差）时才交还控制权；否则继续用本地值，并给一个 15 秒上限兜底
+    // （防止后端写入失败时滑杆永远卡在本地值）。
     SP_REACT.useEffect(() => {
         if (vol === null || dragging)
             return;
-        const timer = setTimeout(() => setVol(null), 3000);
-        return () => clearTimeout(timer);
+        const diff = Math.abs(backendVol - vol);
+        if (diff <= 2) {
+            // 后端已确认 -> 交还控制权
+            setVol(null);
+            if (settleTimer.current) {
+                clearTimeout(settleTimer.current);
+                settleTimer.current = null;
+            }
+        }
+    }, [backendVol, vol, dragging]);
+    // 兜底：15 秒还没确认就强制交还，避免永远卡住
+    SP_REACT.useEffect(() => {
+        if (vol === null || dragging)
+            return;
+        if (settleTimer.current)
+            clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(() => {
+            setVol(null);
+            settleTimer.current = null;
+        }, 15000);
+        return () => {
+            if (settleTimer.current) {
+                clearTimeout(settleTimer.current);
+                settleTimer.current = null;
+            }
+        };
     }, [vol, dragging]);
+    // 外部源音量：后端读到的值和我们设的接近时才交还
+    SP_REACT.useEffect(() => {
+        if (srcVol === null)
+            return;
+        const backendSrc = Math.round((state?.live?.volume || 0) * 100);
+        if (Math.abs(backendSrc - srcVol) <= 2) {
+            setSrcVol(null);
+            if (srcTimer.current) {
+                clearTimeout(srcTimer.current);
+                srcTimer.current = null;
+            }
+        }
+    }, [state?.live?.volume, srcVol]);
     const ad = state?.adapter;
     const connected = state?.connected || [];
     const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
@@ -814,7 +860,14 @@ function Speaker() {
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
                                     width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
                                     opacity: state.track?.status === "playing" ? 1 : 0.4,
-                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), t("common.ok")), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => { api.setSourceVolume(state.live.id, v / 100).catch(() => { }); } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
+                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), t("common.ok")), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: srcVol !== null ? srcVol : Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => {
+                                        // 外部源同样用「确认式交还」，避免被轮询拽回去
+                                        setSrcVol(v);
+                                        if (srcTimer.current)
+                                            clearTimeout(srcTimer.current);
+                                        srcTimer.current = setTimeout(() => setSrcVol(null), 15000);
+                                        api.setSourceVolume(state.live.id, v / 100).catch(() => { });
+                                    } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", justifyContent: "space-between",
                             marginBottom: 2, padding: "0 2px",
                         }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: t("qam.volume") })] }), SP_JSX.jsxs("span", { style: {

@@ -107,7 +107,7 @@ DEFAULT_SETTINGS = {
     "eq_preset": "flat",       # 均衡器预设
     "latency_profile": "balanced",  # 延迟档位：low / balanced / stable
     "multi_output": False,     # 多输出同步（combine-stream）
-    "auto_gain": True,         # 外部源音量偏低时自动拉满
+    "auto_gain": False,        # 自动增益（默认关闭：避免和用户手动调节抢控制权）
     "codec_preset": "balanced",  # 音质预设：balanced / quality / stable
 }
 
@@ -196,7 +196,8 @@ class Plugin:
     meta = None
     qcfg = None
     _keep_task = None
-    _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳
+    _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
+    _auto_gain_done = False     # 本次音源会话是否已自动增益过
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
 
     # ------------------------------------------------------------------
@@ -987,39 +988,44 @@ class Plugin:
         }
 
     async def _apply_auto_gain(self, source_id, current_volume):
-        """自动增益：音量偏轻时拉高。
+        """自动增益：仅在「刚发现外部音源」时补一次，之后完全交给用户。
 
-        ⚠️ 关键约束：**用户手动调过音量后就不再自动覆盖**。
-        早期版本每 4 秒轮询都强行拉满，导致滑杆刚拖动就被拽回去
-        （真机反馈「音量条和实际音量不同步」就是这么来的）。
+        ⚠️ 为什么改成这样（真机反馈「音量调节没同步」的根因）
+        --------------------------------------------------
+        早期版本每轮轮询都检查，只要音量 < 75% 就拉到 100%。后果：
+        用户把音量调到 50%，**90 秒保护期一过就被自动增益改回 100%**。
+        用户感受就是「调了没用、自己会跳」。
 
-        做法：记录用户最后一次手动调节的时间戳，`MANUAL_GRACE` 秒内不自动干预；
-        并且只在「从没手动调过」或「确实偏轻且用户没在调」时才动作。
+        现在的策略：
+        1. **默认关闭**（`auto_gain` 默认 False）
+        2. 即使开启，也**每个音源会话只补一次**（`_auto_gain_done` 标记），
+           之后绝不重复干预
+        3. 用户手动调过音量后，本次会话内永久不再自动干预
         """
         if not self.settings.get("auto_gain", False):
             return
 
-        # 用户刚手动调过 -> 尊重用户选择
-        if (time.time() - self._last_manual_volume) < MANUAL_GRACE:
+        # 用户手动调过 -> 本次会话内永不再干预
+        if self._last_manual_volume > 0:
             return
 
-        # 1. 外部源
-        if source_id is not None and current_volume is not None:
-            if current_volume < bt.LOW_VOLUME_THRESHOLD:
-                try:
-                    await self.wp.set_volume_of(source_id, 1.0)
-                    self._log("自动增益：外部源 %.0f%% -> 100%%" % (current_volume * 100))
-                except Exception as e:  # noqa: BLE001
-                    self._log("自动增益（外部源）失败：%s" % e)
+        # 本次会话已经补过一次 -> 不再重复
+        if self._auto_gain_done:
+            return
 
-        # 2. 默认 sink
+        # 只处理「外部源偏轻」这一种情况，不动总音量
+        if source_id is None or current_volume is None:
+            return
+        if current_volume >= bt.LOW_VOLUME_THRESHOLD:
+            self._auto_gain_done = True
+            return
+
         try:
-            cur = await self.wp.get_volume()
-            if cur["volume"] < bt.LOW_VOLUME_THRESHOLD and not cur["muted"]:
-                await self.wp.set_volume(1.0)
-                self._log("自动增益：总音量 %.0f%% -> 100%%" % (cur["volume"] * 100))
+            await self.wp.set_volume_of(source_id, 1.0)
+            self._auto_gain_done = True
+            self._log("自动增益（一次性）：外部源 %.0f%% -> 100%%" % (current_volume * 100))
         except Exception as e:  # noqa: BLE001
-            self._log("自动增益（总音量）失败：%s" % e)
+            self._log("自动增益失败：%s" % e)
 
     # ------------------------------------------------------------------
     # RPC：音频焦点

@@ -713,6 +713,9 @@ def test_settings_validation():
           m._setting_ok("last_device", "AA:BB:CC:DD:EE:FF", D["last_device"]))
     check("last_device 拒绝垃圾", not m._setting_ok("last_device", "not-a-mac", D["last_device"]))
 
+    # auto_gain 默认必须关闭（否则会和用户手动调节抢控制权）
+    check("auto_gain 默认关闭", D["auto_gain"] is False, str(D.get("auto_gain")))
+
     # 未知类型默认值
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 

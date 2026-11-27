@@ -13,10 +13,14 @@ import { t } from "../i18n";
 export function Speaker() {
   const { state, error } = useSpeaker();
   const [busy, setBusy] = useState(false);
+  // 本地音量值：用户拖动后一直保留，直到「后端确认读到我们设的值」才交还
   const [vol, setVol] = useState<number | null>(null);
-  // 拖动中标记：拖动期间完全用本地值，防止轮询把滑块拽回去
   const [dragging, setDragging] = useState(false);
   const dragTimer = useRef<any>(null);
+  const settleTimer = useRef<any>(null);
+  // 外部音源音量：同样的确认式交还
+  const [srcVol, setSrcVol] = useState<number | null>(null);
+  const srcTimer = useRef<any>(null);
 
   // QAM 面板挂载即视为可见；卸载时通知 store 降频
   useEffect(() => {
@@ -26,13 +30,45 @@ export function Speaker() {
 
   const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
 
-  // 松手后 3 秒内仍用本地值，给后端足够时间回传真实值
-  // （后端写 wpctl 是异步的，轮询可能早一步读到旧值）
+  // ⚠️ 同步策略（真机反馈「音量调节没同步」的修复核心）
+  // 之前是「松手后固定 3 秒交还」，但空闲时轮询间隔是 10 秒，
+  // 3 秒时后端读到的还是旧值 -> 滑杆立刻跳回去。
+  //
+  // 现在改为「**确认式交还**」：只有当后端读到的值和我们设的值足够接近
+  // （±2% 容差）时才交还控制权；否则继续用本地值，并给一个 15 秒上限兜底
+  // （防止后端写入失败时滑杆永远卡在本地值）。
   useEffect(() => {
     if (vol === null || dragging) return;
-    const timer = setTimeout(() => setVol(null), 3000);
-    return () => clearTimeout(timer);
+    const diff = Math.abs(backendVol - vol);
+    if (diff <= 2) {
+      // 后端已确认 -> 交还控制权
+      setVol(null);
+      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null; }
+    }
+  }, [backendVol, vol, dragging]);
+
+  // 兜底：15 秒还没确认就强制交还，避免永远卡住
+  useEffect(() => {
+    if (vol === null || dragging) return;
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => {
+      setVol(null);
+      settleTimer.current = null;
+    }, 15000);
+    return () => {
+      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null; }
+    };
   }, [vol, dragging]);
+
+  // 外部源音量：后端读到的值和我们设的接近时才交还
+  useEffect(() => {
+    if (srcVol === null) return;
+    const backendSrc = Math.round((state?.live?.volume || 0) * 100);
+    if (Math.abs(backendSrc - srcVol) <= 2) {
+      setSrcVol(null);
+      if (srcTimer.current) { clearTimeout(srcTimer.current); srcTimer.current = null; }
+    }
+  }, [state?.live?.volume, srcVol]);
 
   const ad = state?.adapter;
   const connected = state?.connected || [];
@@ -208,12 +244,18 @@ export function Speaker() {
             </Focusable>
             <div style={{ flex: 1, minWidth: 0 }}>
               <SliderField
-                value={Math.round((state.live.volume || 0) * 100)}
+                value={srcVol !== null ? srcVol : Math.round((state.live.volume || 0) * 100)}
                 min={0}
                 max={150}
                 step={1}
                 showValue={false}
-                onChange={(v) => { api.setSourceVolume(state.live!.id, v / 100).catch(() => {}); }}
+                onChange={(v) => {
+                  // 外部源同样用「确认式交还」，避免被轮询拽回去
+                  setSrcVol(v);
+                  if (srcTimer.current) clearTimeout(srcTimer.current);
+                  srcTimer.current = setTimeout(() => setSrcVol(null), 15000);
+                  api.setSourceVolume(state.live!.id, v / 100).catch(() => {});
+                }}
               />
             </div>
           </div>
