@@ -293,7 +293,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.1**.
 
 | Version | Contents |
 |---|---|
@@ -335,6 +335,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.0**.
 | 2.8.2 | **Fix plugin failing to load at all** — never call host APIs at module top level (DFL.findVar); overlay now a global component |
 | 2.8.3 | Version + build time shown in QAM (so you can tell which build is running); tests_bundle.py loads the real bundle against a mock old loader |
 | 2.9.0 | A2DP negotiation is now visible ("Negotiating audio") and waits for the sink profile; one-tap force-switch when it gets stuck |
+| 2.9.1 | A2DP readiness also checked by the bluez_input node (strong signal), not just the card profile name |
 
 ---
 
@@ -654,7 +655,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.9.0**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.9.1**。
 
 | 版本 | 内容 |
 |---|---|
@@ -696,6 +697,7 @@ python pack.py          # 打包 zip
 | 2.8.2 | **修复插件完全无法加载** —— 禁止在模块顶层调宿主 API（DFL.findVar）；遮罩改挂全局组件 |
 | 2.8.3 | QAM 底部显示版本号+构建时间（一眼看出跑的是哪一版）；新增 tests_bundle.py 用假旧版 loader 真实加载产物 |
 | 2.9.0 | A2DP 协商过程可见（显示「正在协商音频」）并等待接收 profile；卡住时可一键强制切换 |
+| 2.9.1 | A2DP 就绪改用 bluez_input 节点判定（强判据），不再只信卡片 profile 名 |
 
 ---
 

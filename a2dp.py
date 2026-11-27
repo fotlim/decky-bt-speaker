@@ -222,6 +222,51 @@ async def set_profile(card_name, profile):
         return False, str(e)
 
 
+async def has_input_node(mac=None):
+    """PipeWire 里有没有 `bluez_input` 节点 —— 音频链路真的通了的**强判据**。
+
+    为什么这个比 profile 名可靠？
+    --------------------------
+    真机反馈「已经能接音频了，界面还一直显示正在协商」。原因是有些对端
+    （尤其 Windows）协商完成后，`pactl` 里的 `Active Profile` 仍可能显示成
+    别的名字，或者输出格式和我们的正则对不上。
+
+    而 `bluez_input.<MAC>` 这个节点是 **A2DP 流真的建起来才会出现**的
+    （PipeWire 在 transport 启动时才创建它），拿它当判据几乎不会误判。
+
+    实现：优先用 `wpctl status`（本项目到处都在用，输出格式已知），
+    失败再退回 `pw-dump`。
+    """
+    if not which("wpctl"):
+        return False
+    try:
+        rc, out = await run_cmd(["wpctl", "status"], timeout=8.0)
+    except Exception:  # noqa: BLE001
+        return False
+    if rc != 0 or not out:
+        return False
+    return _has_bluez_input(out, mac)
+
+
+def _has_bluez_input(status_text, mac=None):
+    """从 `wpctl status` 输出里判断有没有 bluez_input 节点（纯函数，便于测试）。"""
+    if not status_text:
+        return False
+    want = ""
+    if mac:
+        norm = normalize_mac(mac)
+        if norm:
+            # 节点名形如 bluez_input.CC_42_10_8A_70_42（冒号换下划线）
+            want = norm.replace(":", "_").lower()
+    for raw in status_text.splitlines():
+        low = raw.lower()
+        if "bluez_input" not in low:
+            continue
+        if not want or want in low:
+            return True
+    return False
+
+
 async def wait_for_sink(mac=None, log=None, max_wait=MAX_WAIT,
                         repair_after=REPAIR_AFTER):
     """等 A2DP Sink 就绪。
@@ -234,10 +279,15 @@ async def wait_for_sink(mac=None, log=None, max_wait=MAX_WAIT,
           "repaired": bool,          # 是否主动修正过 profile
           "card": str,               # 卡片名
           "reason": str,             # 未就绪的原因
+          "via": str,                # 就绪依据：node / profile
         }
 
     ⚠️ 未就绪**不是错误**。蓝牙协商慢是常态（见模块开头的说明），
     所以这里只如实汇报，由上层决定要不要提示用户继续等。
+
+    ⚠️ 判据有两个，任一成立即算就绪：
+      1. `bluez_input` 节点存在（**强判据**，流真建起来才会有）
+      2. 卡片 profile 是 a2dp-sink（弱判据，有些对端会显示成别的名字）
     """
     _log = log or (lambda *_: None)
     started = time.monotonic()
@@ -252,16 +302,21 @@ async def wait_for_sink(mac=None, log=None, max_wait=MAX_WAIT,
         if card:
             last_card = card
 
-        if sink_ready(card):
-            prof = card.get("active", "")
-            _log("A2DP 就绪：%.1fs，profile=%s" % (elapsed, prof))
+        by_profile = sink_ready(card)
+        by_node = await has_input_node(mac)
+
+        if by_profile or by_node:
+            prof = (card or {}).get("active", "")
+            via = "node" if by_node else "profile"
+            _log("A2DP 就绪：%.1fs，profile=%s，依据=%s" % (elapsed, prof, via))
             return {
                 "ready": True,
                 "seconds": round(elapsed, 1),
                 "profile": prof,
                 "repaired": repaired,
-                "card": card.get("name", ""),
+                "card": (card or {}).get("name", ""),
                 "reason": "",
+                "via": via,
             }
 
         # 还没就绪：如果卡已经出现、但 profile 是 off / 不对，主动修一次。

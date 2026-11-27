@@ -867,6 +867,15 @@ class Plugin:
         # 所以在轮询里顺带读一次卡片状态，界面就能显示
         # 「正在协商音频…」而不是干巴巴一个「已连接」。
         #
+        # ⚠️ 真机反馈「已经能接音频了，界面还一直显示正在协商」——
+        # 根因是**只信 profile 名**。有些对端（尤其 Windows）协商完成后
+        # 卡片 profile 仍显示成 `a2dp-sink-sbc` 之外的东西，或者 pactl 的
+        # 输出里 Active Profile 那一行格式不同，导致正则匹配不到。
+        #
+        # 现在加了**更强的判据**：PipeWire 里出现 `bluez_input.<MAC>` 节点
+        # 就说明音频链路真的通了 —— 那是流真的建起来才会有的东西，
+        # 比 profile 名可靠得多。两个判据任一成立就算就绪。
+        #
         # 开销：一次 `pactl list cards`，已随 status 的其它命令一起轮询，
         # 且只在「有设备已连接」时才跑，空闲时不产生额外进程。
         a2dp_state = {"ready": False, "profile": "", "available": [], "reason": ""}
@@ -874,20 +883,22 @@ class Plugin:
             try:
                 cards = await a2dp.read_cards()
                 card = a2dp.find_sink_card(cards, connected[0].get("mac"))
-                if card:
-                    a2dp_state = {
-                        "ready": a2dp.sink_ready(card),
-                        "profile": card.get("active", ""),
-                        "available": card.get("available", []),
-                        "reason": "" if a2dp.sink_ready(card) else "negotiating",
-                    }
-                else:
-                    a2dp_state = {"ready": False, "profile": "", "available": [],
-                                  "reason": "no-card"}
+                by_profile = a2dp.sink_ready(card)
+                # 强判据：有 bluez_input 节点 = 音频链路真的通了
+                by_node = live is not None
+                ready = by_profile or by_node
+                a2dp_state = {
+                    "ready": ready,
+                    "profile": (card or {}).get("active", ""),
+                    "available": (card or {}).get("available", []),
+                    "reason": "" if ready else ("negotiating" if card else "no-card"),
+                    # 就绪依据，诊断页/日志用（排查「为什么说我没就绪」）
+                    "via": ("node" if by_node else ("profile" if by_profile else "")),
+                }
             except Exception as e:  # noqa: BLE001
                 self._log("读取 A2DP 状态失败：%s" % e)
                 a2dp_state = {"ready": False, "profile": "", "available": [],
-                              "reason": "error: %s" % e}
+                              "reason": "error: %s" % e, "via": ""}
 
         # 已连接设备的详情（图标/类别用来在 UI 上区分手机和电脑）
         #

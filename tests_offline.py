@@ -1132,6 +1132,32 @@ Card #53
           "%s vs %s" % (a2dp.REPAIR_AFTER, a2dp.MAX_WAIT))
 
 
+    # ---- 强判据：bluez_input 节点（真机反馈「能接音频了却还说协商中」的修复）----
+    #
+    # 有些对端协商完成后 pactl 的 Active Profile 仍显示成别的名字，
+    # 光看 profile 会误判成「没就绪」。而 bluez_input 节点是 A2DP 流
+    # 真的建起来才会出现的，用它当判据几乎不会误判。
+    WPCTL = """PipeWire 'pipewire-0' [1.6.8]
+ \u251c\u2500 Sinks:
+ \u2502  *   48. Built-in Audio Speaker [vol: 0.65]
+ \u251c\u2500 Sources:
+ \u2502      51. Ciallo [vol: 0.80]
+"""
+    check("识别 bluez_input 节点", a2dp._has_bluez_input(
+        WPCTL.replace("51. Ciallo", "51. bluez_input.CC_42_10_8A_70_42")))
+    check("没有 bluez_input 时返回 False", not a2dp._has_bluez_input(WPCTL))
+    check("空输入返回 False", not a2dp._has_bluez_input(""))
+    check("None 返回 False", not a2dp._has_bluez_input(None))
+    # 按 MAC 过滤：不匹配的节点不算
+    two = WPCTL.replace("51. Ciallo", "51. bluez_input.CC_42_10_8A_70_42")
+    check("MAC 匹配时返回 True", a2dp._has_bluez_input(two, "CC:42:10:8A:70:42"))
+    check("MAC 不匹配时返回 False", not a2dp._has_bluez_input(two, "AA:BB:CC:DD:EE:FF"))
+    # 不带 mac 时，任何 bluez_input 都算（同一时刻只可能有一台设备）
+    check("不传 MAC 时任何 bluez_input 都算", a2dp._has_bluez_input(two))
+    # 横线写法 MAC 也要能匹配（复用 normalize_mac）
+    check("横线 MAC 也能匹配节点", a2dp._has_bluez_input(two, "cc-42-10-8a-70-42"))
+
+
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,

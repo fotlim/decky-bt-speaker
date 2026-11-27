@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"2.9.0","build":"11-27 22:14"};
+var __BT_META__ = {"version":"2.9.1","build":"11-27 22:24"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;

@@ -245,6 +245,13 @@ export interface A2dpInfo {
   available?: string[];
   /** 未就绪的原因：negotiating / no-card / error */
   reason: string;
+  /**
+   * 就绪依据（排查用）：
+   * - `node`：PipeWire 里有 bluez_input 节点（**强判据**，流真建起来才有）
+   * - `profile`：卡片 profile 是 a2dp-sink（弱判据）
+   * - 空串：未就绪
+   */
+  via?: string;
 }
 
 export interface SpeakerStatus {
