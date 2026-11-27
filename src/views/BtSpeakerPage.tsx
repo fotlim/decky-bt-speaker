@@ -18,7 +18,11 @@ export function BtSpeakerPage() {
   const paired = state?.paired || [];
   const connectedMacs = new Set((state?.connected || []).map((d) => d.mac));
 
-  const act = async (mac: string, action: "connect" | "disconnect" | "remove" | "repair", label: string) => {
+  const act = async (
+    mac: string,
+    action: "connect" | "disconnect" | "remove" | "repair" | "trust" | "untrust" | "block" | "unblock",
+    label: string,
+  ) => {
     if (busyMac) return;
     setBusyMac(mac);
     try {
@@ -121,10 +125,13 @@ export function BtSpeakerPage() {
 function DevicesTab({
   paired, connectedMacs, busyMac, onAction, discoverable, alias,
 }: {
-  paired: { mac: string; name: string; display?: string; has_real_name?: boolean; icon?: string }[];
+  paired: {
+    mac: string; name: string; display?: string; has_real_name?: boolean;
+    icon?: string; trusted?: boolean; blocked?: boolean;
+  }[];
   connectedMacs: Set<string>;
   busyMac: string | null;
-  onAction: (mac: string, action: "connect" | "disconnect" | "remove" | "repair", label: string) => void;
+  onAction: (mac: string, action: "connect" | "disconnect" | "remove" | "repair" | "trust" | "untrust" | "block" | "unblock", label: string) => void;
   discoverable: boolean;
   alias: string;
 }) {
@@ -157,23 +164,37 @@ function DevicesTab({
                 <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {(d as any).display || d.name}
                 </div>
-                <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
-                  {d.mac}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }}>
+                  <span>{d.mac}</span>
+                  {connected && <Pill tone="ok">{t("dev.connected")}</Pill>}
+                  {d.trusted === false && <Pill tone="warn">{t("dev.untrusted")}</Pill>}
+                  {d.blocked && <Pill tone="warn">{t("dev.blocked")}</Pill>}
                   {d.has_real_name === false && (
-                    <span style={{ marginLeft: 6, color: "#e0a800" }}>· {t("dev.noName")}</span>
+                    <span style={{ color: "#e0a800" }}>· {t("dev.noName")}</span>
                   )}
                 </div>
               </div>
-              {connected ? <Pill tone="ok">{t("dev.connected")}</Pill> : <Pill>{t("dev.notConnected")}</Pill>}
               <Focusable
-                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting"))}
-                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting"))}
+                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: (d as any).display || d.name }))}
+                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: (d as any).display || d.name }))}
                 style={{
                   padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
                   background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
                   color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
                 }}
               >{busy ? "…" : connected ? t("qam.disconnect") : t("dev.connect")}</Focusable>
+              {/* 信任：允许/禁止自动重连 */}
+              <Focusable
+                onClick={() => onAction(d.mac, d.trusted === false ? "trust" : "untrust",
+                  d.trusted === false ? t("dev.trustedOn") : t("dev.trustedOff"))}
+                onActivate={() => onAction(d.mac, d.trusted === false ? "trust" : "untrust",
+                  d.trusted === false ? t("dev.trustedOn") : t("dev.trustedOff"))}
+                style={{
+                  padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
+                  background: d.trusted === false ? "rgba(255,255,255,0.08)" : "rgba(76,195,138,0.16)",
+                  color: d.trusted === false ? COLORS.sub : COLORS.ok,
+                }}
+              >{d.trusted === false ? t("dev.trust") : t("dev.untrust")}</Focusable>
               <Focusable
                 onClick={() => onAction(d.mac, "repair", t("dev.repairing"))}
                 onActivate={() => onAction(d.mac, "repair", t("dev.repairing"))}
@@ -269,16 +290,25 @@ function ScanPanel({ alias, discoverable, onPaired }: {
     if (tickRef.current) clearInterval(tickRef.current);
   }, []);
 
-  const pair = async (mac: string, name: string) => {
+  const pair = async (mac: string, name: string, paired: boolean) => {
     if (busyMac) return;
     setBusyMac(mac);
     try {
-      await api.pairDeviceFull(mac);
-      toaster.toast({ title: t("dev.paired", { name }), body: "" });
+      if (paired) {
+        // 已配对过的设备：直接连接，不用重新配对
+        await api.deviceAction(mac, "connect");
+        toaster.toast({ title: t("dev.connectedToast", { name }), body: "" });
+      } else {
+        await api.pairDeviceFull(mac);
+        toaster.toast({ title: t("dev.paired", { name }), body: "" });
+      }
       setDevices((prev) => prev.filter((d) => d.mac !== mac));
       onPaired();
     } catch (e: any) {
-      toaster.toast({ title: t("dev.pairFailed"), body: e?.message || String(e) });
+      toaster.toast({
+        title: paired ? t("dev.connectFailed") : t("dev.pairFailed"),
+        body: e?.message || String(e),
+      });
     } finally {
       setBusyMac(null);
     }
@@ -352,10 +382,10 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                   <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {d.display || d.name}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }}>
                     <span>{d.mac}</span>
                     {rssi !== null && (
-                      <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 1, marginLeft: 4 }}>
+                      <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 1 }}>
                         {[1, 2, 3, 4].map((b) => (
                           <span key={b} style={{
                             width: 3, height: 3 + b * 2, borderRadius: 1,
@@ -365,21 +395,25 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                         <span style={{ marginLeft: 3 }}>{rssi} dBm</span>
                       </span>
                     )}
+                    {d.paired && <Pill tone="accent">{t("dev.pairedTag")}</Pill>}
+                    {d.connected && <Pill tone="ok">{t("dev.connected")}</Pill>}
                     {d.has_real_name === false && (
                       <span style={{ color: "#e0a800" }}>· {t("dev.noName")}</span>
                     )}
                   </div>
                 </div>
                 <Focusable
-                  onClick={() => pair(d.mac, d.display || d.name)}
-                  onActivate={() => pair(d.mac, d.display || d.name)}
+                  onClick={() => pair(d.mac, d.display || d.name, !!d.paired)}
+                  onActivate={() => pair(d.mac, d.display || d.name, !!d.paired)}
                   style={{
                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                     cursor: busy ? "default" : "pointer",
                     background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
                     color: busy ? COLORS.sub : "#fff",
                   }}
-                >{busy ? t("dev.pairing") : t("dev.pair")}</Focusable>
+                >{busy
+                  ? (d.paired ? t("dev.connecting") : t("dev.pairing"))
+                  : (d.paired ? t("dev.connect") : t("dev.pair"))}</Focusable>
               </div>
             );
           })}

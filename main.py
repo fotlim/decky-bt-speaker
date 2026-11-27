@@ -835,9 +835,15 @@ class Plugin:
         return {"ok": True, "alias": alias}
 
     @_safe
-    async def device_action(self, mac, action):
-        ok = await self.bz.device_action(mac, action)
+    async def device_action(self, mac, action, value=None):
+        ok = await self.bz.device_action(mac, action, value)
         return {"ok": ok}
+
+    @_safe
+    async def disconnect_all(self):
+        """断开所有已连接设备。"""
+        r = await self.bz.disconnect_all()
+        return {"ok": True, **r}
 
     @_safe
     async def set_volume(self, value):

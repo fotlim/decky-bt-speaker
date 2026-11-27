@@ -31,8 +31,14 @@ export const api = {
   forgetDevice: (mac: string) => call<[string], { ok: boolean }>("forget_device", mac),
   repairDevice: (mac: string) => call<[string], { ok: boolean; agent: boolean }>("repair_device", mac),
   setAlias: (alias: string) => call<[string], { ok: boolean; alias: string }>("set_alias", alias),
-  deviceAction: (mac: string, action: "connect" | "disconnect" | "trust" | "untrust" | "pair" | "remove") =>
-    call<[string, string], { ok: boolean }>("device_action", mac, action),
+  deviceAction: (
+    mac: string,
+    action: "connect" | "disconnect" | "trust" | "untrust" | "pair" | "remove" | "block" | "unblock" | "alias",
+    value?: string,
+  ) => call<[string, string, string?], { ok: boolean }>("device_action", mac, action, value),
+  /** 断开所有已连接设备 */
+  disconnectAll: () =>
+    call<[], { ok: boolean; disconnected: string[]; failed: string[] }>("disconnect_all"),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
   /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
   stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),

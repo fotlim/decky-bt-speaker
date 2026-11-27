@@ -63,6 +63,30 @@ def is_mac(s):
     return bool(s and _MAC_RE.match(s.strip()))
 
 
+def is_mac_like(s):
+    """判断一个字符串是不是「MAC 地址的各种写法」。
+
+    为什么要单独一个函数？
+    --------------------
+    BlueZ 对**没有广播名称**的设备会自动生成 `Alias`，格式是
+    `AA-BB-CC-DD-EE-FF`（**横线**分隔），而 `Name`/`Address` 用冒号。
+
+    早期只用 `is_mac()`（只认冒号）判断，导致 `AA-BB-CC-DD-EE-FF`
+    被当成「真实名字」，`has_real_name` 错判为 True ——
+    「显示没有名称的设备」开关就失效了（真机反馈过这个问题）。
+
+    这里把所有分隔符（冒号 / 横线 / 点 / 空格）统一去掉再判断。
+    """
+    if not s:
+        return False
+    t = str(s).strip().upper()
+    # 去掉常见分隔符
+    for ch in (":", "-", ".", " "):
+        t = t.replace(ch, "")
+    # 必须是 12 位十六进制
+    return len(t) == 12 and all(c in "0123456789ABCDEF" for c in t)
+
+
 def yes(s):
     return str(s).strip().lower() in ("yes", "true", "1", "on")
 
@@ -226,6 +250,22 @@ def _parse_rssi(text):
     return None
 
 
+def _parse_uuids(info_text):
+    """从 `bluetoothctl info` 输出里提取设备支持的 UUID 短码列表。
+
+    形如 `UUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)`
+    返回 ['0000110b', '0000110a', ...]
+    """
+    if not info_text:
+        return []
+    out = []
+    for m in re.finditer(r"\(([0-9a-fA-F]{8})-0000-1000-8000-00805f9b34fb\)", info_text):
+        short = m.group(1).lower()
+        if short not in out:
+            out.append(short)
+    return out
+
+
 def _icon_label(icon):
     """从 BlueZ 的 Icon 属性推断友好类型名。"""
     table = {
@@ -269,9 +309,9 @@ def friendly_device_name(name, alias, icon, klass, mac):
     alias = (alias or "").strip()
     mac = (mac or "").strip().upper()
 
-    # 1/2：真实名字优先。注意排除「名字就是 MAC」的情况
+    # 1/2：真实名字优先。注意排除「名字就是 MAC」的情况（含横线写法）
     for cand in (name, alias):
-        if cand and cand.upper() != mac and not is_mac(cand):
+        if cand and not is_mac_like(cand):
             return cand
 
     # 3：按类型推断
@@ -300,6 +340,8 @@ class BlueZ:
         # 扫描：后台任务 + 运行标记（非阻塞，可中途停止）
         self._scan_task = None
         self._scan_running = False
+        # bluetoothctl 版本缓存（旧版本不支持 `devices Paired`）
+        self._bctl_ver = None
 
     # -- 基础 -------------------------------------------------------------
     @staticmethod
@@ -489,6 +531,30 @@ class BlueZ:
         return True
 
     # -- 设备 -------------------------------------------------------------
+    async def _bctl_version(self):
+        """读取 bluetoothctl 版本，返回 (major, minor)，失败返回 (0, 0)。
+
+        为什么要这个？
+        ------------
+        `bluetoothctl devices Paired` 是 **5.66** 才加的子命令。
+        更早的版本只有 `paired-devices`，直接调 `devices Paired` 会返回空，
+        表现就是「以前连接过的设备扫不出来」。
+
+        参考实现：introkun/DeckyLoader-Bluetooth 也做了同样的版本判断。
+        """
+        if self._bctl_ver is not None:
+            return self._bctl_ver
+        ver = (0, 0)
+        try:
+            rc, out = await self._ctl("version", timeout=8.0)
+            nums = re.findall(r"\d+", out or "")
+            if len(nums) >= 2:
+                ver = (int(nums[0]), int(nums[1]))
+        except Exception:
+            pass
+        self._bctl_ver = ver
+        return ver
+
     async def list_devices(self, kind=""):
         """kind: '' | 'Paired' | 'Connected'。返回 [{'mac','name','display'}]。
 
@@ -496,6 +562,11 @@ class BlueZ:
         """
         args = ["devices"] + ([kind] if kind else [])
         rc, out = await self._ctl(*args)
+        # 旧版 bluetoothctl 不支持 `devices Paired`，退回 `paired-devices`
+        if kind == "Paired" and (rc != 0 or not (out or "").strip()):
+            major, minor = await self._bctl_version()
+            if major < 5 or (major == 5 and minor < 66):
+                rc, out = await self._ctl("paired-devices")
         if rc != 0:
             return []
         devs = []
@@ -522,16 +593,24 @@ class BlueZ:
         alias = kv.get("Alias", "")
         icon = kv.get("Icon", "")
         klass = kv.get("Class", "")
+
+        # 关键：BlueZ 对没广播名字的设备会自动生成 `AA-BB-CC-DD-EE-FF` 形式的
+        # Alias（横线分隔）。必须用 is_mac_like() 识别出来，否则会被当成真实名字，
+        # 「显示没有名称的设备」开关就失效了。
+        real_name = ""
+        for cand in (name, alias):
+            c = (cand or "").strip()
+            if c and not is_mac_like(c):
+                real_name = c
+                break
+
         return {
             "mac": mac.upper(),
             "name": name,
             "alias": alias,
             # display 永远非空：没名字就按类型+MAC 后缀拼一个
             "display": friendly_device_name(name, alias, icon, klass, mac),
-            "has_real_name": bool(
-                (name and name.upper() != mac.upper() and not is_mac(name))
-                or (alias and alias.upper() != mac.upper() and not is_mac(alias))
-            ),
+            "has_real_name": bool(real_name),
             "icon": icon,
             "class": klass,
             "rssi": _parse_rssi(kv.get("RSSI", "")),
@@ -539,12 +618,39 @@ class BlueZ:
             "trusted": yes(kv.get("Trusted", "no")),
             "connected": yes(kv.get("Connected", "no")),
             "blocked": yes(kv.get("Blocked", "no")),
+            "services_resolved": yes(kv.get("ServicesResolved", "no")),
+            # 设备支持的服务（能看出它是不是真能当音频设备）
+            "uuids": _parse_uuids(out),
         }
 
-    async def device_action(self, mac, action):
+    async def device_action(self, mac, action, value=None):
+        """对单个设备执行操作。
+
+        支持的操作：
+          connect / disconnect   连接、断开
+          pair / remove          配对、删除（含绑定密钥）
+          trust / untrust        信任（允许自动重连）/ 取消信任
+          block / unblock        拉黑（拒绝连接）/ 解除拉黑
+          alias                  设置设备别名（需要 value）
+        """
         if not is_mac(mac):
             raise BtError("设备地址不合法：%s" % mac)
         action = (action or "").strip().lower()
+
+        # alias 需要额外参数，单独处理
+        if action == "alias":
+            new_name = (value or "").strip()
+            if not new_name:
+                raise BtError("别名不能为空")
+            if len(new_name) > 64:
+                raise BtError("别名太长（最多 64 个字符）")
+            rc, out = await self._ctl("set-alias", mac, new_name, timeout=15.0)
+            if rc != 0 or "Failed" in (out or ""):
+                tail = (out or "").strip().splitlines()
+                raise BtError("设置别名失败：%s" % (tail[-1] if tail else "未知错误"))
+            self._show_cache = (0.0, None)
+            return True
+
         mapping = {
             "connect": ["connect", mac],
             "disconnect": ["disconnect", mac],
@@ -552,16 +658,39 @@ class BlueZ:
             "untrust": ["untrust", mac],
             "pair": ["pair", mac],
             "remove": ["remove", mac],
+            "block": ["block", mac],
+            "unblock": ["unblock", mac],
         }
         if action not in mapping:
             raise BtError("不支持的操作：%s" % action)
+
         rc, out = await self._ctl(*mapping[action], timeout=25.0)
-        ok = rc == 0 and ("Failed" not in out) and ("not available" not in out)
-        if not ok:
+        low = (out or "").lower()
+        # 「AlreadyExists」这类算成功；真正的失败才抛
+        benign = ("alreadyexists", "already exists", "already paired",
+                  "not available" if action in ("disconnect", "untrust", "unblock") else "")
+        failed = ("failed" in low) or (rc != 0 and not any(b and b in low for b in benign))
+        if failed and not any(b and b in low for b in benign):
             tail = (out or "").strip().splitlines()
             raise BtError("%s 失败：%s" % (action, tail[-1] if tail else "未知错误"))
         self._show_cache = (0.0, None)
         return True
+
+    async def disconnect_all(self):
+        """断开所有已连接的设备。"""
+        try:
+            connected = await self.list_devices("Connected")
+        except BtError:
+            connected = []
+        done, failed = [], []
+        for d in connected:
+            try:
+                await self.device_action(d["mac"], "disconnect")
+                done.append(d["mac"])
+            except BtError:
+                failed.append(d["mac"])
+        self._show_cache = (0.0, None)
+        return {"disconnected": done, "failed": failed}
 
     # -- 扫描 -------------------------------------------------------------
     async def start_discovery(self, timeout=30):
@@ -612,13 +741,14 @@ class BlueZ:
     def scanning(self):
         return bool(self._scan_running)
 
-    async def list_discovered(self, include_paired=False, include_unreachable=True):
+    async def list_discovered(self, include_paired=True, include_unreachable=True):
         """列出扫描到的设备。
 
         返回 [{'mac','name','display','paired','connected','icon','rssi','type'}]。
-        默认只返回**未配对**的（也就是「可以新配对」的设备）。
 
-        `rssi` 来自 `bluetoothctl info` 的 `RSSI:` 字段（部分设备不提供）。
+        ⚠️ `include_paired` 默认 **True** —— 之前默认 False 把所有已配对设备
+        都过滤掉了，用户反馈「以前连接过的设备扫不出来」。
+        已配对设备也会显示，前端用 `paired` 标记区分（可以点「连接」而非「配对」）。
         """
         rc, out = await self._ctl("devices", timeout=10.0)
         if rc != 0:
@@ -634,7 +764,7 @@ class BlueZ:
                 "mac": mac,
                 "name": raw,
                 "display": friendly_device_name(raw, "", "", "", mac),
-                "has_real_name": bool(raw and not is_mac(raw)),
+                "has_real_name": bool(raw and not is_mac_like(raw)),
                 "paired": False, "connected": False,
                 "icon": "", "class": "", "rssi": None,
             }
@@ -659,9 +789,10 @@ class BlueZ:
             if not include_unreachable and item["rssi"] is None and not item["has_real_name"]:
                 continue
             devs.append(item)
-        # 排序：已连接 > 有名字 > 信号强
+        # 排序：已连接 > 已配对 > 有名字 > 信号强
         devs.sort(key=lambda d: (
             not d["connected"],
+            not d["paired"],
             not d["has_real_name"],
             -(d["rssi"] if isinstance(d["rssi"], int) else -999),
             d["display"].lower(),

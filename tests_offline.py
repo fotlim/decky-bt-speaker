@@ -720,6 +720,81 @@ def test_settings_validation():
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 
 
+def test_mac_like():
+    print("MAC 各种写法识别（无名称设备过滤的关键）")
+    import bt
+
+    # 冒号（标准）
+    check("冒号大写", bt.is_mac_like("AA:BB:CC:DD:EE:FF"))
+    check("冒号小写", bt.is_mac_like("aa:bb:cc:dd:ee:ff"))
+
+    # 横线 —— BlueZ 给无名称设备生成 Alias 用的就是这种
+    check("横线大写", bt.is_mac_like("AA-BB-CC-DD-EE-FF"))
+    check("横线小写", bt.is_mac_like("aa-bb-cc-dd-ee-ff"))
+
+    # 点分（Windows 风格）
+    check("点分", bt.is_mac_like("AABB.CCDD.EEFF"))
+
+    # 纯 12 位
+    check("纯十六进制", bt.is_mac_like("AABBCCDDEEFF"))
+
+    # 反例
+    check("真实名字不是 MAC", not bt.is_mac_like("Ciallo~(∠・ω< )⌒★"))
+    check("iPhone 不是 MAC", not bt.is_mac_like("iPhone"))
+    check("空字符串", not bt.is_mac_like(""))
+    check("None", not bt.is_mac_like(None))
+    check("长度不足", not bt.is_mac_like("AA:BB:CC"))
+    check("含非十六进制", not bt.is_mac_like("GG:HH:II:JJ:KK:LL"))
+    check("带后缀不算", not bt.is_mac_like("Steam Deck"))
+
+    # 关键场景：横线 MAC 必须被识别为「没有真实名字」
+    check("横线 MAC 会被当成无名设备", bt.is_mac_like("AA-BB-CC-DD-EE-FF"))
+    # 而 friendly_device_name 应该给它拼标签
+    disp = bt.friendly_device_name("", "AA-BB-CC-DD-EE-FF", "", "", "AA:BB:CC:DD:EE:FF")
+    check("无名设备得到可读标签", "EE:FF" in disp or "设备" in disp or "device" in disp.lower(),
+          "实际: %s" % disp)
+
+
+def test_parse_uuids():
+    print("设备 UUID 解析")
+    import bt
+
+    sample = """
+Device AA:BB:CC:DD:EE:FF (public)
+        Name: Test Phone
+        Alias: Test Phone
+        Class: 0x005a020c
+        Paired: yes
+        Trusted: yes
+        Connected: yes
+        UUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)
+        UUID: A/V Remote Control        (0000110e-0000-1000-8000-00805f9b34fb)
+        UUID: Handsfree                 (0000111e-0000-1000-8000-00805f9b34fb)
+"""
+    uuids = bt._parse_uuids(sample)
+    check("解析出 3 个 UUID", len(uuids) == 3, "实际 %d" % len(uuids))
+    check("含 audio sink", "0000110b" in uuids)
+    check("含 AVRCP", "0000110e" in uuids)
+    check("含 handsfree", "0000111e" in uuids)
+    check("空输入返回空", bt._parse_uuids("") == [])
+    check("None 返回空", bt._parse_uuids(None) == [])
+    check("无 UUID 返回空", bt._parse_uuids("Name: foo") == [])
+
+
+def test_parse_rssi():
+    print("RSSI 解析")
+    import bt
+
+    check("-58 正常", bt._parse_rssi("-58") == -58)
+    check("-100 正常", bt._parse_rssi("-100") == -100)
+    check("-30 正常", bt._parse_rssi("-30") == -30)
+    check("空返回 None", bt._parse_rssi("") is None)
+    check("None 返回 None", bt._parse_rssi(None) is None)
+    check("垃圾返回 None", bt._parse_rssi("abc") is None)
+    check("超范围返回 None", bt._parse_rssi("-500") is None)
+    check("带前缀也能解析", bt._parse_rssi("RSSI: -72") == -72)
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -755,6 +830,7 @@ if __name__ == "__main__":
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
+               test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse):
         fn()
     print()
