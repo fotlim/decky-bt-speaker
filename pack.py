@@ -39,6 +39,7 @@ INCLUDE_FILES = [
     "bt.py",
     "btutil.py",
     "screen.py",
+    "inhibit.py",
     "power.py",
     "nodes.py",
     "focus.py",

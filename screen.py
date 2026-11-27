@@ -91,28 +91,108 @@ def read_bl_power(dev=None):
         return None, True
 
 
-async def write_bl_power(on, dev=None):
-    """开关背光电源。
+def _safe_sysfs_path(p):
+    """只允许操作 /sys/class/backlight 下的路径（防注入）。"""
+    if not p:
+        return False
+    return p.startswith("/sys/class/backlight/") and ".." not in p
 
-    `on=False` 表示切断背光（真正黑屏）。
-    SteamOS 的 polkit 助手只白名单了 `brightness` 路径，不包含 `bl_power`，
-    所以这里优先直接写（多数情况下 udev 已给 bl_power 可写权限），
-    失败时返回 False 让上层降级到 brightness=0。
+
+async def _sudo_write(path, value):
+    """用 `sudo -n`（无密码模式）写 sysfs。失败返回 False。
+
+    为什么需要这条路径？
+    ------------------
+    `bl_power` 的权限是 **0444（root 只读）**，deck 用户写不了
+    （真机实测：`-r--r--r-- root root bl_power`，写入报「权限不够」）。
+    而 SteamOS 的 `steamos-priv-write` 助手只把 `brightness` 加进了
+    白名单，**不包括 bl_power**，所以走 polkit 也不行。
+
+    唯一不破坏系统的办法就是 sudo。`-n` 表示非交互：
+    有免密 sudo 就成功，没有就立刻失败（不会卡住等密码）。
+    """
+    if not _safe_sysfs_path(path):
+        return False
+    try:
+        rc, out = await run_cmd(
+            ["sudo", "-n", "sh", "-c", 'printf "%s" "$1" > "$2"', "_", str(value), path],
+            timeout=10.0,
+        )
+        return rc == 0
+    except BtError:
+        return False
+
+
+async def _sudo_chmod(path):
+    """用 `sudo -n` 给 sysfs 文件加写权限。"""
+    if not _safe_sysfs_path(path):
+        return False
+    try:
+        rc, _ = await run_cmd(["sudo", "-n", "chmod", "a+w", path], timeout=10.0)
+        return rc == 0
+    except BtError:
+        return False
+
+
+async def write_bl_power(on, dev=None):
+    """开关背光电源，返回 (ok, method)。
+
+    `on=False` 表示切断背光（真正黑屏）。依次尝试：
+      1. 直接写（多数机型 bl_power 是 0444，会失败）
+      2. `sudo -n` 写入（有免密 sudo 时成功）
+      3. 失败则返回 False，由上层降级到 brightness=0
     """
     dev = dev or find_backlight()
     if not dev:
-        return False
+        return False, "no-device"
     p = os.path.join(dev, "bl_power")
     if not os.path.exists(p):
-        return False
-    if not _writable(p):
-        return False
-    try:
-        with open(p, "w") as f:
-            f.write("0" if on else "1")
-        return True
-    except OSError:
-        return False
+        return False, "no-node"
+
+    want = "0" if on else "1"
+
+    # 1. 直接写
+    if _writable(p):
+        try:
+            with open(p, "w") as f:
+                f.write(want)
+            return True, "direct"
+        except OSError:
+            pass
+
+    # 2. sudo -n
+    if await _sudo_write(p, want):
+        return True, "sudo"
+
+    return False, "read-only"
+
+
+async def ensure_permission(dev=None):
+    """尝试让 bl_power 变得可写（用免密 sudo chmod）。
+
+    返回 {"ok": bool, "method": str, "command": str}
+    `command` 是给用户看的、需要手动执行的命令（sudo 不可用时）。
+    """
+    dev = dev or find_backlight()
+    if not dev:
+        return {"ok": False, "method": "none", "command": "", "reason": "no backlight device"}
+    p = os.path.join(dev, "bl_power")
+    if not os.path.exists(p):
+        return {"ok": False, "method": "none", "command": "",
+                "reason": "this driver has no bl_power node"}
+    if _writable(p):
+        return {"ok": True, "method": "already-writable", "command": ""}
+
+    if await _sudo_chmod(p):
+        return {"ok": True, "method": "sudo-chmod", "command": ""}
+
+    # 免密 sudo 不可用 —— 给用户确切命令
+    return {
+        "ok": False,
+        "method": "manual",
+        "command": "sudo chmod a+w %s" % p,
+        "reason": "bl_power is root-only (0444) and passwordless sudo is unavailable",
+    }
 
 
 def read_brightness(dev=None):
@@ -231,6 +311,12 @@ def diagnose():
     except OSError:
         pass
     info["available"] = bool(dev) and (info["writable"] or info["priv_write_exists"])
+    # 能不能真正关掉背光：只有 bl_power 可写才行
+    info["can_turn_off"] = bool(dev) and info["bl_power_writable"]
+    info["manual_command"] = (
+        "sudo chmod a+w %s" % info["bl_power_path"]
+        if dev and info["bl_power_supported"] and not info["bl_power_writable"] else ""
+    )
     return info
 
 
@@ -309,33 +395,40 @@ class Dimmer:
         # 很多驱动会把 0 钳制到最小值，屏幕仍然微微发亮
         # （真机反馈「很低亮度，但能看到 Steam 头像和菜单」正是这个）。
         # bl_power=1 是直接关电源，屏幕彻底黑。
-        power_cut = await write_bl_power(False, dev)
+        power_cut, method = await write_bl_power(False, dev)
 
         if power_cut:
             actual = 0
             off = True
+            hint = ""
         else:
-            # bl_power 不可用（节点不存在或无权限），降级到 brightness=0
+            # bl_power 不可用（权限不足 / 节点不存在），降级到 brightness=0
             try:
                 actual = await write_brightness(0, dev)
             except BtError as e:
                 self._saved = None
                 return {"ok": False, "backlight_off": False, "actual": cur,
-                        "reason": str(e)}
+                        "reason": str(e), "method": "failed"}
             off = (actual == 0)
+            hint = "" if off else (
+                "bl_power 是 root 只读（0444），插件无法切断背光电源，"
+                "只能把亮度调到最低。执行一次 sudo chmod a+w 即可修复。"
+            )
 
         self.dimmed = True
         self._bl_power_cut = power_cut
         self._since = asyncio.get_event_loop().time()
-        self._log("息屏：原亮度 %s/%s，bl_power=%s，brightness 实测 %s（彻底黑=%s）"
-                  % (self._saved, mx, "已切断" if power_cut else "不可用", actual, off))
+        self._log("息屏：原亮度 %s/%s，bl_power=%s(%s)，brightness 实测 %s（彻底黑=%s）"
+                  % (self._saved, mx, "已切断" if power_cut else "未切断",
+                     method, actual, off))
         return {
             "ok": True,
             "backlight_off": off,
             "actual": actual,
             "saved": self._saved,
             "max": mx,
-            "method": "bl_power" if power_cut else "brightness",
+            "method": method if power_cut else "brightness",
+            "hint": hint,
             "reason": "" if off else "backlight clamped to %s (kernel refused 0)" % actual,
         }
 

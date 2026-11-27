@@ -1,5 +1,5 @@
 import { call as deckyCall } from "@decky/api";
-import type { SpeakerStatus, DiagnoseInfo } from "./types";
+import type { SpeakerStatus, DiagnoseInfo, InhibitInfo } from "./types";
 
 /** 包一层 call：后端出错时返回 {__bt_error__}，这里转成可读 Error 抛出 */
 async function call<Args extends any[] = [], Return = any>(route: string, ...args: Args): Promise<Return> {
@@ -34,11 +34,22 @@ export const api = {
   /** 断开所有已连接设备 */
   /** 息屏状态 */
   getScreen: () =>
-    call<[], { available: boolean; dimmed: boolean; current?: number; max?: number; saved?: number; elapsed?: number; max_seconds?: number }>("get_screen"),
-  /** 息屏（背光归 0） */
-  dimScreen: () => call<[], { ok: boolean; dimmed: boolean; max_seconds: number }>("dim_screen"),
+    call<[], { available: boolean; dimmed: boolean; current?: number; max?: number; saved?: number; elapsed?: number; max_seconds?: number; inhibit_held?: boolean }>("get_screen"),
+  /** 息屏（背光归 0 + 抑制自动休眠，否则蓝牙会断） */
+  dimScreen: () =>
+    call<[], {
+      ok: boolean; dimmed: boolean; max_seconds: number; backlight_off?: boolean;
+      inhibit?: { ok: boolean; what: string; error: string };
+    }>("dim_screen"),
   /** 恢复显示 */
   undimScreen: () => call<[], { ok: boolean; dimmed: boolean }>("undim_screen"),
+  /** 休眠抑制状态 + 系统里所有 inhibitor 锁 */
+  getInhibit: () => call<[], InhibitInfo>("get_inhibit"),
+  /** 息屏能力诊断 */
+  getScreenDiag: () => call<[], any>("get_screen_diag"),
+  /** 尝试给 bl_power 加写权限（免密 sudo） */
+  fixScreenPermission: () =>
+    call<[], { ok: boolean; method: string; command?: string; reason?: string }>("fix_screen_permission"),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
   /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
   stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),

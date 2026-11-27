@@ -125,10 +125,16 @@ const api = {
     /** 断开所有已连接设备 */
     /** 息屏状态 */
     getScreen: () => call("get_screen"),
-    /** 息屏（背光归 0） */
+    /** 息屏（背光归 0 + 抑制自动休眠，否则蓝牙会断） */
     dimScreen: () => call("dim_screen"),
     /** 恢复显示 */
     undimScreen: () => call("undim_screen"),
+    /** 休眠抑制状态 + 系统里所有 inhibitor 锁 */
+    getInhibit: () => call("get_inhibit"),
+    /** 息屏能力诊断 */
+    getScreenDiag: () => call("get_screen_diag"),
+    /** 尝试给 bl_power 加写权限（免密 sudo） */
+    fixScreenPermission: () => call("fix_screen_permission"),
     setVolume: (v) => call("set_volume", v),
     /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
     stepVolume: (delta) => call("step_volume", delta),
@@ -441,8 +447,17 @@ const EN = {
     "qam.dimScreen": "Turn off screen (keep playing)",
     "qam.dimHint": "Tap anywhere or press any key to wake",
     "qam.dimPartial": "Backlight not fully off",
-    "qam.dimPartialBody": "The kernel clamped brightness to {val}. The screen is dim but still lit. Try setting bl_power manually.",
+    "qam.dimPartialBody": "Screen is dim but still lit. Tap below to fix permissions.",
     "qam.dimFailed": "Cannot turn off screen",
+    "qam.inhibitFailed": "Bluetooth may drop while screen is off",
+    "qam.inhibitFailedBody": "The plugin could not stop the system from auto-suspending. Your Deck will sleep on the idle timer and the audio link drops. Turn off \"sleep after idle\" in Steam > Settings > Power, or check systemd-inhibit permissions.",
+    "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
+    "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
+    "qam.dimNeedFix": "The screen only dimmed because bl_power is root-only (0444). The plugin needs write access to turn the backlight off completely.",
+    "qam.fixPermission": "Fix permission",
+    "qam.fixOk": "Permission fixed",
+    "qam.fixOkBody": "Now try turning off the screen again",
+    "qam.fixManual": "Manual step needed",
     "qam.playingLabel": "Playing",
     // 全屏页
     "page.title": "Bluetooth Speaker",
@@ -603,6 +618,7 @@ const EN = {
     "chk.pwVersion": "PipeWire version readable",
     "chk.wpVersion": "WirePlumber version readable",
     "chk.modules": "All backend modules loaded",
+    "chk.inhibit": "systemd-inhibit available (keeps Bluetooth alive while screen is off)",
     // Toast
     "toast.failed": "Operation failed",
     "toast.saveFailed": "Save failed",
@@ -654,8 +670,17 @@ const ZH = {
     "qam.dimScreen": "息屏当音箱（继续播放）",
     "qam.dimHint": "触摸屏幕或按任意键唤醒",
     "qam.dimPartial": "背光没能完全关闭",
-    "qam.dimPartialBody": "内核把亮度钳制到了 {val}，屏幕只是变暗但仍然发亮。可尝试手动设置 bl_power。",
+    "qam.dimPartialBody": "屏幕只是变暗但仍然发亮。点下方按钮可修复权限。",
     "qam.dimFailed": "无法关闭屏幕",
+    "qam.inhibitFailed": "息屏期间蓝牙可能会断",
+    "qam.inhibitFailedBody": "插件没能阻止系统自动休眠。闲置计时器走完 Deck 会睡下去，音频链路随之断开。请在 Steam > 设置 > 电源 里关掉「闲置后休眠」，或检查 systemd-inhibit 权限。",
+    "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
+    "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
+    "qam.dimNeedFix": "屏幕只是变暗，因为 bl_power 是 root 只读（0444）。插件需要写权限才能真正切断背光。",
+    "qam.fixPermission": "修复权限",
+    "qam.fixOk": "权限已修复",
+    "qam.fixOkBody": "现在再试一次息屏",
+    "qam.fixManual": "需要手动执行",
     "qam.playingLabel": "正在播放",
     "page.title": "蓝牙音箱",
     "page.readingAdapter": "正在读取蓝牙适配器…",
@@ -811,6 +836,7 @@ const ZH = {
     "chk.pwVersion": "PipeWire 版本可读",
     "chk.wpVersion": "WirePlumber 版本可读",
     "chk.modules": "后端模块全部加载",
+    "chk.inhibit": "systemd-inhibit 可用（息屏时保持蓝牙不断）",
     "toast.failed": "操作失败",
     "toast.saveFailed": "保存失败",
     "toast.switchFailed": "切换失败",
@@ -881,6 +907,170 @@ function t(key, vars) {
     return s;
 }
 
+/**
+ * 调用 Steam 内部的 UI 合成层级 hook。
+ *
+ * 为什么必须用这个？
+ * ----------------
+ * 息屏遮罩如果只靠 `position: fixed` + 高 z-index，**盖不住 Steam 的
+ * 顶栏和 QAM 面板** —— 它们在自己的合成层里，层级比插件的 DOM 更高。
+ * 真机反馈「还能看到 Steam 头像和菜单图标」就是这个原因。
+ *
+ * `createPortal` 到 document.body 也没用，因为问题不在 DOM 层级，
+ * 而在 Steam 的 **compositing layer**（合成层）。
+ *
+ * Steam 内部有一个 composition state 机制：
+ *   AddMinimumCompositionStateRequest / ChangeMinimumCompositionStateRequest
+ *   / RemoveMinimumCompositionStateRequest
+ * 调用它可以把内容提升到指定合成层（Overlay / Opaque 等）。
+ *
+ * 参考实现：steam3d/MagicBlackDecky 的 uiComposition.tsx
+ * 它在 OLED 机型上验证有效。
+ *
+ * ⚠️ 这是 Steam 的**内部 API**，不是公开接口。Steam 更新后可能失效，
+ * 所以这里做了完整的降级：找不到 hook 就只用普通遮罩（至少能变黑），
+ * 并且只警告一次，不刷屏。
+ */
+
+/** Steam 的合成层级。数值越大越靠上。 */
+var UIComposition;
+(function (UIComposition) {
+    UIComposition[UIComposition["Hidden"] = 0] = "Hidden";
+    UIComposition[UIComposition["Notification"] = 1] = "Notification";
+    UIComposition[UIComposition["Overlay"] = 2] = "Overlay";
+    UIComposition[UIComposition["Opaque"] = 3] = "Opaque";
+    UIComposition[UIComposition["OverlayKeyboard"] = 4] = "OverlayKeyboard";
+    UIComposition[UIComposition["OverlayQAM"] = 5] = "OverlayQAM";
+    UIComposition[UIComposition["OverlayKeyboard1"] = 6] = "OverlayKeyboard1";
+})(UIComposition || (UIComposition = {}));
+/**
+ * 靠特征识别 composition hook。
+ *
+ * 不能按名字找 —— 打包后函数名会被压缩。这里按**源码特征**匹配：
+ * 函数体里同时出现三个 CompositionStateRequest 调用，且不含
+ * `m_mapCompositionStateRequests`（那是另一个相似函数）。
+ */
+const isUICompositionHook = (candidate) => {
+    if (typeof candidate !== "function")
+        return false;
+    const source = candidate.toString();
+    return (source.includes("AddMinimumCompositionStateRequest") &&
+        source.includes("ChangeMinimumCompositionStateRequest") &&
+        source.includes("RemoveMinimumCompositionStateRequest") &&
+        !source.includes("m_mapCompositionStateRequests"));
+};
+const resolvedHook = DFL.findVar(isUICompositionHook) ?? DFL.findModuleExport(isUICompositionHook);
+let warned = false;
+/**
+ * 把当前组件提升到指定合成层。
+ *
+ * 注意：这个 hook 在 React 里是按「调用即注册」的方式工作，
+ * 组件卸载时需要调用返回的 `releaseComposition()`。
+ * 这里用 useEffect 包裹，由调用方保证生命周期正确。
+ */
+function useUIComposition(composition) {
+    if (!isUICompositionHook(resolvedHook)) {
+        if (!warned) {
+            warned = true;
+            console.warn("[bt-speaker] Steam UI composition hook 未找到，息屏遮罩可能盖不住顶栏");
+        }
+        return;
+    }
+    try {
+        resolvedHook(composition, "bt-speaker");
+    }
+    catch (e) {
+        if (!warned) {
+            warned = true;
+            console.warn("[bt-speaker] 调用 UI composition 失败", e);
+        }
+    }
+}
+
+/** SetCatchAllGamepadInput 的返回值形态不固定，这里统一成「释放函数」。 */
+function buildReleaseHandle(handle) {
+    if (typeof handle === "function")
+        return handle;
+    const h = handle;
+    if (h && typeof h.Unregister === "function")
+        return () => h.Unregister();
+    if (h && typeof h.unregister === "function")
+        return () => h.unregister();
+    return null;
+}
+function DimOverlay({ onWake, hint }) {
+    const ref = SP_REACT.useRef(null);
+    const releaseRef = SP_REACT.useRef(null);
+    // 用 ref 存回调，避免 onWake 每次重建导致重复订阅
+    const wakeRef = SP_REACT.useRef(onWake);
+    wakeRef.current = onWake;
+    // 提升到 Steam 的 Overlay 合成层，这样能盖住顶栏和 QAM 面板。
+    // 单纯的高 z-index 做不到 —— Steam 的 UI 在更高的合成层里。
+    useUIComposition(UIComposition.Overlay);
+    // 聚焦遮罩，让键盘事件能落到这里
+    SP_REACT.useEffect(() => {
+        try {
+            ref.current?.focus();
+        }
+        catch { /* ignore */ }
+    }, []);
+    // DOM 事件（键盘 / 鼠标 / 触摸）
+    SP_REACT.useEffect(() => {
+        const wake = () => wakeRef.current();
+        window.addEventListener("keydown", wake, true);
+        window.addEventListener("pointerdown", wake, true);
+        window.addEventListener("touchstart", wake, true);
+        window.addEventListener("wheel", wake, true);
+        return () => {
+            window.removeEventListener("keydown", wake, true);
+            window.removeEventListener("pointerdown", wake, true);
+            window.removeEventListener("touchstart", wake, true);
+            window.removeEventListener("wheel", wake, true);
+        };
+    }, []);
+    // 手柄事件（Steam 不走 DOM，必须走 NavigationManager）
+    SP_REACT.useEffect(() => {
+        const navManager = window?.SteamUIStore?.NavigationManager;
+        if (!navManager?.SetCatchAllGamepadInput)
+            return;
+        try {
+            releaseRef.current = buildReleaseHandle(navManager.SetCatchAllGamepadInput(() => wakeRef.current()));
+        }
+        catch {
+            /* 拿不到就只靠 DOM 事件兜着 */
+        }
+        return () => {
+            const rel = releaseRef.current;
+            releaseRef.current = null;
+            try {
+                rel?.();
+            }
+            catch { /* ignore */ }
+        };
+    }, []);
+    const wake = SP_REACT.useCallback(() => wakeRef.current(), []);
+    return (SP_JSX.jsx("div", { ref: ref, tabIndex: 0, onPointerDown: wake, onKeyDown: wake, onClick: wake, onTouchStart: wake, style: {
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "#000",
+            // z-index 只是第二道保险；真正起作用的是上面的 UIComposition
+            zIndex: 2147483647,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "rgba(255,255,255,0.18)",
+            fontSize: 13,
+            cursor: "pointer",
+            outline: "none",
+            // 避免被父容器的 transform 影响
+            transform: "none",
+            willChange: "auto",
+        }, children: hint }));
+}
+
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }) {
     return (SP_JSX.jsx(DFL.Focusable, { onClick: onClick, onActivate: onClick, style: {
@@ -908,17 +1098,9 @@ function Speaker() {
     }, []);
     // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
     const [dimmed, setDimmed] = SP_REACT.useState(false);
-    const overlayRef = SP_REACT.useRef(null);
+    // 背光没能真正关掉（bl_power 是 root 只读）时，显示「修复权限」入口
+    const [needFix, setNeedFix] = SP_REACT.useState(false);
     const dimTimer = SP_REACT.useRef(null);
-    // 息屏后聚焦遮罩层，这样按键能被接住
-    SP_REACT.useEffect(() => {
-        if (dimmed && overlayRef.current) {
-            try {
-                overlayRef.current.focus();
-            }
-            catch { /* ignore */ }
-        }
-    }, [dimmed]);
     // 组件卸载时一定恢复背光，避免留下黑屏
     SP_REACT.useEffect(() => () => {
         if (dimTimer.current)
@@ -928,21 +1110,51 @@ function Speaker() {
         try {
             const r = await api.dimScreen();
             setDimmed(true);
-            // 兜底：后端也有定时器，这里再加一层，防止遮罩层没被点到
             const secs = (r.max_seconds || 300) * 1000;
             if (dimTimer.current)
                 clearTimeout(dimTimer.current);
             dimTimer.current = setTimeout(() => { exitDim(); }, secs);
-            // 背光没真正关掉就明确告诉用户，别让人以为功能生效了
+            // 背光没真正关掉就明确告诉用户，并提示可一键修复
             if (r.backlight_off === false) {
+                setNeedFix(true);
                 toaster.toast({
                     title: t("qam.dimPartial"),
-                    body: t("qam.dimPartialBody", { val: String(r.actual ?? "?") }),
+                    body: t("qam.dimPartialBody"),
+                });
+            }
+            else {
+                setNeedFix(false);
+            }
+            // ⚠️ 休眠抑制没拿到 = 息屏后蓝牙一定会断（系统会自己睡下去）。
+            //    必须单独提示，否则用户只会看到「放一会儿歌就断了」的怪现象。
+            if (r.inhibit && r.inhibit.ok === false) {
+                toaster.toast({
+                    title: t("qam.inhibitFailed"),
+                    body: (r.inhibit.error || "") + " " + t("qam.inhibitFailedBody"),
                 });
             }
         }
         catch (e) {
             toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
+        }
+    };
+    const fixPermission = async () => {
+        try {
+            const r = await api.fixScreenPermission();
+            if (r.ok) {
+                setNeedFix(false);
+                toaster.toast({ title: t("qam.fixOk"), body: t("qam.fixOkBody") });
+            }
+            else {
+                // 免密 sudo 不可用 —— 把确切命令告诉用户
+                toaster.toast({
+                    title: t("qam.fixManual"),
+                    body: r.command || r.reason || "",
+                });
+            }
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
     };
     const exitDim = async () => {
@@ -1055,19 +1267,24 @@ function Speaker() {
                                 } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
-                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
-                    marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                    background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                    fontSize: 12.5, color: COLORS.text,
-                }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && typeof document !== "undefined" && SP_REACTDOM.createPortal(SP_JSX.jsx("div", { ref: overlayRef, tabIndex: 0, onPointerDown: exitDim, onKeyDown: exitDim, onClick: exitDim, onTouchStart: exitDim, style: {
-                    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-                    width: "100vw", height: "100vh",
-                    zIndex: 2147483647, background: "#000",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "rgba(255,255,255,0.22)", fontSize: 13,
-                    cursor: "pointer", outline: "none",
-                }, children: t("qam.dimHint") }), document.body)] }));
+                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
+                            marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+                            fontSize: 12.5, color: COLORS.text,
+                        }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, margin: "5px 4px 0", lineHeight: 1.5 }, children: state.screen.inhibit_held
+                            ? t("qam.dimKeepAwake")
+                            : (state.screen.inhibit_available === false
+                                ? t("qam.inhibitFailedBody")
+                                : t("qam.dimScreenHint")) })] })), needFix && (SP_JSX.jsxs("div", { style: {
+                    marginTop: 8, padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+                    background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+                    color: "#ffb3b3",
+                }, children: [t("qam.dimNeedFix"), SP_JSX.jsx(DFL.Focusable, { onClick: fixPermission, onActivate: fixPermission, style: {
+                            marginTop: 8, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(236,65,65,0.18)", fontSize: 12, color: "#fff",
+                        }, children: t("qam.fixPermission") })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), dimmed && SP_JSX.jsx(DimOverlay, { onWake: exitDim, hint: t("qam.dimHint") })] }));
 }
 
 function BtSpeakerPage() {

@@ -105,6 +105,178 @@
 
 ---
 
+## [2.8.0] - 2026-11-27
+
+**修复真机反馈：息屏后蓝牙自动断连（疑似进入休眠）**
+
+### 结论先说
+
+不是「疑似」——**就是整机休眠**。而且这跟息屏本身没有因果关系，
+真正的链条是：
+
+```
+点「息屏当音箱」 → 用户不再碰 Deck → SteamOS 空闲计时器走完
+→ Steam 调用 logind 的 Suspend() → 整机进 S3
+→ 蓝牙适配器随总线一起挂起 → 手机/电脑看到「放着放着就断了」
+```
+
+之前几个版本只处理了「屏幕亮着」这一层（背光归 0 + 黑遮罩），
+**完全没有碰休眠**。所以「屏幕确实黑了，但蓝牙照样断」——
+这两个现象本来就互不相干。
+
+### 为什么光靠背光/遮罩拦不住
+
+Steam 客户端有**自己的**电源计时器（设置 > 电源 > 闲置后休眠），
+到点后它请求的是**系统级 suspend**，跟显示子系统无关。实测确认：
+即使背光真的关掉了，蓝牙也照样掉。
+
+### Added
+
+- **`inhibit.py`：logind 休眠抑制锁**
+
+  息屏时同时持有一个 `systemd-inhibit --what=idle:sleep --mode=block` 的锁，
+  期间 Steam 发来的睡眠请求会被 logind 直接拒绝
+  （`org.freedesktop.login1.BlockedByInhibitorLock`），Deck 保持醒着，
+  蓝牙链路不断。释放锁后一切恢复原状。
+
+  **为什么用 `systemd-inhibit` 子进程而不是直接调 D-Bus `Inhibit()`？**
+  logind 的 `Inhibit()` 返回的是**文件描述符**，锁的生命周期等于 fd
+  保持打开的时间。用 `busctl` 拿 fd 要维持交互式会话并解析 SCM_RIGHTS，
+  实现脆弱且容易泄漏；`systemd-inhibit` 就是官方为此提供的封装
+  （持 fd、跑子进程、进程退出自动释放锁）。用它最稳。
+
+  **为什么只抑制 `idle:sleep`？**
+  **绝不能**抑制 `handle-power-key` / `handle-lid-switch`：
+  抑制电源键会让用户按电源键也睡不了（只能长按强制断电），
+  抑制合盖会让 Deck 塞进包里还发烫。只挡「自动休眠」这一种，
+  手动操作一律照旧。
+
+- **息屏期间蓝牙链路看护**
+
+  休眠抑制是主防线，但它有可能因为权限 / 系统版本拿不到。
+  所以加了第二道防线：息屏期间每 15 秒检查一次息屏时连着的设备，
+  **发现断了就自动重连**。只在确实断开时才动作 ——
+  对已连接的设备反复发 `connect` 会让对端闪断，反而更糟。
+
+- **如实报告抑制失败**
+
+  拿不到锁时 QAM 会明确提示「息屏期间蓝牙可能会断」，
+  并说明原因和手动解法（关掉 Steam 的闲置休眠），
+  而不是让用户自己去猜「为什么放着放着就断了」。
+
+- 新增 RPC：`get_inhibit`（抑制状态 + `systemd-inhibit --list` 原始输出）
+- `status()` 的 `screen` 字段新增 `inhibit_held` / `inhibit_available`
+- 诊断页新增 `chk.inhibit` 自检项；诊断报告新增「休眠抑制」段落
+  （含 logind 的 `IdleAction` / `IdleHint` / `PreparingForSleep` 原始值）
+
+### Fixed
+
+- **`report()` 会抛 `KeyError: 'name'`**
+
+  自检项的字段名是 `key`（后端只返回 i18n key，文案由前端翻译），
+  但 `report()` 里写的是 `c["name"]`。点「复制诊断报告」必定崩溃。
+  这是 v2.5.0 做英文化时引入的，一直没被发现。
+
+- **`chk.modules` 的详情硬编码成 `"8/8"`**
+
+  新增模块后这个数字就永远是错的。改成按实际数量计算。
+
+### Changed
+
+- **息屏遮罩改用 Steam 内部的 `UIComposition` 合成层**
+
+  真机反馈「屏幕只是变暗，还能看到 Steam 头像和菜单图标」——
+  单纯 `position: fixed` + 高 `z-index` **盖不住 Steam 的顶栏和 QAM**，
+  因为它们在自己的合成层里，层级比插件的 DOM 更高。
+  `createPortal` 到 `document.body` 也没用，问题不在 DOM 层级。
+
+  改用 Steam 内部的 composition state 机制
+  （`AddMinimumCompositionStateRequest` / `ChangeMinimumCompositionStateRequest`
+  / `RemoveMinimumCompositionStateRequest`）把内容提升到 `Overlay` 合成层。
+  参考实现：[steam3d/MagicBlackDecky](https://github.com/steam3d/MagicBlackDecky)。
+
+  新增 `src/uiComposition.ts`（按源码特征匹配 hook，不靠函数名 ——
+  打包后名字会被压缩）和 `src/views/DimOverlay.tsx`。
+  ⚠️ 这是 Steam 的**内部 API**，不是公开接口，Steam 更新后可能失效，
+  所以做了完整降级：找不到 hook 就只用普通遮罩（至少能变黑），且只警告一次。
+
+- **息屏遮罩补上手柄输入捕获**
+
+  Steam 的手柄输入由 `SteamUIStore.NavigationManager` 统一分发，
+  **不产生 DOM keydown**。原来只监听 window 键盘事件，
+  息屏后按 A 键屏幕不亮 —— 而手柄恰好是 Deck 上最常用的唤醒方式。
+  现在额外用 `SetCatchAllGamepadInput` 捕获全部手柄输入。
+
+### 测试
+
+新增 22 项休眠抑制测试，重点是**安全边界**：
+只抑制 `idle:sleep`、绝不抑制电源键 / 合盖 / 关机、
+`hold()` / `release()` 的幂等性、没有 `systemd-inhibit` 时如实失败而不崩。
+
+---
+
+## [2.7.2] - 2026-11-27
+
+### Fixed
+
+- **「显示没有名称的设备」开关仍会漏出无名称设备**
+
+  BlueZ 对没有广播名称的设备会生成 `Alias`，格式是 `AA-BB-CC-DD-EE-FF`
+  （**横线**），而 `Name` / `Address` 用冒号。原来的 `is_mac()` 只认冒号写法，
+  于是横线 Alias 被当成「真实名字」，`has_real_name` 错判为 `True`，
+  过滤开关自然失效。改用 `is_mac_like()`（内部复用 `normalize_mac`）。
+
+- **以前连过的设备扫不出来**
+
+  `bluetoothctl devices` 只列已配对设备，未配对的历史设备不会出现。
+  改为默认 `include_paired=True`，并对 BlueZ < 5.66 用 `paired-devices`
+  子命令兜底（`devices Paired` 是 5.66+ 才有的）。
+
+- **英文界面仍有中文残留**
+
+  后端自检项直接返回了中文文案，前端切英文后照旧显示中文。
+  改为只返回 `chk.*` i18n key，文案由前端按当前语言翻译。
+
+### Changed
+
+- 搜索改为**流式扫描**：边扫边出结果（2 秒轮询 + 已用时间 + 停止按钮 +
+  信号强度条），不再是「等 20 秒一次性出列表」
+- 设备列表与扫描结果共享同一个「显示没有名称的设备」状态
+
+---
+
+## [2.7.1] - 2026-11-27
+
+### Fixed
+
+- **息屏只变暗，屏幕仍然发亮**
+
+  `brightness = 0` 在 Deck OLED 上会被内核**钳制**到最小值，屏幕仍微微发亮
+  （真机反馈「很低亮度，但能看到 Steam 头像和菜单」）。
+  OLED 的亮度是「硬件背光 + gamma 混合」实现的
+  （kernel commit [44b0fed0](https://github.com/torvalds/linux/commit/44b0fed0a5947f54fd14255cd0766df952267bc5)），
+  所以写 0 并不等于关屏。
+
+  改为优先写 `bl_power`（真正切断背光电源），失败才降级到 `brightness=0`，
+  并且**回读验证**实际生效值 —— 不假装成功。
+
+- **遮罩没盖住顶栏**
+
+  见 v2.8.0 的 `UIComposition` 改动（此版本先做了 `position: fixed` 全屏，
+  仍在真机上确认盖不住，问题在 v2.8.0 才真正解决）。
+
+### Notes
+
+真机上确认的边界条件（记录下来避免以后重复踩）：
+
+- `bl_power` 是 `-r--r--r-- root root`（0444），deck 用户写不了
+- `steamos-priv-write` 这个 polkit 助手**只白名单了 `brightness`，不含 `bl_power`**
+- 实测 `sudo chmod a+w bl_power` + `echo 1 > bl_power` **依然不能关屏** ——
+  该驱动根本不理 `bl_power`。所以「修复权限」这条路在这台机器上无效，
+  真正管用的是 v2.8.0 的 `UIComposition` 遮罩
+
+---
+
 ## [2.7.0] - 2026-11-27
 
 ### Added

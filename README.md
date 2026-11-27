@@ -47,6 +47,13 @@ This plugin fills that gap.
   - Snapshot `powered` / `discoverable` / connected devices before sleep
   - On resume: power on → restart agent → restore discoverable → reconnect devices
   - Listens to logind's `PrepareForSleep` via `busctl` / `gdbus` — **not** `dbus-monitor --system`, which needs root for `BecomeMonitor`
+- **Screen off, music still playing** — turn the panel off while the Deck acts as a speaker
+  - Takes a logind **suspend inhibitor lock** (`systemd-inhibit --what=idle:sleep`)
+    so the idle timer can't put the whole machine to sleep and drop the audio link
+  - Never inhibits `handle-power-key` / `handle-lid-switch` — the power button and lid keep working normally
+  - Second line of defence: while the screen is off, the connected device is checked every 15s and reconnected if it dropped
+  - Three ways to wake: any key / touch / **gamepad** (Steam routes gamepad input through `NavigationManager`, not DOM events)
+  - Auto-restore after 5 minutes no matter what, plus restore-on-unload
 
 ### Audio experience
 
@@ -151,6 +158,7 @@ Phone / PC                          Steam Deck (SteamOS)
 | Volume | `wpctl set-volume` (relative `N%+`) | Works without reading current value |
 | Metadata | `busctl get-property org.bluez ... MediaPlayer1` | Track info |
 | Suspend | `busctl monitor` / `gdbus monitor` | Resume restore |
+| Keep awake | `systemd-inhibit --what=idle:sleep --mode=block` | Bluetooth survives while the screen is off |
 | EQ | `libpipewire-module-filter-chain` + `param_eq` + `clamp` | Equalizer with anti-clipping |
 | Multi-output | `libpipewire-module-combine-stream` | Simultaneous output |
 
@@ -217,6 +225,7 @@ Log path: `~/homebrew/logs/decky-bt-speaker/bt-speaker.log`
 | Audio stutters | 2.4 GHz interference — move away from the router / USB 3.0, or switch Wi-Fi to 5 GHz |
 | No sound after switching EQ | PipeWire needs a second or two to restart; if it persists, reboot the Deck |
 | Link lost after closing the lid | Confirm "Restore after sleep" is on; check the captured event count in Diagnostics |
+| **Bluetooth drops a few minutes after turning the screen off** | The Deck fell asleep on the idle timer, not a Bluetooth bug. v2.8.0+ holds a suspend inhibitor while the screen is off. If it still happens, check `chk.inhibit` in Diagnostics — if `systemd-inhibit` is missing, set "Sleep after idle" to Off in Steam > Settings > Power |
 | Volume slider showed 0% | Fixed in v2.4.3+ — replaced with relative-step buttons |
 
 ---
@@ -274,7 +283,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.4.5**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v2.8.0**.
 
 | Version | Contents |
 |---|---|
@@ -301,6 +310,17 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.4.5**.
 | 2.4.3 | Removed volume slider, relative-step buttons |
 | 2.4.4 | Removed the external-source slider too |
 | 2.4.5 | Faster unload (no waiting on child processes) |
+| 2.5.0 | Full English UI (backend returns i18n keys, not text) |
+| 2.5.1 | Unnamed-device filter fixed; older paired devices now found |
+| 2.5.2 | Filter applies to the paired list too |
+| 2.5.3 | MAC normalization (colons / hyphens / dots / bare hex) |
+| 2.5.4 | Trust / untrust per device |
+| 2.5.5 | PC audio too quiet — dropped `a2dp_sink` from `hw-volume` |
+| 2.6.0 | Full Bluetooth device management (connect / disconnect / pair / remove / block) |
+| 2.7.0 | Screen-off speaker mode (hardware backlight) |
+| 2.7.1 | `bl_power` first with read-back verify; overlay covers full screen |
+| 2.7.2 | Streaming scan; unnamed-device toggle; backend i18n cleanup |
+| 2.8.0 | **Screen-off no longer drops Bluetooth** — logind suspend inhibitor + link watchdog; `UIComposition` overlay; gamepad wake |
 
 ---
 
@@ -370,6 +390,13 @@ MIT © 大肥鱼 (BigFatFish)
   - 睡前快照 `powered` / `discoverable` / 已连接设备
   - 唤醒后按序恢复：上电 → 重启 agent → 恢复可发现 → 重连设备
   - 监听 logind 的 `PrepareForSleep`（用 `busctl` / `gdbus`，**不用** `dbus-monitor --system` —— 它需要 root 权限才能 `BecomeMonitor`）
+- **息屏当音箱，音乐不断**：当蓝牙音箱时可以把屏幕关掉
+  - 同时拿一个 logind **休眠抑制锁**（`systemd-inhibit --what=idle:sleep`），
+    这样闲置计时器没法把整机睡下去、把音频链路一起断掉
+  - **绝不**抑制 `handle-power-key` / `handle-lid-switch` —— 电源键和合盖照常工作
+  - 第二道防线：息屏期间每 15 秒检查一次已连接设备，掉了就自动重连
+  - 三种唤醒方式：任意按键 / 触摸 / **手柄**（Steam 的手柄事件走 `NavigationManager`，不产生 DOM 事件）
+  - 无论如何 5 分钟后自动恢复；插件卸载时也会恢复
 
 ### 音频体验
 
@@ -474,6 +501,7 @@ python pack.py          # 打包
 | 音量 | `wpctl set-volume`（相对语法 `N%+`） | 不需要读当前值 |
 | 元数据 | `busctl get-property org.bluez ... MediaPlayer1` | 曲目信息 |
 | 睡眠 | `busctl monitor` / `gdbus monitor` | 唤醒恢复 |
+| 息屏保活 | `systemd-inhibit --what=idle:sleep --mode=block` | 息屏时蓝牙不断 |
 | 均衡 | `libpipewire-module-filter-chain` + `param_eq` + `clamp` | EQ 与抗削波 |
 | 多输出 | `libpipewire-module-combine-stream` | 同步出声 |
 
@@ -522,9 +550,9 @@ python pack.py          # 打包
 
 全屏页 → **诊断**：
 
-- **12 项自检**，每项明确的 ✅/❌
+- **13 项自检**，每项明确的 ✅/❌
 - **复制诊断报告**：纯文本，直接贴给作者
-- 后端模块加载状态（8 个模块逐个显示）
+- 后端模块加载状态（10 个模块逐个显示）
 - `bluetoothctl show` 原始输出
 - `wpctl status`
 - 插件日志
@@ -540,6 +568,7 @@ python pack.py          # 打包
 | 声音断续 | 2.4GHz 干扰，远离路由器 / USB 3.0；或用 5GHz Wi-Fi |
 | 切 EQ 后没声音 | PipeWire 重启需要一两秒，等一下；还不行就重启 Deck |
 | 合盖再开盖失联 | 确认「睡眠唤醒后自动恢复」开着，诊断页看已捕获事件数 |
+| **息屏几分钟后蓝牙自动断** | Deck 在闲置计时器上睡着了，不是蓝牙问题。v2.8.0+ 息屏时会持休眠抑制锁。若仍出现，看诊断页的 `chk.inhibit` —— 没有 `systemd-inhibit` 就去 Steam > 设置 > 电源 把「闲置后休眠」关掉 |
 | 音量滑条显示 0% | v2.4.3+ 已修复 —— 改成相对调节按钮 |
 
 ---
@@ -549,7 +578,10 @@ python pack.py          # 打包
 ```
 decky-bt-speaker/
 ├── main.py              # 后端入口（Plugin 类 / RPC / 生命周期）
+├── btutil.py            # 通用工具（MAC 归一化 / 命令执行 / 设备名推断）
 ├── bt.py                # BlueZ + PipeWire 封装
+├── screen.py            # 息屏（背光 sysfs）
+├── inhibit.py           # 休眠抑制锁（息屏时蓝牙不断）
 ├── power.py             # 睡眠/唤醒监听
 ├── nodes.py             # PipeWire 节点图解析
 ├── focus.py             # 音频焦点 / 编码器
@@ -561,6 +593,7 @@ decky-bt-speaker/
 ├── wifi.py              # Wi-Fi 频段 / 干扰检测
 ├── pack.py              # 打包（含漏包自检）
 ├── tests_offline.py     # 离线自检（200+ 项，不需要 Deck）
+├── tests_i18n.py        # 中英词典一致性检查
 ├── src/
 │   ├── index.tsx        # definePlugin
 │   ├── backend.ts       # RPC 封装
@@ -568,8 +601,10 @@ decky-bt-speaker/
 │   ├── i18n.ts          # 中英双语词典
 │   ├── types.ts         # TS 类型
 │   ├── components.tsx   # 通用控件
+│   ├── uiComposition.ts # Steam 内部合成层 hook（遮罩盖住顶栏）
 │   └── views/
 │       ├── Speaker.tsx        # QAM 面板
+│       ├── DimOverlay.tsx     # 息屏遮罩（含手柄捕获）
 │       └── BtSpeakerPage.tsx  # 全屏页（设备/设置/均衡器/诊断）
 └── docs/
     ├── 功能拓展与竞品调研.md
@@ -597,7 +632,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.4.5**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.8.0**。
 
 | 版本 | 内容 |
 |---|---|
@@ -624,6 +659,17 @@ python pack.py          # 打包 zip
 | 2.4.3 | 删音量滑条，改相对调节按钮 |
 | 2.4.4 | 外部音源滑条也删掉 |
 | 2.4.5 | 卸载加快（不等子进程退出） |
+| 2.5.0 | 界面完全英文化（后端只回 i18n key，不回文案） |
+| 2.5.1 | 修好无名称设备过滤；历史已配对设备也能搜到 |
+| 2.5.2 | 过滤开关也作用于已配对列表 |
+| 2.5.3 | MAC 归一化（冒号 / 横线 / 点分 / 纯十六进制） |
+| 2.5.4 | 单设备信任 / 取消信任 |
+| 2.5.5 | 电脑推流声音小 —— 从 `hw-volume` 移除 `a2dp_sink` |
+| 2.6.0 | 完整蓝牙设备管理（连接 / 断开 / 配对 / 移除 / 拉黑） |
+| 2.7.0 | 息屏当音箱（硬件背光） |
+| 2.7.1 | 优先 `bl_power` + 回读验证；遮罩铺满全屏 |
+| 2.7.2 | 流式扫描；无名称设备开关；后端英文化收尾 |
+| 2.8.0 | **息屏后蓝牙不再断** —— logind 休眠抑制锁 + 链路看护；`UIComposition` 遮罩；手柄唤醒 |
 
 ---
 

@@ -212,6 +212,23 @@ export interface ScreenInfo {
   max_seconds?: number;
   current?: number;
   max?: number;
+  /** 是否已拿到休眠抑制锁（拿不到的话息屏后蓝牙仍会断） */
+  inhibit_held?: boolean;
+  /** 系统里有没有 systemd-inhibit */
+  inhibit_available?: boolean;
+}
+
+/** 息屏时拿到的休眠抑制锁状态 */
+export interface InhibitInfo {
+  available: boolean;
+  held: boolean;
+  what: string;
+  seconds: number;
+  starts: number;
+  failures: number;
+  last_error: string;
+  /** `systemd-inhibit --list` 原始输出 */
+  system?: string;
 }
 
 export interface SpeakerStatus {

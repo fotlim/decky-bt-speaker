@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   PanelSection, PanelSectionRow, ButtonItem, ToggleField, SliderField, Navigation, Focusable,
 } from "@decky/ui";
@@ -10,6 +9,7 @@ import { useSpeaker, setPanelVisible } from "../store";
 import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
+import { DimOverlay } from "./DimOverlay";
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
@@ -49,15 +49,9 @@ export function Speaker() {
 
   // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
   const [dimmed, setDimmed] = useState(false);
-  const overlayRef = useRef<HTMLDivElement>(null);
+  // 背光没能真正关掉（bl_power 是 root 只读）时，显示「修复权限」入口
+  const [needFix, setNeedFix] = useState(false);
   const dimTimer = useRef<any>(null);
-
-  // 息屏后聚焦遮罩层，这样按键能被接住
-  useEffect(() => {
-    if (dimmed && overlayRef.current) {
-      try { overlayRef.current.focus(); } catch { /* ignore */ }
-    }
-  }, [dimmed]);
 
   // 组件卸载时一定恢复背光，避免留下黑屏
   useEffect(() => () => {
@@ -68,19 +62,47 @@ export function Speaker() {
     try {
       const r: any = await api.dimScreen();
       setDimmed(true);
-      // 兜底：后端也有定时器，这里再加一层，防止遮罩层没被点到
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
       dimTimer.current = setTimeout(() => { exitDim(); }, secs);
-      // 背光没真正关掉就明确告诉用户，别让人以为功能生效了
+      // 背光没真正关掉就明确告诉用户，并提示可一键修复
       if (r.backlight_off === false) {
+        setNeedFix(true);
         toaster.toast({
           title: t("qam.dimPartial"),
-          body: t("qam.dimPartialBody", { val: String(r.actual ?? "?") }),
+          body: t("qam.dimPartialBody"),
+        });
+      } else {
+        setNeedFix(false);
+      }
+      // ⚠️ 休眠抑制没拿到 = 息屏后蓝牙一定会断（系统会自己睡下去）。
+      //    必须单独提示，否则用户只会看到「放一会儿歌就断了」的怪现象。
+      if (r.inhibit && r.inhibit.ok === false) {
+        toaster.toast({
+          title: t("qam.inhibitFailed"),
+          body: (r.inhibit.error || "") + " " + t("qam.inhibitFailedBody"),
         });
       }
     } catch (e) {
       toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
+    }
+  };
+
+  const fixPermission = async () => {
+    try {
+      const r = await api.fixScreenPermission();
+      if (r.ok) {
+        setNeedFix(false);
+        toaster.toast({ title: t("qam.fixOk"), body: t("qam.fixOkBody") });
+      } else {
+        // 免密 sudo 不可用 —— 把确切命令告诉用户
+        toaster.toast({
+          title: t("qam.fixManual"),
+          body: r.command || r.reason || "",
+        });
+      }
+    } catch (e) {
+      toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     }
   };
 
@@ -359,20 +381,53 @@ export function Speaker() {
         </div>
       )}
 
-      {/* 息屏当音箱：背光归 0 省电、防烧屏。任何按键 / 触摸立即恢复。 */}
+      {/* 息屏当音箱：背光归 0 省电、防烧屏。任何按键 / 触摸立即恢复。
+          同时会拿一个 logind 抑制锁阻止系统自动休眠 —— 否则闲置计时器走完
+          Deck 会整机睡下去，蓝牙链路跟着断（真机踩过这个坑）。 */}
       {state?.screen?.available && (
-        <Focusable
-          onClick={enterDim}
-          onActivate={enterDim}
-          style={{
-            marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-            fontSize: 12.5, color: COLORS.text,
-          }}
-        >
-          <FaMoon size={11} /> {t("qam.dimScreen")}
-        </Focusable>
+        <>
+          <Focusable
+            onClick={enterDim}
+            onActivate={enterDim}
+            style={{
+              marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+              fontSize: 12.5, color: COLORS.text,
+            }}
+          >
+            <FaMoon size={11} /> {t("qam.dimScreen")}
+          </Focusable>
+          <div style={{ fontSize: 11, color: COLORS.dim, margin: "5px 4px 0", lineHeight: 1.5 }}>
+            {state.screen.inhibit_held
+              ? t("qam.dimKeepAwake")
+              : (state.screen.inhibit_available === false
+                ? t("qam.inhibitFailedBody")
+                : t("qam.dimScreenHint"))}
+          </div>
+        </>
+      )}
+
+      {/* 背光只变暗（bl_power 是 root 只读）时，给一键修复入口 */}
+      {needFix && (
+        <div style={{
+          marginTop: 8, padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+          background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
+          color: "#ffb3b3",
+        }}>
+          {t("qam.dimNeedFix")}
+          <Focusable
+            onClick={fixPermission}
+            onActivate={fixPermission}
+            style={{
+              marginTop: 8, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(236,65,65,0.18)", fontSize: 12, color: "#fff",
+            }}
+          >
+            {t("qam.fixPermission")}
+          </Focusable>
+        </div>
       )}
 
       <PanelSectionRow>
@@ -383,36 +438,9 @@ export function Speaker() {
         </ButtonItem>
       </PanelSectionRow>
 
-      {/* 息屏遮罩：挂在 document.body 上（createPortal），而不是就地渲染。
-          为什么必须用 Portal？
-          ------------------
-          Decky 的 QAM 面板容器带 CSS transform，而 transform 会**破坏
-          position:fixed 的包含块** —— fixed 元素变成相对那个容器定位，
-          结果遮罩只盖住面板区域，Steam 的头像和菜单栏仍然露在外面
-          （真机反馈「还能看到头像和菜单图标」就是这个原因）。
-
-          挂到 body 之后 fixed 才真正相对视口，能盖满整个屏幕。 */}
-      {dimmed && typeof document !== "undefined" && createPortal(
-        <div
-          ref={overlayRef}
-          tabIndex={0}
-          onPointerDown={exitDim}
-          onKeyDown={exitDim}
-          onClick={exitDim}
-          onTouchStart={exitDim}
-          style={{
-            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-            width: "100vw", height: "100vh",
-            zIndex: 2147483647, background: "#000",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "rgba(255,255,255,0.22)", fontSize: 13,
-            cursor: "pointer", outline: "none",
-          }}
-        >
-          {t("qam.dimHint")}
-        </div>,
-        document.body,
-      )}
+      {/* 息屏遮罩：独立组件，用 Steam 的 UIComposition 提升合成层，
+          这样能盖住顶栏和 QAM 面板（单纯高 z-index 做不到）。 */}
+      {dimmed && <DimOverlay onWake={exitDim} hint={t("qam.dimHint")} />}
     </PanelSection>
   );
 }

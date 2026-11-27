@@ -70,8 +70,17 @@ const EN: Dict = {
   "qam.dimScreen": "Turn off screen (keep playing)",
   "qam.dimHint": "Tap anywhere or press any key to wake",
   "qam.dimPartial": "Backlight not fully off",
-  "qam.dimPartialBody": "The kernel clamped brightness to {val}. The screen is dim but still lit. Try setting bl_power manually.",
+  "qam.dimPartialBody": "Screen is dim but still lit. Tap below to fix permissions.",
   "qam.dimFailed": "Cannot turn off screen",
+  "qam.inhibitFailed": "Bluetooth may drop while screen is off",
+  "qam.inhibitFailedBody": "The plugin could not stop the system from auto-suspending. Your Deck will sleep on the idle timer and the audio link drops. Turn off \"sleep after idle\" in Steam > Settings > Power, or check systemd-inhibit permissions.",
+  "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
+  "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
+  "qam.dimNeedFix": "The screen only dimmed because bl_power is root-only (0444). The plugin needs write access to turn the backlight off completely.",
+  "qam.fixPermission": "Fix permission",
+  "qam.fixOk": "Permission fixed",
+  "qam.fixOkBody": "Now try turning off the screen again",
+  "qam.fixManual": "Manual step needed",
   "qam.playingLabel": "Playing",
 
   // 全屏页
@@ -238,6 +247,7 @@ const EN: Dict = {
   "chk.pwVersion": "PipeWire version readable",
   "chk.wpVersion": "WirePlumber version readable",
   "chk.modules": "All backend modules loaded",
+  "chk.inhibit": "systemd-inhibit available (keeps Bluetooth alive while screen is off)",
 
   // Toast
   "toast.failed": "Operation failed",
@@ -293,8 +303,17 @@ const ZH: Dict = {
   "qam.dimScreen": "息屏当音箱（继续播放）",
   "qam.dimHint": "触摸屏幕或按任意键唤醒",
   "qam.dimPartial": "背光没能完全关闭",
-  "qam.dimPartialBody": "内核把亮度钳制到了 {val}，屏幕只是变暗但仍然发亮。可尝试手动设置 bl_power。",
+  "qam.dimPartialBody": "屏幕只是变暗但仍然发亮。点下方按钮可修复权限。",
   "qam.dimFailed": "无法关闭屏幕",
+  "qam.inhibitFailed": "息屏期间蓝牙可能会断",
+  "qam.inhibitFailedBody": "插件没能阻止系统自动休眠。闲置计时器走完 Deck 会睡下去，音频链路随之断开。请在 Steam > 设置 > 电源 里关掉「闲置后休眠」，或检查 systemd-inhibit 权限。",
+  "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
+  "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
+  "qam.dimNeedFix": "屏幕只是变暗，因为 bl_power 是 root 只读（0444）。插件需要写权限才能真正切断背光。",
+  "qam.fixPermission": "修复权限",
+  "qam.fixOk": "权限已修复",
+  "qam.fixOkBody": "现在再试一次息屏",
+  "qam.fixManual": "需要手动执行",
   "qam.playingLabel": "正在播放",
 
   "page.title": "蓝牙音箱",
@@ -456,6 +475,7 @@ const ZH: Dict = {
   "chk.pwVersion": "PipeWire 版本可读",
   "chk.wpVersion": "WirePlumber 版本可读",
   "chk.modules": "后端模块全部加载",
+  "chk.inhibit": "systemd-inhibit 可用（息屏时保持蓝牙不断）",
 
   "toast.failed": "操作失败",
   "toast.saveFailed": "保存失败",

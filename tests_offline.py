@@ -6,6 +6,7 @@
 
 import sys
 import os
+import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -977,13 +978,58 @@ def test_power_parse():
           power.SleepWatcher.parse_sleep_state("Member=PrepareForSleep") is None)
 
 
+def test_inhibit():
+    print("休眠抑制（息屏后蓝牙不断的关键）")
+    import inhibit
+
+    # 抑制的动作必须是 idle:sleep —— 绝不能含 handle-power-key / handle-lid-switch。
+    # 抑制电源键会让用户按电源键也睡不了，抑制合盖会塞进包里发烫。
+    check("只抑制 idle:sleep", inhibit.DEFAULT_WHAT == "idle:sleep",
+          "实际 %s" % inhibit.DEFAULT_WHAT)
+    check("不抑制电源键", "handle-power-key" not in inhibit.DEFAULT_WHAT)
+    check("不抑制合盖", "handle-lid-switch" not in inhibit.DEFAULT_WHAT)
+    check("不抑制关机", "shutdown" not in inhibit.DEFAULT_WHAT)
+
+    # 说明文字不能为空（会显示在 systemd-inhibit --list 里）
+    check("WHO 非空", bool(inhibit.WHO.strip()))
+    check("WHY 非空", bool(inhibit.WHY.strip()))
+
+    # 状态机：未持有时 release 是安全空操作
+    inh = inhibit.Inhibitor()
+    st = inh.status()
+    check("status 有 available", "available" in st)
+    check("status 有 held", "held" in st)
+    check("status 有 what", "what" in st)
+    check("初始未持锁", st["held"] is False)
+    check("初始 seconds 为 0", st["seconds"] == 0.0)
+    check("初始无失败", st["failures"] == 0)
+    check("alive() 初始为假", inh.alive() is False)
+
+    # 本机（Windows）没有 systemd-inhibit，hold() 应该如实失败而不是崩
+    r = asyncio.run(inh.hold())
+    check("hold 返回 dict", isinstance(r, dict))
+    check("hold 有 ok 字段", "ok" in r)
+    if not inhibit.Inhibitor.available():
+        check("没有 systemd-inhibit 时 hold 失败", r["ok"] is False)
+        check("失败时给出 error", bool(r.get("error")))
+        check("失败计数 +1", inh.status()["failures"] == 1)
+
+    # release 幂等
+    rr = asyncio.run(inh.release())
+    check("release 返回 was_held", "was_held" in rr)
+    check("未持有时 release 不报错", rr["ok"] is True)
+
+    # available() 必须能安全调用（不抛异常）
+    check("available 不崩", isinstance(inhibit.Inhibitor.available(), bool))
+
+
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
                test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
-               test_settings_validation, test_power_parse):
+               test_settings_validation, test_power_parse, test_inhibit):
         fn()
     print()
     if FAILED:
