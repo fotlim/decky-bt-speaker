@@ -1,6 +1,10 @@
 export interface BtDevice {
   mac: string;
   name: string;
+  /** 给界面用的可读名：没广播名字时按类型 + MAC 后缀拼，例如「手机 · EE:FF」 */
+  display?: string;
+  /** 设备是否真的广播了名字（false 表示是推断出来的标签） */
+  has_real_name?: boolean;
   alias?: string;
   icon?: string;
   class?: string;

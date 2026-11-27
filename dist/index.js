@@ -1,4 +1,4 @@
-const manifest = {"name":"蓝牙音箱"};
+const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!internalAPIConnection) {
@@ -269,6 +269,407 @@ function Avatar({ icon, connected }) {
         }, children: glyph }));
 }
 
+/**
+ * 轻量 i18n：跟随 Steam 客户端语言，默认英文。
+ *
+ * 为什么不直接用 i18next？
+ * ----------------------
+ * Decky Loader 内部用 i18next，但那是给 loader 自己用的，
+ * 插件无法直接复用它的实例和语言包。自己做一个极小的查表方案更可靠，
+ * 也避免引入额外依赖（Decky 插件体积越小越好）。
+ *
+ * 语言从哪来？
+ * -----------
+ * 按可靠性排序依次尝试：
+ *   1. `SteamClient.Settings.GetLanguage()`（最准，跟随 Steam 界面语言）
+ *   2. `navigator.language`
+ *   3. 兜底 `en`
+ *
+ * 中文用户会拿到 `schinese` / `zh-CN` 等，统一归一化成 `zh`。
+ */
+const EN = {
+    // 通用
+    "common.ok": "OK",
+    "common.cancel": "Cancel",
+    "common.save": "Save",
+    "common.saving": "Saving…",
+    "common.remove": "Remove",
+    "common.retry": "Retry",
+    "common.reading": "Reading…",
+    "common.none": "None",
+    "common.unknown": "Unknown",
+    // 插件名
+    "plugin.name": "Bluetooth Speaker",
+    // QAM 面板
+    "qam.btOn": "Bluetooth on",
+    "qam.btOff": "Bluetooth off",
+    "qam.discoverable": "Discoverable",
+    "qam.notVisible": "Hidden",
+    "qam.connectedCount": "{n} connected",
+    "qam.allowDiscover": "Allow devices to find and connect",
+    "qam.allowDiscoverDescOn": "This Deck appears in phone / PC Bluetooth lists",
+    "qam.allowDiscoverDescOff": "Turn on so other devices can find it",
+    "qam.turnOnBt": "Turn on Bluetooth",
+    "qam.unblockRfkill": "Unblock radio (needs sudo)",
+    "qam.rfkillHard": "Bluetooth is hardware-blocked. Software can't fix it — restart the Deck.",
+    "qam.rfkillSoft": "Bluetooth is blocked by the radio switch. This is the most common reason it won't turn on.",
+    "qam.playing": "Now playing: {name}",
+    "qam.externalSource": "External source",
+    "qam.disconnect": "Disconnect",
+    "qam.volume": "Volume",
+    "qam.clipping": "may clip",
+    "qam.boost": "Too quiet? Boost to 130%",
+    "qam.boosted": "Boosted to 130%",
+    "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
+    "qam.manage": "Devices / Settings",
+    "qam.playingLabel": "Playing",
+    // 全屏页
+    "page.title": "Bluetooth Speaker",
+    "page.readingAdapter": "Reading Bluetooth adapter…",
+    "page.a2dpSink": "A2DP Sink",
+    "page.noSink": "No Sink role",
+    "tab.devices": "Paired",
+    "tab.settings": "Settings",
+    "tab.eq": "Equalizer",
+    "tab.diag": "Diagnostics",
+    // 设备
+    "dev.search": "Search nearby devices",
+    "dev.searchHint": "Scans for 20 seconds, then tap Pair. No need to leave the plugin.",
+    "dev.searchHintWarn": "Tip: turn on \"Allow devices to find and connect\" in QAM first.",
+    "dev.searching": "Searching… (about 20s)",
+    "dev.pair": "Pair",
+    "dev.pairing": "Pairing…",
+    "dev.paired": "Paired {name}",
+    "dev.pairFailed": "Pair failed",
+    "dev.noneFound": "No unpaired devices found. The phone may already be paired, or its Bluetooth is off.",
+    "dev.noDevices": "No devices paired yet. Use \"Search nearby devices\" above to find your phone.",
+    "dev.pairedCount": "Paired ({n})",
+    "dev.connected": "Connected",
+    "dev.notConnected": "Not connected",
+    "dev.connect": "Connect",
+    "dev.connecting": "Connecting…",
+    "dev.disconnected": "Disconnected",
+    "dev.repair": "Repair",
+    "dev.repairing": "Repairing…",
+    "dev.removed": "Pairing removed",
+    "dev.noName": "device did not broadcast a name",
+    "dev.hint": "Once connected, play music on your phone and it comes out of the Deck. Only one A2DP source at a time.",
+    "dev.hintPair": "Pairing code / passkey incorrect? Tap \"Repair\" — it clears the old bond key on the Deck side. If it still fails, \"Forget\" the device on your phone too.",
+    // 设置
+    "set.name": "Device name",
+    "set.nameHint": "The name others see in their Bluetooth list.",
+    "set.audioTuning": "Speaker tuning",
+    "set.audioTuningLabel": "Enable \"speaker optimization\"",
+    "set.audioTuningDesc": "Writes a user-level WirePlumber config: A2DP-only roles, external stream goes straight to speakers, no fallback to call mono. Restarts WirePlumber.",
+    "set.tuningOn": "Speaker optimization enabled",
+    "set.tuningOff": "Restored system defaults",
+    "set.tuningHint": "Config: {path}. If you get no sound after connecting, or it sounds muffled, turn this on and reconnect.",
+    "set.pairing": "Pairing",
+    "set.pairingHint": "The pairing agent answers requests from your phone. If the phone shows a code but the Deck does nothing, restart it here.",
+    "set.agentReady": "Pairing agent ready",
+    "set.agentRunning": "Agent running, registration unconfirmed",
+    "set.agentDown": "Pairing agent not running",
+    "set.restartAgent": "Restart agent",
+    "set.focus": "Audio focus",
+    "set.focusHint": "How phone audio and game audio share the speakers. Your system default output is never rewritten.",
+    "set.focusCoexist": "Coexist with game",
+    "set.focusCoexistDesc": "Both play, neither takes over (recommended)",
+    "set.focusReceiver": "Receiver first",
+    "set.focusReceiverDesc": "Prioritize phone audio quality, disable auto call-mode switch",
+    "set.focusManual": "Manual",
+    "set.focusManualDesc": "Plugin stays out of it, use the system volume panel",
+    "set.codec": "Audio quality (codec)",
+    "set.codecHint": "Bluetooth quality is mostly decided by the codec. SBC-XQ is a high-quality SBC variant: ~452 kbps vs 328, with almost no compatibility loss.",
+    "set.codecCurrent": "Active codec: {codec}",
+    "set.codecReconnect": "After changing the codec, disconnect and reconnect on your phone so it renegotiates.",
+    "set.stutter": "Stutter / quality",
+    "set.stutterWifi": "2.4 GHz Wi-Fi interference detected",
+    "set.stutterWifiBody": "Bluetooth shares the 2.4 GHz radio with Wi-Fi — the top cause of audio stutter. Switching Wi-Fi to 5 GHz usually fixes it immediately.",
+    "set.stutterOk": "Wi-Fi is on 5 GHz or not connected — no conflict with Bluetooth.",
+    "set.fixStutter": "Fix stuttering",
+    "set.diagStutter": "Diagnose",
+    "set.stutterHint": "\"Fix stuttering\" switches to the anti-stutter latency profile (bigger buffer) and sets volume to 100%.",
+    "set.power": "Power saving",
+    "set.powerHint": "Phones often stay connected after the music stops. Auto-disconnect keeps the radio free.",
+    "set.silence": "Auto-disconnect after silence",
+    "set.silenceOff": "Off",
+    "set.silenceRemain": "({n}s left)",
+    "set.normalize": "Volume normalization",
+    "set.normalizeHint": "Track-to-track volume jumps are common. A baseline is recorded and jumps over 25% are flagged. Baseline: {base}",
+    "set.normJumps": "{n} jumps detected",
+    "set.normUnset": "not set",
+    "set.setBaseline": "Use current volume",
+    "set.resetBaseline": "Reset",
+    "set.behavior": "Behavior",
+    "set.autoStart": "Enter discoverable mode on load",
+    "set.autoStartDesc": "Turn Bluetooth on automatically when Decky loads",
+    "set.keepAlive": "Stay discoverable",
+    "set.keepAliveDesc": "BlueZ hides the adapter after 180s by default; re-checked every minute",
+    "set.resume": "Restore after sleep",
+    "set.resumeDescOn": "Watching ({backend}): restores discoverable and reconnects the last device",
+    "set.resumeDescOff": "Listen for suspend/resume and restore Bluetooth state (closing the lid won't drop the link)",
+    "set.resumeEvents": "{n} suspend/resume events captured, last: {last}",
+    "set.lastDevice": "last device {mac}",
+    "set.sysinfo": "System info",
+    // EQ
+    "eq.presets": "Presets",
+    "eq.hint": "Uses PipeWire's built-in param_eq (no external plugins). Switching restarts PipeWire — expect a second of silence.",
+    "eq.bands": "{n} bands",
+    "eq.custom": "Custom (AutoEQ import)",
+    "eq.customActive": "Using imported curve",
+    "eq.active": "Active",
+    "eq.import": "Import AutoEQ / Squiglink curve",
+    "eq.importHint": "Paste the contents of ParametricEQ.txt from AutoEq or squig.link. Format: `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`.",
+    "eq.paste": "Paste curve…",
+    "eq.collapse": "Collapse",
+    "eq.removeEq": "Remove EQ entirely",
+    "eq.applyImport": "Import and apply",
+    "eq.importing": "Importing…",
+    "eq.applied": "EQ switched",
+    "eq.appliedBody": "PipeWire restarted, there may be a second of silence",
+    "eq.imported": "Imported {n} EQ bands",
+    "eq.skipped": "skipped {n} unrecognized lines",
+    // 诊断
+    "diag.checks": "Self-check",
+    "diag.modules": "Backend modules",
+    "diag.tools": "Command availability",
+    "diag.adapterRaw": "Raw adapter info",
+    "diag.wpStatus": "Audio status",
+    "diag.report": "Full report",
+    "diag.copy": "Copy diagnostic report",
+    "diag.copied": "Report copied",
+    "diag.copiedBody": "Paste it to the author",
+    "diag.generated": "Report generated",
+    "diag.generatedBody": "Select and copy below",
+    "diag.viewLog": "View log",
+    "diag.pluginLog": "Plugin log",
+    "diag.agent": "Pairing agent",
+    // Toast
+    "toast.failed": "Operation failed",
+    "toast.saveFailed": "Save failed",
+    "toast.switchFailed": "Switch failed",
+    "toast.nameChanged": "Device name set to {name}",
+    "toast.renameFailed": "Rename failed",
+};
+const ZH = {
+    "common.ok": "确定",
+    "common.cancel": "取消",
+    "common.save": "保存",
+    "common.saving": "保存中…",
+    "common.remove": "移除",
+    "common.retry": "重试",
+    "common.reading": "读取中…",
+    "common.none": "无",
+    "common.unknown": "未知",
+    "plugin.name": "蓝牙音箱",
+    "qam.btOn": "蓝牙已开",
+    "qam.btOff": "蓝牙已关",
+    "qam.discoverable": "可被发现",
+    "qam.notVisible": "不可见",
+    "qam.connectedCount": "{n} 台已连接",
+    "qam.allowDiscover": "允许设备发现并连接",
+    "qam.allowDiscoverDescOn": "手机 / 电脑的蓝牙列表里能看到这台 Deck",
+    "qam.allowDiscoverDescOff": "打开后其它设备才能搜到",
+    "qam.turnOnBt": "打开蓝牙",
+    "qam.unblockRfkill": "解除射频阻挡（需要 sudo）",
+    "qam.rfkillHard": "蓝牙被硬件开关阻挡（Hard blocked），软件解不了，请重启 Deck。",
+    "qam.rfkillSoft": "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。",
+    "qam.playing": "正在播放：{name}",
+    "qam.externalSource": "外部音源",
+    "qam.disconnect": "断开",
+    "qam.volume": "音量",
+    "qam.clipping": "可能破音",
+    "qam.boost": "声音太小？增强到 130%",
+    "qam.boosted": "已增益到 130%",
+    "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
+    "qam.manage": "设备管理 / 设置",
+    "qam.playingLabel": "正在播放",
+    "page.title": "蓝牙音箱",
+    "page.readingAdapter": "正在读取蓝牙适配器…",
+    "page.a2dpSink": "A2DP Sink",
+    "page.noSink": "无 Sink 角色",
+    "tab.devices": "已配对设备",
+    "tab.settings": "设置",
+    "tab.eq": "均衡器",
+    "tab.diag": "诊断",
+    "dev.search": "搜索附近设备",
+    "dev.searchHint": "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。",
+    "dev.searchHintWarn": "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。",
+    "dev.searching": "正在搜索…（约 20 秒）",
+    "dev.pair": "配对",
+    "dev.pairing": "配对中…",
+    "dev.paired": "已配对 {name}",
+    "dev.pairFailed": "配对失败",
+    "dev.noneFound": "没搜到未配对的设备。可能是：手机已经配过这台 Deck、或手机蓝牙没打开、或对方不可被发现。",
+    "dev.noDevices": "还没有配对过任何设备。用上面的「搜索附近设备」找到手机后点「配对」即可，不用退出插件去系统蓝牙设置。",
+    "dev.pairedCount": "已配对（{n}）",
+    "dev.connected": "已连接",
+    "dev.notConnected": "未连接",
+    "dev.connect": "连接",
+    "dev.connecting": "正在连接…",
+    "dev.disconnected": "已断开",
+    "dev.repair": "修复配对",
+    "dev.repairing": "正在修复配对…",
+    "dev.removed": "已移除配对",
+    "dev.noName": "设备未广播名称",
+    "dev.hint": "连接成功后在手机上播放音乐，声音就会从 Deck 的喇叭出来。同一时间只能有一个源在放（蓝牙 A2DP 的限制）。",
+    "dev.hintPair": "配对码 / 通行密钥不正确？点「修复配对」——它会清除 Deck 端保存的旧绑定密钥再重新配对。如果仍失败，请在手机端也「忘记」这个设备后重新搜索。",
+    "set.name": "设备名",
+    "set.nameHint": "别人蓝牙列表里看到的名字。建议改成一个好认的名字。",
+    "set.audioTuning": "音箱优化",
+    "set.audioTuningLabel": "启用「音箱优化」配置",
+    "set.audioTuningDesc": "写入用户级 WirePlumber 配置：只保留 A2DP 角色、外部推流直出、避免掉成通话单声道。改完会自动重启 WirePlumber。",
+    "set.tuningOn": "已启用音箱优化",
+    "set.tuningOff": "已恢复系统默认",
+    "set.tuningHint": "配置文件：{path}。连上了却没声音、或者声音变成单声道发闷时，打开它再重连一次通常就好了。",
+    "set.pairing": "配对",
+    "set.pairingHint": "配对 agent 负责应答手机的配对请求。如果手机弹了配对码但 Deck 没反应，说明 agent 没工作，点下面的按钮重启它再试。",
+    "set.agentReady": "配对 agent 已就绪",
+    "set.agentRunning": "配对 agent 运行中，但未确认注册",
+    "set.agentDown": "配对 agent 未运行",
+    "set.restartAgent": "重启 agent",
+    "set.focus": "音频焦点",
+    "set.focusHint": "决定「手机推流」和「Deck 游戏声音」怎么共存。不会改写你的系统默认输出。",
+    "set.focusCoexist": "与游戏共存",
+    "set.focusCoexistDesc": "两者都出声，互不抢占（推荐）",
+    "set.focusReceiver": "接收端优先",
+    "set.focusReceiverDesc": "优先保证手机推流音质，关闭自动切通话模式",
+    "set.focusManual": "手动",
+    "set.focusManualDesc": "插件不插手，完全自己用系统音量面板调",
+    "set.codec": "音质（编码器）",
+    "set.codecHint": "蓝牙音质主要由编码器决定。SBC-XQ 是普通 SBC 的高质量变体，码率从 328 提到约 452 kbps，兼容性几乎无损失，是最划算的提升。",
+    "set.codecCurrent": "当前实际编码器：{codec}",
+    "set.codecReconnect": "改完编码器后，需要在手机上断开重连一次才会重新协商。",
+    "set.stutter": "卡顿 / 音质",
+    "set.stutterWifi": "检测到 2.4GHz Wi-Fi 干扰",
+    "set.stutterWifiBody": "蓝牙与 2.4GHz Wi-Fi 共用同一个射频，这是音频卡顿的头号原因。把 Wi-Fi 切到 5GHz 通常能立刻解决。",
+    "set.stutterOk": "Wi-Fi 在 5GHz 或未连接，与蓝牙不冲突。",
+    "set.fixStutter": "一键抗卡顿",
+    "set.diagStutter": "诊断卡顿",
+    "set.stutterHint": "「一键抗卡顿」会把延迟档位切到抗卡顿（加大缓冲）并把音量拉到 100%。",
+    "set.power": "省电",
+    "set.powerHint": "手机放完歌常忘了断开，A2DP 链路会一直占着蓝牙射频。这里可以自动收尾。",
+    "set.silence": "静音多久后自动断开",
+    "set.silenceOff": "关闭",
+    "set.silenceRemain": "（还有 {n} 秒）",
+    "set.normalize": "音量归一化",
+    "set.normalizeHint": "手机切歌时音量忽大忽小很常见。这里记录一个基线，跳变超过 25% 会提示。当前基线：{base}",
+    "set.normJumps": "已检测到 {n} 次跳变",
+    "set.normUnset": "未设置",
+    "set.setBaseline": "以当前音量为准",
+    "set.resetBaseline": "重置",
+    "set.behavior": "行为",
+    "set.autoStart": "插件加载时自动进入可被发现",
+    "set.autoStartDesc": "打开 Decky 后自动开好蓝牙，省得每次手动点",
+    "set.keepAlive": "保持可被发现",
+    "set.keepAliveDesc": "BlueZ 默认 180 秒后自动隐藏，这里每分钟复查一次",
+    "set.resume": "睡眠唤醒后自动恢复",
+    "set.resumeDescOn": "已监听（{backend}）：唤醒后自动恢复可发现并重连上次的设备",
+    "set.resumeDescOff": "监听 logind 的睡眠信号，唤醒后自动恢复蓝牙状态（合盖再开盖不会失联）",
+    "set.resumeEvents": "已捕获 {n} 次睡眠/唤醒事件，最近一次：{last}",
+    "set.lastDevice": "上次设备 {mac}",
+    "set.sysinfo": "系统信息",
+    "eq.presets": "预设",
+    "eq.hint": "用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。",
+    "eq.bands": "{n} 段",
+    "eq.custom": "自定义（AutoEQ 导入）",
+    "eq.customActive": "当前正在使用导入的曲线",
+    "eq.active": "生效中",
+    "eq.import": "导入 AutoEQ / Squiglink 曲线",
+    "eq.importHint": "从 AutoEq 或 squig.link 复制 ParametricEQ.txt 的内容粘进来。格式形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`。",
+    "eq.paste": "粘贴曲线…",
+    "eq.collapse": "收起",
+    "eq.removeEq": "完全移除 EQ",
+    "eq.applyImport": "导入并应用",
+    "eq.importing": "导入中…",
+    "eq.applied": "均衡器已切换",
+    "eq.appliedBody": "PipeWire 已重启，可能有一两秒静音",
+    "eq.imported": "已导入 {n} 段 EQ",
+    "eq.skipped": "跳过 {n} 行无法识别",
+    "diag.checks": "自检",
+    "diag.modules": "后端模块",
+    "diag.tools": "命令可用性",
+    "diag.adapterRaw": "适配器原始信息",
+    "diag.wpStatus": "音频状态",
+    "diag.report": "完整报告",
+    "diag.copy": "复制诊断报告",
+    "diag.copied": "诊断报告已复制",
+    "diag.copiedBody": "直接粘贴给作者即可",
+    "diag.generated": "报告已生成",
+    "diag.generatedBody": "下面可手动选中复制",
+    "diag.viewLog": "查看日志",
+    "diag.pluginLog": "插件日志",
+    "diag.agent": "配对 agent",
+    "toast.failed": "操作失败",
+    "toast.saveFailed": "保存失败",
+    "toast.switchFailed": "切换失败",
+    "toast.nameChanged": "设备名已改为 {name}",
+    "toast.renameFailed": "改名失败",
+};
+const DICTS = { en: EN, zh: ZH };
+/** 把各种语言标识归一化成我们支持的两种。 */
+function normalizeLang(raw) {
+    const s = (raw || "").toLowerCase().trim();
+    if (!s)
+        return "en";
+    // Steam 用的是 schinese / tchinese，浏览器是 zh-CN / zh-TW
+    if (s.includes("schinese") || s.includes("tchinese") || s.startsWith("zh"))
+        return "zh";
+    return "en";
+}
+/** 探测当前语言。 */
+function detectLang() {
+    // 1. Steam 客户端语言（最准）
+    try {
+        const sc = globalThis.SteamClient;
+        const v = sc?.Settings?.GetLanguage?.();
+        if (typeof v === "string" && v)
+            return normalizeLang(v);
+    }
+    catch {
+        /* ignore */
+    }
+    // 2. 浏览器 / CEF 语言
+    try {
+        const nav = globalThis.navigator;
+        const v = nav?.language || nav?.languages?.[0];
+        if (typeof v === "string" && v)
+            return normalizeLang(v);
+    }
+    catch {
+        /* ignore */
+    }
+    // 3. 兜底
+    return "en";
+}
+let _lang = null;
+function getLang() {
+    if (_lang === null)
+        _lang = detectLang();
+    return _lang;
+}
+/**
+ * 取翻译。支持 `{name}` 占位符。
+ *
+ * 用法：t("qam.connectedCount", { n: 2 })
+ */
+function t(key, vars) {
+    const lang = getLang();
+    const dict = DICTS[lang] || EN;
+    let s = dict[key];
+    // 缺翻译时回退英文，再回退 key 本身（方便发现漏翻）
+    if (s === undefined)
+        s = EN[key];
+    if (s === undefined)
+        return key;
+    if (vars) {
+        for (const [k, v] of Object.entries(vars)) {
+            s = s.split("{" + k + "}").join(String(v));
+        }
+    }
+    return s;
+}
+
 function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
@@ -282,8 +683,8 @@ function Speaker() {
     SP_REACT.useEffect(() => {
         if (vol === null || dragging)
             return;
-        const t = setTimeout(() => setVol(null), 3000);
-        return () => clearTimeout(t);
+        const timer = setTimeout(() => setVol(null), 3000);
+        return () => clearTimeout(timer);
     }, [vol, dragging]);
     const ad = state?.adapter;
     const connected = state?.connected || [];
@@ -298,14 +699,14 @@ function Speaker() {
                 toaster.toast({ title: okMsg, body: "" });
         }
         catch (e) {
-            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
         finally {
             setBusy(false);
         }
     };
     const toggleDiscoverable = async (on) => {
-        await act(() => api.setDiscoverable(on), on ? "已开启可被发现" : "已关闭可被发现");
+        await act(() => api.setDiscoverable(on), on ? t("qam.discoverable") : t("qam.notVisible"));
     };
     const changeVolume = (v) => {
         setVol(v);
@@ -321,40 +722,40 @@ function Speaker() {
     const toggleMute = () => {
         if (!state)
             return;
-        act(() => api.setMute(!state.volume.muted), state.volume.muted ? "已取消静音" : "已静音");
+        act(() => api.setMute(!state.volume.muted), state.volume.muted ? t("common.ok") : t("common.ok"));
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "2px 2px 8px" }, children: [SP_JSX.jsx("div", { style: {
                             width: 38, height: 38, borderRadius: 19, display: "flex", alignItems: "center", justifyContent: "center",
                             background: ad?.discoverable ? "rgba(76,154,255,0.18)" : "rgba(255,255,255,0.06)",
                             color: ad?.discoverable ? COLORS.accent : COLORS.dim, flexShrink: 0,
-                        }, children: SP_JSX.jsx(FaBluetooth, { size: 17 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: ad ? ad.alias : "蓝牙音箱" }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u84DD\u7259\u5DF2\u5F00" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u84DD\u7259\u5DF2\u5173" }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: "\u53EF\u88AB\u53D1\u73B0" }) : SP_JSX.jsx(Pill, { children: "\u4E0D\u53EF\u89C1" }), connected.length > 0 && SP_JSX.jsxs(Pill, { tone: "ok", children: [connected.length, " \u53F0\u5DF2\u8FDE\u63A5"] })] })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: "\u5141\u8BB8\u8BBE\u5907\u53D1\u73B0\u5E76\u8FDE\u63A5", description: ad?.discoverable ? "手机 / 电脑的蓝牙列表里能看到这台 Deck" : "打开后其它设备才能搜到", checked: !!ad?.discoverable, disabled: busy || !ad?.powered, onChange: toggleDiscoverable }) }), ad && !ad.powered && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [state?.rfkill?.found && (state.rfkill.soft || state.rfkill.hard) && (SP_JSX.jsx("div", { style: {
+                        }, children: SP_JSX.jsx(FaBluetooth, { size: 17 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: ad ? ad.alias : t("plugin.name") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.btOn") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("qam.btOff") }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: t("qam.discoverable") }) : SP_JSX.jsx(Pill, { children: t("qam.notVisible") }), connected.length > 0 && SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.connectedCount", { n: connected.length }) })] })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: t("qam.allowDiscover"), description: ad?.discoverable ? t("qam.allowDiscoverDescOn") : t("qam.allowDiscoverDescOff"), checked: !!ad?.discoverable, disabled: busy || !ad?.powered, onChange: toggleDiscoverable }) }), ad && !ad.powered && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [state?.rfkill?.found && (state.rfkill.soft || state.rfkill.hard) && (SP_JSX.jsx("div", { style: {
                             margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
                             background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
                             color: "#ffb3b3",
                         }, children: state.rfkill.hard
-                            ? "蓝牙被硬件开关阻挡（Hard blocked），软件解不了，请重启 Deck。"
-                            : "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。" })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), "蓝牙已打开"), children: "\u6253\u5F00\u84DD\u7259" }) }), state?.rfkill?.soft && !state.rfkill.hard && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.unblockRfkill(), "已尝试解除阻挡"), children: "\u89E3\u9664\u5C04\u9891\u963B\u6321\uFF08\u9700\u8981 sudo\uFF09" }) }))] })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
+                            ? t("qam.rfkillHard")
+                            : t("qam.rfkillSoft") })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), t("qam.btOn")), children: t("qam.turnOnBt") }) }), state?.rfkill?.soft && !state.rfkill.hard && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.unblockRfkill(), t("qam.unblockRfkill")), children: t("qam.unblockRfkill") }) }))] })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
                         borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
-                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: "\u6B63\u5728\u64AD\u653E" })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: "\u65AD\u5F00" })] }, d.mac))) })), state?.live && (SP_JSX.jsxs("div", { style: {
+                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), state?.live && (SP_JSX.jsxs("div", { style: {
                     margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
                     background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
                                     width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
                                     opacity: state.track?.status === "playing" ? 1 : 0.4,
-                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || `正在播放：${state.live.name}` }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || "外部音源" })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), state.live.muted ? "已取消静音" : "已静音外部音源"), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => { api.setSourceVolume(state.live.id, v / 100).catch(() => { }); } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
+                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted), t("common.ok")), onActivate: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), style: { cursor: "pointer", color: COLORS.sub, flexShrink: 0 }, children: state.live.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }) }), SP_JSX.jsx("div", { style: { flex: 1, minWidth: 0 }, children: SP_JSX.jsx(DFL.SliderField, { value: Math.round((state.live.volume || 0) * 100), min: 0, max: 150, step: 1, showValue: false, onChange: (v) => { api.setSourceVolume(state.live.id, v / 100).catch(() => { }); } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", justifyContent: "space-between",
                             marginBottom: 2, padding: "0 2px",
-                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: "\u97F3\u91CF" })] }), SP_JSX.jsxs("span", { style: {
+                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: t("qam.volume") })] }), SP_JSX.jsxs("span", { style: {
                                     fontSize: 11.5,
                                     color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
                                     fontVariantNumeric: "tabular-nums",
-                                }, children: [showVol, "%", showVol > 100 ? " · 可能破音" : ""] })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume })] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), "已增益到 130%"), onActivate: () => act(() => api.boostVolume(1.3), "已增益到 130%"), style: {
+                                }, children: [showVol, "%", showVol > 100 ? " · " + t("qam.clipping") : ""] })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume })] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
                     marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
                     fontSize: 12.5, color: COLORS.accent,
-                }, children: [SP_JSX.jsx(FaVolumeUp, { size: 11 }), " \u58F0\u97F3\u592A\u5C0F\uFF1F\u589E\u5F3A\u5230 130%"] })), connected.length === 0 && ad?.discoverable && (SP_JSX.jsxs("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: ["\u5728\u624B\u673A\u7684\u300C\u84DD\u7259\u300D\u91CC\u627E ", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: ad.alias }), "\uFF0C\u914D\u5BF9\u540E\u76F4\u63A5\u653E\u6B4C\u5373\u53EF\uFF5E"] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " \u8BBE\u5907\u7BA1\u7406 / \u8BBE\u7F6E"] }) }) })] }));
+                }, children: [SP_JSX.jsx(FaVolumeUp, { size: 11 }), " ", t("qam.boost")] })), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
 }
 
 function BtSpeakerPage() {
@@ -379,7 +780,7 @@ function BtSpeakerPage() {
             setTimeout(refresh, 800);
         }
         catch (e) {
-            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
         finally {
             setBusyMac(null);
@@ -403,11 +804,11 @@ function BtSpeakerPage() {
                 display: "flex", flexDirection: "column",
                 // 给滚动到底时留一点余量，最后一项不至于贴边
                 paddingBottom: 16,
-            }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }, children: [SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: { fontSize: 26, fontWeight: 700, color: COLORS.text }, children: "\u84DD\u7259\u97F3\u7BB1" }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, marginTop: 3 }, children: ad ? `${ad.alias} · ${ad.address || "未知地址"}` : "正在读取蓝牙适配器…" })] }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 8 }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u84DD\u7259\u5DF2\u5F00" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u84DD\u7259\u5DF2\u5173" }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: "\u53EF\u88AB\u53D1\u73B0" }) : SP_JSX.jsx(Pill, { children: "\u4E0D\u53EF\u89C1" }), ad?.a2dp_sink ? SP_JSX.jsx(Pill, { tone: "ok", children: "A2DP Sink" }) : SP_JSX.jsx(Pill, { tone: "warn", children: "\u65E0 Sink \u89D2\u8272" })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, margin: "14px 0 4px" }, children: [
-                        ["devices", "已配对设备"],
-                        ["settings", "设置"],
-                        ["eq", "均衡器"],
-                        ["diag", "诊断"],
+            }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }, children: [SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: { fontSize: 26, fontWeight: 700, color: COLORS.text }, children: t("page.title") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, marginTop: 3 }, children: ad ? `${ad.alias} · ${ad.address || t("common.unknown")}` : t("page.readingAdapter") })] }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 8 }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.btOn") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("qam.btOff") }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: t("qam.discoverable") }) : SP_JSX.jsx(Pill, { children: t("qam.notVisible") }), ad?.a2dp_sink ? SP_JSX.jsx(Pill, { tone: "ok", children: t("page.a2dpSink") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("page.noSink") })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, margin: "14px 0 4px" }, children: [
+                        ["devices", t("tab.devices")],
+                        ["settings", t("tab.settings")],
+                        ["eq", t("tab.eq")],
+                        ["diag", t("tab.diag")],
                     ].map(([k, label]) => (SP_JSX.jsx(DFL.Focusable, { onActivate: () => setTab(k), onClick: () => setTab(k), style: {
                             padding: "7px 16px", borderRadius: 18, cursor: "pointer", fontSize: 13.5,
                             background: tab === k ? COLORS.accent : "rgba(255,255,255,0.06)",
@@ -417,26 +818,26 @@ function BtSpeakerPage() {
 // ---------------------------------------------------------------------------
 function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
     if (!paired.length) {
-        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(Hint, { children: "\u8FD8\u6CA1\u6709\u914D\u5BF9\u8FC7\u4EFB\u4F55\u8BBE\u5907\u3002\u7528\u4E0A\u9762\u7684\u300C\u641C\u7D22\u9644\u8FD1\u8BBE\u5907\u300D\u627E\u5230\u624B\u673A\u540E\u70B9\u300C\u914D\u5BF9\u300D\u5373\u53EF\uFF0C \u4E0D\u7528\u9000\u51FA\u63D2\u4EF6\u53BB\u7CFB\u7EDF\u84DD\u7259\u8BBE\u7F6E\u3002" })] }));
+        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(Hint, { children: t("dev.noDevices") })] }));
     }
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsxs(SectionTitle, { children: ["\u5DF2\u914D\u5BF9\uFF08", paired.length, "\uFF09"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", "") }), SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: paired.length }) }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: paired.map((d) => {
                     const connected = connectedMacs.has(d.mac);
                     const busy = busyMac === d.mac;
                     return (SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
                             borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
-                        }, children: [SP_JSX.jsx(Avatar, { connected: connected }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: d.mac })] }), connected ? SP_JSX.jsx(Pill, { tone: "ok", children: "\u5DF2\u8FDE\u63A5" }) : SP_JSX.jsx(Pill, { children: "\u672A\u8FDE\u63A5" }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…"), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…"), style: {
+                        }, children: [SP_JSX.jsx(Avatar, { connected: connected, icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: [d.mac, d.has_real_name === false && (SP_JSX.jsxs("span", { style: { marginLeft: 6, color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), connected ? SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }) : SP_JSX.jsx(Pill, { children: t("dev.notConnected") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting")), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting")), style: {
                                     padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
                                     background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
                                     color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
-                                }, children: busy ? "…" : connected ? "断开" : "连接" }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "repair", "正在修复配对…"), onActivate: () => onAction(d.mac, "repair", "正在修复配对…"), style: {
+                                }, children: busy ? "…" : connected ? t("qam.disconnect") : t("dev.connect") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "repair", t("dev.repairing")), onActivate: () => onAction(d.mac, "repair", t("dev.repairing")), style: {
                                     padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
                                     background: "rgba(76,154,255,0.16)", color: COLORS.accent,
-                                }, children: "\u4FEE\u590D\u914D\u5BF9" }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "remove", "已移除配对"), onActivate: () => onAction(d.mac, "remove", "已移除配对"), style: {
+                                }, children: t("dev.repair") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "remove", t("dev.removed")), onActivate: () => onAction(d.mac, "remove", t("dev.removed")), style: {
                                     padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
                                     background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm,
-                                }, children: "\u79FB\u9664" })] }, d.mac));
-                }) }), SP_JSX.jsxs(Hint, { children: ["\u8FDE\u63A5\u6210\u529F\u540E\u5728\u624B\u673A\u4E0A\u64AD\u653E\u97F3\u4E50\uFF0C\u58F0\u97F3\u5C31\u4F1A\u4ECE Deck \u7684\u5587\u53ED\u51FA\u6765\u3002\u540C\u4E00\u65F6\u95F4\u53EA\u80FD\u6709\u4E00\u4E2A\u6E90\u5728\u653E\uFF08\u84DD\u7259 A2DP \u7684\u9650\u5236\uFF09\u3002", SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "\u914D\u5BF9\u7801 / \u901A\u884C\u5BC6\u94A5\u4E0D\u6B63\u786E\uFF1F" }), "\u70B9\u300C\u4FEE\u590D\u914D\u5BF9\u300D\u2014\u2014 \u5B83\u4F1A\u6E05\u9664 Deck \u7AEF\u4FDD\u5B58\u7684\u65E7\u7ED1\u5B9A\u5BC6\u94A5\u518D\u91CD\u65B0\u914D\u5BF9\u3002\u5982\u679C\u4ECD\u5931\u8D25\uFF0C\u8BF7\u5728\u624B\u673A\u7AEF\u4E5F\u300C\u5FD8\u8BB0\u300D\u8FD9\u4E2A\u8BBE\u5907\u540E\u91CD\u65B0\u641C\u7D22\u3002"] })] }));
+                                }, children: t("common.remove") })] }, d.mac));
+                }) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }));
 }
 // ---------------------------------------------------------------------------
 // 扫描面板：在插件内完成「搜索 → 配对」，不用跳系统蓝牙设置
@@ -457,13 +858,13 @@ function ScanPanel({ alias, discoverable, onPaired }) {
             setScanned(true);
             if (!r.devices || !r.devices.length) {
                 toaster.toast({
-                    title: "没搜到设备",
-                    body: "确认手机蓝牙已打开、并且在可被发现状态",
+                    title: t("dev.noneFound"),
+                    body: t("dev.noneFound"),
                 });
             }
         }
         catch (e) {
-            toaster.toast({ title: "搜索失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
         finally {
             setScanning(false);
@@ -475,25 +876,25 @@ function ScanPanel({ alias, discoverable, onPaired }) {
         setBusyMac(mac);
         try {
             await api.pairDeviceFull(mac);
-            toaster.toast({ title: `已配对 ${name}`, body: "" });
+            toaster.toast({ title: t("dev.paired", { name }), body: "" });
             setDevices((prev) => prev.filter((d) => d.mac !== mac));
             onPaired();
         }
         catch (e) {
-            toaster.toast({ title: "配对失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("dev.pairFailed"), body: e?.message || String(e) });
         }
         finally {
             setBusyMac(null);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u641C\u7D22\u9644\u8FD1\u8BBE\u5907" }), SP_JSX.jsx(Hint, { children: discoverable
-                    ? "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。"
-                    : "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。" }), SP_JSX.jsx(DFL.Focusable, { onClick: scan, onActivate: scan, style: {
+    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: t("dev.search") }), SP_JSX.jsx(Hint, { children: discoverable
+                    ? t("dev.searchHint")
+                    : t("dev.searchHintWarn") }), SP_JSX.jsx(DFL.Focusable, { onClick: scan, onActivate: scan, style: {
                     display: "inline-flex", alignItems: "center", gap: 8, marginTop: 8,
                     padding: "9px 18px", borderRadius: 18, cursor: scanning ? "default" : "pointer",
                     background: scanning ? "rgba(255,255,255,0.06)" : COLORS.accent,
                     color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
-                }, children: scanning ? "正在搜索…（约 20 秒）" : "搜索附近设备" }), devices.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: devices.map((d) => {
+                }, children: scanning ? t("dev.searching") : t("dev.search") }), devices.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: devices.map((d) => {
                     const busy = busyMac === d.mac;
                     const isPhone = (d.icon || "").includes("phone");
                     const isComputer = (d.icon || "").includes("computer");
@@ -504,13 +905,13 @@ function ScanPanel({ alias, discoverable, onPaired }) {
                                     width: 40, height: 40, borderRadius: 20, flexShrink: 0,
                                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
                                     background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.name }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: d.mac })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.name), onActivate: () => pair(d.mac, d.name), style: {
+                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsxs("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 2 }, children: [d.mac, d.has_real_name === false && (SP_JSX.jsxs("span", { style: { marginLeft: 6, color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, d.display || d.name), onActivate: () => pair(d.mac, d.display || d.name), style: {
                                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                                     cursor: busy ? "default" : "pointer",
                                     background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
                                     color: busy ? COLORS.sub : "#fff",
-                                }, children: busy ? "配对中…" : "配对" })] }, d.mac));
-                }) })), scanned && devices.length === 0 && (SP_JSX.jsx(Hint, { children: "\u6CA1\u641C\u5230\u672A\u914D\u5BF9\u7684\u8BBE\u5907\u3002\u53EF\u80FD\u662F\uFF1A\u624B\u673A\u5DF2\u7ECF\u914D\u8FC7\u8FD9\u53F0 Deck\uFF08\u53BB\u4E0B\u9762\u300C\u5DF2\u914D\u5BF9\u300D\u91CC\u770B\uFF09\u3001 \u6216\u624B\u673A\u84DD\u7259\u6CA1\u6253\u5F00\u3001\u6216\u5BF9\u65B9\u4E0D\u53EF\u88AB\u53D1\u73B0\u3002" }))] }));
+                                }, children: busy ? t("dev.pairing") : t("dev.pair") })] }, d.mac));
+                }) })), scanned && devices.length === 0 && (SP_JSX.jsx(Hint, { children: t("dev.noneFound") }))] }));
 }
 // ---------------------------------------------------------------------------
 function SettingsTab({ state, refresh }) {
@@ -524,20 +925,20 @@ function SettingsTab({ state, refresh }) {
             toaster.toast({ title: label, body: "" });
         }
         catch (e) {
-            toaster.toast({ title: "保存失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
         }
     };
     const changeFocus = async (mode) => {
         try {
             const r = await api.setFocusMode(mode);
             toaster.toast({
-                title: "焦点模式已切换",
+                title: t("set.focus"),
                 body: r.applied && r.applied.length ? r.applied.join("、") : "",
             });
             refresh();
         }
         catch (e) {
-            toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
         }
     };
     const setSilence = async (sec) => {
@@ -546,7 +947,7 @@ function SettingsTab({ state, refresh }) {
             refresh();
         }
         catch (e) {
-            toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
         }
     };
     const applyAlias = async () => {
@@ -556,55 +957,55 @@ function SettingsTab({ state, refresh }) {
         setBusy(true);
         try {
             await api.setAlias(v);
-            toaster.toast({ title: "设备名已改为 " + v, body: "" });
+            toaster.toast({ title: t("toast.nameChanged", { name: v }), body: "" });
         }
         catch (e) {
-            toaster.toast({ title: "改名失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.renameFailed"), body: e?.message || String(e) });
         }
         finally {
             setBusy(false);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u8BBE\u5907\u540D" }), SP_JSX.jsx(Hint, { children: "\u522B\u4EBA\u84DD\u7259\u5217\u8868\u91CC\u770B\u5230\u7684\u540D\u5B57\u3002\u5EFA\u8BAE\u6539\u6210\u4E00\u4E2A\u597D\u8BA4\u7684\u540D\u5B57\u3002" }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: t("set.name") }), SP_JSX.jsx(Hint, { children: t("set.nameHint") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
                             flex: 1, padding: "10px 12px", borderRadius: 9, fontSize: 14,
                             background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
                             color: COLORS.text, outline: "none",
                         } }), SP_JSX.jsx(DFL.Focusable, { onClick: applyAlias, onActivate: applyAlias, style: {
                             padding: "10px 20px", borderRadius: 9, fontSize: 14, cursor: "pointer",
                             background: COLORS.accent, color: "#fff", opacity: busy ? 0.6 : 1,
-                        }, children: busy ? "保存中…" : "保存" })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u8C03\u4F18" }), SP_JSX.jsx(ToggleRow, { label: "\u542F\u7528\u300C\u97F3\u7BB1\u4F18\u5316\u300D\u914D\u7F6E", desc: "\u5199\u5165\u7528\u6237\u7EA7 WirePlumber \u914D\u7F6E\uFF1A\u53EA\u4FDD\u7559 A2DP \u89D2\u8272\u3001\u624B\u673A\u63A8\u6D41\u76F4\u51FA\u3001\u907F\u514D\u6389\u6210\u901A\u8BDD\u5355\u58F0\u9053\u3002\u6539\u5B8C\u4F1A\u81EA\u52A8\u91CD\u542F WirePlumber\u3002", checked: !!state.tuning?.installed, onChange: async (v) => {
+                        }, children: busy ? t("common.saving") : t("common.save") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.audioTuning") }), SP_JSX.jsx(ToggleRow, { label: t("set.audioTuningLabel"), desc: t("set.audioTuningDesc"), checked: !!state.tuning?.installed, onChange: async (v) => {
                     try {
                         if (v) {
                             await api.applyTuning();
-                            toaster.toast({ title: "已启用音箱优化", body: "WirePlumber 已重启" });
+                            toaster.toast({ title: t("set.tuningOn"), body: "" });
                         }
                         else {
                             await api.removeTuning();
-                            toaster.toast({ title: "已恢复系统默认", body: "WirePlumber 已重启" });
+                            toaster.toast({ title: t("set.tuningOff"), body: "" });
                         }
                         refresh();
                     }
                     catch (e) {
-                        toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+                        toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }), SP_JSX.jsx("br", {}), "\u8FDE\u4E0A\u4E86\u5374\u6CA1\u58F0\u97F3\u3001\u6216\u8005\u58F0\u97F3\u53D8\u6210\u5355\u58F0\u9053\u53D1\u95F7\u65F6\uFF0C\u6253\u5F00\u5B83\u518D\u91CD\u8FDE\u4E00\u6B21\u901A\u5E38\u5C31\u597D\u4E86\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u914D\u5BF9" }), SP_JSX.jsx(Hint, { children: "\u914D\u5BF9 agent \u8D1F\u8D23\u5E94\u7B54\u624B\u673A\u7684\u914D\u5BF9\u8BF7\u6C42\u3002\u5982\u679C\u624B\u673A\u5F39\u4E86\u914D\u5BF9\u7801\u4F46 Deck \u6CA1\u53CD\u5E94\uFF0C \u8BF4\u660E agent \u6CA1\u5DE5\u4F5C\uFF0C\u70B9\u4E0B\u9762\u7684\u6309\u94AE\u91CD\u542F\u5B83\u518D\u8BD5\u3002" }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("div", { style: {
+                } }), SP_JSX.jsx(Hint, { children: t("set.tuningHint", { path: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }) }), SP_JSX.jsx(SectionTitle, { children: t("set.pairing") }), SP_JSX.jsx(Hint, { children: t("set.pairingHint") }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("div", { style: {
                             width: 8, height: 8, borderRadius: 4, flexShrink: 0,
                             background: state.agent_registered ? COLORS.ok : state.agent ? "#e0a800" : COLORS.accentWarm,
                         } }), SP_JSX.jsx("div", { style: { flex: 1, fontSize: 13, color: COLORS.text }, children: state.agent_registered
-                            ? "配对 agent 已就绪"
+                            ? t("set.agentReady")
                             : state.agent
-                                ? "配对 agent 运行中，但未确认注册"
-                                : "配对 agent 未运行" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                                ? t("set.agentRunning")
+                                : t("set.agentDown") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.restartAgent();
                                 toaster.toast({
-                                    title: r.registered ? "配对 agent 已重启并就绪" : "已重启，但未确认注册",
-                                    body: r.registered ? "" : "配对时可能需要手动确认",
+                                    title: r.registered ? t("set.agentReady") : t("set.agentRunning"),
+                                    body: "",
                                 });
                                 setTimeout(refresh, 800);
                             }
                             catch (e) {
-                                toaster.toast({ title: "重启失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -615,19 +1016,19 @@ function SettingsTab({ state, refresh }) {
                         }, style: {
                             padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
                             background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
-                        }, children: "\u91CD\u542F agent" })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u8D28\uFF08\u7F16\u7801\u5668\uFF09" }), SP_JSX.jsxs(Hint, { children: ["\u84DD\u7259\u97F3\u8D28\u4E3B\u8981\u7531\u7F16\u7801\u5668\u51B3\u5B9A\u3002", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "SBC-XQ" }), " \u662F\u666E\u901A SBC \u7684\u9AD8\u8D28\u91CF\u53D8\u4F53\uFF0C \u7801\u7387\u4ECE 328 \u63D0\u5230\u7EA6 452 kbps\uFF0C\u517C\u5BB9\u6027\u51E0\u4E4E\u65E0\u635F\u5931\uFF0C\u662F\u6700\u5212\u7B97\u7684\u63D0\u5347\u3002"] }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (state.quality?.presets || []).map((p) => {
+                        }, children: t("set.restartAgent") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.codec") }), SP_JSX.jsx(Hint, { children: t("set.codecHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (state.quality?.presets || []).map((p) => {
                     const active = (s.codec_preset || "balanced") === p.key;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.setCodecPreset(p.key);
                                 toaster.toast({
-                                    title: `音质预设：${p.label}`,
-                                    body: r.active_profile ? `当前编码器：${r.active_profile}` : "WirePlumber 已重启",
+                                    title: `${t("set.codec")}: ${p.label}`,
+                                    body: r.active_profile ? `${t("set.codecCurrent", { codec: r.active_profile })}` : "",
                                 });
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -644,22 +1045,22 @@ function SettingsTab({ state, refresh }) {
                                     width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["\u91CD\u91C7\u6837 ", p.resample] })] }, p.key));
-                }) }), SP_JSX.jsxs(Hint, { children: ["\u5F53\u524D\u5B9E\u9645\u7F16\u7801\u5668\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.accent }, children: state.quality?.active_profile || "未连接" }), SP_JSX.jsx("br", {}), "\u6539\u5B8C\u7F16\u7801\u5668\u540E\uFF0C", SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: "\u9700\u8981\u5728\u624B\u673A\u4E0A\u65AD\u5F00\u91CD\u8FDE\u4E00\u6B21" }), "\u624D\u4F1A\u91CD\u65B0\u534F\u5546\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u5361\u987F / \u97F3\u8D28" }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
+                }) }), SP_JSX.jsxs(Hint, { children: [t("set.codecCurrent", { codec: state.quality?.active_profile || t("common.none") }), SP_JSX.jsx("span", { style: { color: COLORS.accent } }), SP_JSX.jsx("br", {}), t("set.codecReconnect")] }), SP_JSX.jsx(SectionTitle, { children: t("set.stutter") }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
                     margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9, fontSize: 12, lineHeight: 1.7,
                     background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
                     color: "#ffb3b3", whiteSpace: "pre-wrap",
-                }, children: [SP_JSX.jsx("b", { children: "\u26A0\uFE0F \u68C0\u6D4B\u5230 2.4GHz Wi-Fi \u5E72\u6270" }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface}（信道 ${w.channel}，${w.freq_mhz} MHz）`).join("、"), "\n", "\u84DD\u7259\u4E0E 2.4GHz Wi-Fi \u5171\u7528\u540C\u4E00\u4E2A\u5C04\u9891\uFF0C\u8FD9\u662F\u97F3\u9891\u5361\u987F\u7684\u5934\u53F7\u539F\u56E0\u3002", SP_JSX.jsx("b", { children: "\u628A Wi-Fi \u5207\u5230 5GHz \u901A\u5E38\u80FD\u7ACB\u523B\u89E3\u51B3\u3002" })] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: "Wi-Fi \u5728 5GHz \u6216\u672A\u8FDE\u63A5\uFF0C\u4E0E\u84DD\u7259\u4E0D\u51B2\u7A81\u3002" })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                }, children: [SP_JSX.jsxs("b", { children: ["\u26A0\uFE0F ", t("set.stutterWifi")] }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / "), "\n", t("set.stutterWifiBody")] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: t("set.stutterOk") })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.fixStutter();
                                 toaster.toast({
-                                    title: "已应用抗卡顿设置",
+                                    title: t("set.fixStutter"),
                                     body: (r.applied || []).join("、"),
                                 });
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -670,27 +1071,27 @@ function SettingsTab({ state, refresh }) {
                         }, style: {
                             padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
                             background: COLORS.accent, color: "#fff",
-                        }, children: "\u4E00\u952E\u6297\u5361\u987F" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                        }, children: t("set.fixStutter") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.diagnoseStutter();
                                 const lines = [];
                                 if (r.too_slow?.count > 0) {
-                                    lines.push(`PipeWire 报告 ${r.too_slow.count} 次 client too slow（带宽不足）`);
+                                    lines.push(`client too slow x${r.too_slow.count}`);
                                 }
                                 else if (r.too_slow?.checked) {
-                                    lines.push("PipeWire 日志里没有 client too slow");
+                                    lines.push("no client too slow in log");
                                 }
                                 if (r.codec)
-                                    lines.push(`当前编码器：${r.codec}`);
+                                    lines.push(`${t("set.codecCurrent", { codec: r.codec })}`);
                                 if (r.wifi?.advice)
                                     lines.push(r.wifi.advice);
                                 toaster.toast({
-                                    title: "卡顿诊断",
-                                    body: lines.join("；").slice(0, 300) || "未发现明显问题",
+                                    title: t("set.diagStutter"),
+                                    body: lines.join("; ").slice(0, 300) || t("common.none"),
                                 });
                             }
                             catch (e) {
-                                toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -700,10 +1101,10 @@ function SettingsTab({ state, refresh }) {
                         }, style: {
                             padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
                             background: "rgba(255,255,255,0.08)", color: COLORS.text,
-                        }, children: "\u8BCA\u65AD\u5361\u987F" })] }), SP_JSX.jsx(Hint, { children: "\u300C\u4E00\u952E\u6297\u5361\u987F\u300D\u4F1A\u628A\u5EF6\u8FDF\u6863\u4F4D\u5207\u5230\u6297\u5361\u987F\uFF08\u52A0\u5927\u7F13\u51B2\uFF09\u5E76\u628A\u97F3\u91CF\u62C9\u5230 100%\u3002 \u5982\u679C\u5361\u987F\u662F Wi-Fi \u5E72\u6270\u5BFC\u81F4\u7684\uFF0C\u66F4\u5F7B\u5E95\u7684\u529E\u6CD5\u662F\u628A Wi-Fi \u5207\u5230 5GHz\u3002" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u7126\u70B9" }), SP_JSX.jsx(Hint, { children: "\u51B3\u5B9A\u300C\u624B\u673A\u63A8\u6D41\u300D\u548C\u300CDeck \u6E38\u620F\u58F0\u97F3\u300D\u600E\u4E48\u5171\u5B58\u3002\u4E0D\u4F1A\u6539\u5199\u4F60\u7684\u7CFB\u7EDF\u9ED8\u8BA4\u8F93\u51FA\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
-                    ["coexist", "与游戏共存", "两者都出声，互不抢占（推荐）"],
-                    ["receiver_first", "接收端优先", "优先保证手机推流音质，关闭自动切通话模式"],
-                    ["manual", "手动", "插件不插手，完全自己用系统音量面板调"],
+                        }, children: t("set.diagStutter") })] }), SP_JSX.jsx(Hint, { children: t("set.stutterHint") }), SP_JSX.jsx(SectionTitle, { children: t("set.focus") }), SP_JSX.jsx(Hint, { children: t("set.focusHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
+                    ["coexist", t("set.focusCoexist"), t("set.focusCoexistDesc")],
+                    ["receiver_first", t("set.focusReceiver"), t("set.focusReceiverDesc")],
+                    ["manual", t("set.focusManual"), t("set.focusManualDesc")],
                 ].map(([mode, label, desc]) => {
                     const active = (s.focus_mode || "coexist") === mode;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => changeFocus(mode), onActivate: () => changeFocus(mode), style: {
@@ -716,16 +1117,16 @@ function SettingsTab({ state, refresh }) {
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
                                 }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: desc })] })] }, mode));
-                }) }), SP_JSX.jsx(SectionTitle, { children: "\u7701\u7535" }), SP_JSX.jsx(Hint, { children: "\u624B\u673A\u653E\u5B8C\u6B4C\u5E38\u5FD8\u4E86\u65AD\u5F00\uFF0CA2DP \u94FE\u8DEF\u4F1A\u4E00\u76F4\u5360\u7740\u84DD\u7259\u5C04\u9891\u3002\u8FD9\u91CC\u53EF\u4EE5\u81EA\u52A8\u6536\u5C3E\u3002" }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 13.5, color: COLORS.text, marginBottom: 6 }, children: ["\u9759\u97F3\u591A\u4E45\u540E\u81EA\u52A8\u65AD\u5F00", state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
-                                ? `（还有 ${state.silence.remaining} 秒）`
-                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: s.silence_disconnect ?? 0, min: 0, max: 600, step: 30, showValue: false, onChange: (v) => { setSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: "\u5173\u95ED" }), SP_JSX.jsx("span", { children: "5 \u5206\u949F" }), SP_JSX.jsx("span", { children: "10 \u5206\u949F" })] })] }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u91CF\u5F52\u4E00\u5316" }), SP_JSX.jsxs(Hint, { children: ["\u624B\u673A\u5207\u6B4C\u65F6\u97F3\u91CF\u5FFD\u5927\u5FFD\u5C0F\u5F88\u5E38\u89C1\u3002\u8FD9\u91CC\u8BB0\u5F55\u4E00\u4E2A\u57FA\u7EBF\uFF0C\u8DF3\u53D8\u8D85\u8FC7 25% \u4F1A\u63D0\u793A\u3002 \u5F53\u524D\u57FA\u7EBF\uFF1A", state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : "未设置", state.normalize?.jumps ? ` · 已检测到 ${state.normalize.jumps} 次跳变` : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.power") }), SP_JSX.jsx(Hint, { children: t("set.powerHint") }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 13.5, color: COLORS.text, marginBottom: 6 }, children: [t("set.silence"), state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
+                                ? t("set.silenceRemain", { n: state.silence.remaining })
+                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: s.silence_disconnect ?? 0, min: 0, max: 600, step: 30, showValue: false, onChange: (v) => { setSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: t("set.silenceOff") }), SP_JSX.jsx("span", { children: "5m" }), SP_JSX.jsx("span", { children: "10m" })] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.normalize") }), SP_JSX.jsxs(Hint, { children: [t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") }), state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
-                                toaster.toast({ title: "已把当前音量设为基线", body: "" });
+                                toaster.toast({ title: t("set.setBaseline"), body: "" });
                                 refresh();
                             }
                             catch (e) {
-                                toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -733,7 +1134,7 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: "\u4EE5\u5F53\u524D\u97F3\u91CF\u4E3A\u51C6" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: t("set.setBaseline") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.resetVolumeBaseline();
                                 refresh();
@@ -745,16 +1146,16 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }, children: "\u91CD\u7F6E" })] }), SP_JSX.jsx(SectionTitle, { children: "\u5EF6\u8FDF\u6863\u4F4D" }), SP_JSX.jsx(Hint, { children: "\u84DD\u7259 A2DP \u7684\u5EF6\u8FDF\u53D6\u51B3\u4E8E\u7F16\u7801\u5668\u4E0E\u7F13\u51B2\u3002\u8FD9\u91CC\u662F\u300C\u7701\u7535 / \u4F4E\u5EF6\u8FDF / \u6297\u5361\u987F\u300D\u7684\u53D6\u820D\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: "\u84DD\u7259 A2DP \u7684\u5EF6\u8FDF\u53D6\u51B3\u4E8E\u7F16\u7801\u5668\u4E0E\u7F13\u51B2\u3002\u8FD9\u91CC\u662F\u300C\u7701\u7535 / \u4F4E\u5EF6\u8FDF / \u6297\u5361\u987F\u300D\u7684\u53D6\u820D\u3002" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
                     const active = (s.latency_profile || "balanced") === p.key;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.setLatencyProfile(p.key);
-                                toaster.toast({ title: `延迟档位：${p.label}`, body: "WirePlumber 已重启" });
+                                toaster.toast({ title: `${p.label}`, body: "WirePlumber 已重启" });
                                 setTimeout(refresh, 1200);
                             }
                             catch (e) {
-                                toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -766,19 +1167,19 @@ function SettingsTab({ state, refresh }) {
                             flex: "1 1 180px", padding: "11px 14px", borderRadius: 10, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
-                        }, children: [SP_JSX.jsx("div", { style: { fontSize: 13.5, color: COLORS.text }, children: p.label }), SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.accent, marginTop: 2 }, children: ["\u7EA6 ", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: p.desc })] }, p.key));
-                }) }), SP_JSX.jsx(SectionTitle, { children: "\u591A\u8F93\u51FA\u540C\u6B65" }), SP_JSX.jsx(ToggleRow, { label: "\u521B\u5EFA\u4E00\u4E2A\u300CDeck \u591A\u8F93\u51FA\u300D\u8BBE\u5907", desc: "\u58F0\u97F3\u540C\u65F6\u9001\u5230\u5185\u7F6E\u5587\u53ED + \u84DD\u7259\u8033\u673A + \u6709\u7EBF\u8033\u673A\u3002\u5F00\u542F\u540E\u5728\u7CFB\u7EDF\u97F3\u91CF\u91CC\u628A\u8F93\u51FA\u5207\u5230\u300CDeck \u591A\u8F93\u51FA\uFF08\u540C\u6B65\uFF09\u300D\u3002", checked: !!s.multi_output, onChange: async (v) => {
+                        }, children: [SP_JSX.jsx("div", { style: { fontSize: 13.5, color: COLORS.text }, children: p.label }), SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: p.desc })] }, p.key));
+                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsx(ToggleRow, { label: "Deck multi-output", desc: "Play to speakers + BT headset + wired headset at once.", checked: !!s.multi_output, onChange: async (v) => {
                     try {
                         await api.setMultiOutput(v);
-                        toaster.toast({ title: v ? "已开启多输出同步" : "已关闭多输出同步", body: "PipeWire 已重启" });
+                        toaster.toast({ title: v ? "multi-output on" : "multi-output off", body: "" });
                         setTimeout(refresh, 1500);
                     }
                     catch (e) {
-                        toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+                        toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: ["\u5F53\u524D\u8F93\u51FA\u8BBE\u5907\uFF1A", (state.output?.sinks || []).map((k) => k.name).join(" · ") || "读取中…", SP_JSX.jsx("br", {}), "\u26A0\uFE0F \u53CD\u65B9\u5411\u505A\u4E0D\u5230\uFF1A\u53D7 AVDTP \u534F\u8BAE\u9650\u5236\uFF08v1.3 \u00A75.3\uFF09\uFF0C\u540C\u4E00\u9002\u914D\u5668\u540C\u4E00\u65F6\u523B\u53EA\u80FD\u6709\u4E00\u4E2A\u84DD\u7259 A2DP \u6E90\u8BBE\u5907\u8FDE\u8FDB\u6765\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u7F16\u7801\u5668" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["\u5F53\u524D\u7F16\u7801\uFF1A", state.codec?.codec || "未连接"] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: ["\u65B9\u5411\uFF1A", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u884C\u4E3A" }), SP_JSX.jsx(ToggleRow, { label: "\u63D2\u4EF6\u52A0\u8F7D\u65F6\u81EA\u52A8\u8FDB\u5165\u53EF\u88AB\u53D1\u73B0", desc: "\u6253\u5F00 Decky \u540E\u81EA\u52A8\u5F00\u597D\u84DD\u7259\uFF0C\u7701\u5F97\u6BCF\u6B21\u624B\u52A8\u70B9", checked: !!s.auto_start, onChange: (v) => save("auto_start", v, v ? "已开启自动启动" : "已关闭自动启动") }), SP_JSX.jsx(ToggleRow, { label: "\u4FDD\u6301\u53EF\u88AB\u53D1\u73B0", desc: "BlueZ \u9ED8\u8BA4 180 \u79D2\u540E\u81EA\u52A8\u9690\u85CF\uFF0C\u8FD9\u91CC\u6BCF\u5206\u949F\u590D\u67E5\u4E00\u6B21", checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活") }), SP_JSX.jsx(ToggleRow, { label: "\u7761\u7720\u5524\u9192\u540E\u81EA\u52A8\u6062\u590D", desc: state.power?.watching
-                    ? `已监听（${state.power.backend}）：唤醒后自动恢复可发现并重连上次的设备`
-                    : "监听 logind 的睡眠信号，唤醒后自动恢复蓝牙状态（合盖再开盖不会失联）", checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, v ? "已开启唤醒恢复" : "已关闭唤醒恢复") }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: ["\u5DF2\u6355\u83B7 ", state.power.events, " \u6B21\u7761\u7720/\u5524\u9192\u4E8B\u4EF6", state.power.last ? `，最近一次：${state.power.last[0] === "sleep" ? "睡眠" : "唤醒"}` : "", s.last_device ? ` · 上次设备 ${s.last_device}` : ""] })), SP_JSX.jsx(SectionTitle, { children: "\u7CFB\u7EDF\u4FE1\u606F" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || "未知"] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || "未知"] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || "未知"] }), SP_JSX.jsxs("div", { children: ["\u9ED8\u8BA4\u8F93\u51FA\uFF1A", state.sink || "未知"] })] })] }));
+                } }), SP_JSX.jsxs(Hint, { children: ["\u5F53\u524D\u8F93\u51FA\u8BBE\u5907\uFF1A", (state.output?.sinks || []).map((k) => k.name).join(" · ") || "读取中…", SP_JSX.jsx("br", {}), "\u26A0\uFE0F \u53CD\u65B9\u5411\u505A\u4E0D\u5230\uFF1A\u53D7 AVDTP \u534F\u8BAE\u9650\u5236\uFF08v1.3 \u00A75.3\uFF09\uFF0C\u540C\u4E00\u9002\u914D\u5668\u540C\u4E00\u65F6\u523B\u53EA\u80FD\u6709\u4E00\u4E2A\u84DD\u7259 A2DP \u6E90\u8BBE\u5907\u8FDE\u8FDB\u6765\u3002"] }), SP_JSX.jsx(SectionTitle, { children: "\u7F16\u7801\u5668" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["\u5F53\u524D\u7F16\u7801\uFF1A", state.codec?.codec || "未连接"] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: ["\u65B9\u5411\uFF1A", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
+                    ? t("set.resumeDescOn", { backend: state.power.backend })
+                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["\u9ED8\u8BA4\u8F93\u51FA\uFF1A", state.sink || t("common.unknown")] })] })] }));
 }
 function ToggleRow({ label, desc, checked, onChange }) {
     return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => onChange(!checked), onActivate: () => onChange(!checked), style: {
@@ -806,11 +1207,11 @@ function EqTab({ state, refresh }) {
         setBusy(key);
         try {
             await api.setEqPreset(key);
-            toaster.toast({ title: "均衡器已切换", body: "PipeWire 已重启，可能有一两秒静音" });
+            toaster.toast({ title: t("eq.applied"), body: t("eq.appliedBody") });
             setTimeout(refresh, 1500);
         }
         catch (e) {
-            toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
         }
         finally {
             setBusy(null);
@@ -823,15 +1224,15 @@ function EqTab({ state, refresh }) {
         try {
             const r = await api.importAutoeq(importText);
             toaster.toast({
-                title: `已导入 ${r.bands} 段 EQ`,
-                body: r.skipped ? `跳过 ${r.skipped} 行无法识别` : "PipeWire 已重启",
+                title: t("eq.imported", { n: r.bands }),
+                body: r.skipped ? t("eq.skipped", { n: r.skipped }) : "",
             });
             setShowImport(false);
             setImportText("");
             setTimeout(refresh, 1500);
         }
         catch (e) {
-            toaster.toast({ title: "导入失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
         finally {
             setBusy(null);
@@ -843,7 +1244,7 @@ function EqTab({ state, refresh }) {
         background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
         outline: "none", resize: "vertical",
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: "\u9884\u8BBE" }), SP_JSX.jsx(Hint, { children: "\u7528 PipeWire \u5185\u7F6E\u7684 param_eq\uFF08\u4E0D\u4F9D\u8D56\u4EFB\u4F55\u5916\u90E8\u63D2\u4EF6\uFF09\u3002\u5207\u6362\u4F1A\u91CD\u542F PipeWire\uFF0C\u53EF\u80FD\u6709\u4E00\u4E24\u79D2\u9759\u97F3\u3002" }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", style: { marginTop: 10 }, children: [presets.map((p) => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: t("eq.presets") }), SP_JSX.jsx(Hint, { children: t("eq.hint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", style: { marginTop: 10 }, children: [presets.map((p) => {
                         const active = current === p.key;
                         const isBusy = busy === p.key;
                         return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => apply(p.key), onActivate: () => apply(p.key), style: {
@@ -856,15 +1257,15 @@ function EqTab({ state, refresh }) {
                                         width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                         border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                         display: "flex", alignItems: "center", justifyContent: "center",
-                                    }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 14.5, color: COLORS.text }, children: [p.label, isBusy ? "（应用中…）" : ""] }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: p.desc })] }), p.bands > 0 && SP_JSX.jsxs(Pill, { children: [p.bands, " \u6BB5"] })] }, p.key));
-                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: "\u81EA\u5B9A\u4E49\uFF08AutoEQ \u5BFC\u5165\uFF09" }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: "\u5F53\u524D\u6B63\u5728\u4F7F\u7528\u5BFC\u5165\u7684\u66F2\u7EBF" })] }), SP_JSX.jsx(Pill, { tone: "accent", children: "\u751F\u6548\u4E2D" })] }))] }), SP_JSX.jsx(SectionTitle, { children: "\u5BFC\u5165 AutoEQ / Squiglink \u66F2\u7EBF" }), SP_JSX.jsxs(Hint, { children: ["\u4ECE ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "AutoEq" }), " \u6216 ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "squig.link" }), " \u590D\u5236 ParametricEQ.txt \u7684\u5185\u5BB9\u7C98\u8FDB\u6765\u3002\u683C\u5F0F\u5F62\u5982 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`\u3002"] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? "收起" : "粘贴曲线…" }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                                    }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 14.5, color: COLORS.text }, children: [p.label, isBusy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: p.desc })] }), p.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: p.bands }) })] }, p.key));
+                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsxs(Hint, { children: ["\u4ECE ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "AutoEq" }), " \u6216 ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: "squig.link" }), " \u590D\u5236 ParametricEQ.txt \u7684\u5185\u5BB9\u7C98\u8FDB\u6765\u3002\u683C\u5F0F\u5F62\u5982 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`\u3002"] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.removeEq();
-                                toaster.toast({ title: "已移除均衡器", body: "PipeWire 已重启" });
+                                toaster.toast({ title: t("eq.removeEq"), body: "" });
                                 setTimeout(refresh, 1500);
                             }
                             catch (e) {
-                                toaster.toast({ title: "移除失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -872,11 +1273,11 @@ function EqTab({ state, refresh }) {
                                 setTimeout(refresh, 1500);
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }, children: "\u5B8C\u5168\u79FB\u9664 EQ" }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: box }), SP_JSX.jsx(DFL.Focusable, { onClick: doImport, onActivate: doImport, style: {
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }, children: t("eq.removeEq") }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: box }), SP_JSX.jsx(DFL.Focusable, { onClick: doImport, onActivate: doImport, style: {
                             display: "inline-block", marginTop: 8, padding: "9px 20px", borderRadius: 9,
                             background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
                             opacity: busy === "import" ? 0.5 : 1,
-                        }, children: busy === "import" ? "导入中…" : "导入并应用" })] })), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
+                        }, children: busy === "import" ? t("eq.importing") : t("eq.applyImport") })] })), SP_JSX.jsxs(Hint, { children: ["\u914D\u7F6E\u6587\u4EF6\uFF1A", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
 }
 // ---------------------------------------------------------------------------
 function DiagTab() {
@@ -890,7 +1291,7 @@ function DiagTab() {
             setData(await api.diagnose());
         }
         catch (e) {
-            toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
         finally {
             setLoading(false);
@@ -901,7 +1302,7 @@ function DiagTab() {
             setLog(await api.getLog(200));
         }
         catch (e) {
-            toaster.toast({ title: "读取日志失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
         }
     };
     SP_REACT.useEffect(() => { load(); }, []);
@@ -910,20 +1311,20 @@ function DiagTab() {
         fontSize: 11.5, color: COLORS.sub, fontFamily: "monospace", whiteSpace: "pre-wrap",
         maxHeight: 340, overflowY: "auto", lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? "读取中…" : "重新读取" }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: "\u67E5\u770B\u65E5\u5FD7" }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? t("common.reading") : t("common.retry") }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: t("diag.viewLog") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.report();
                                 setReport(r.text);
                                 try {
                                     await navigator.clipboard.writeText(r.text);
-                                    toaster.toast({ title: "诊断报告已复制", body: "直接粘贴给作者即可" });
+                                    toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
                                 }
                                 catch {
-                                    toaster.toast({ title: "报告已生成", body: "下面可手动选中复制" });
+                                    toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
                                 }
                             }
                             catch (e) {
-                                toaster.toast({ title: "生成失败", body: e?.message || String(e) });
+                                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
                             }
                         }, onActivate: async () => {
                             try {
@@ -931,12 +1332,12 @@ function DiagTab() {
                                 setReport(r.text);
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }, children: "\u590D\u5236\u8BCA\u65AD\u62A5\u544A" })] }), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u5B8C\u6574\u62A5\u544A" }), SP_JSX.jsx("div", { style: box, children: report })] })), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: "\u81EA\u68C0" }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (data.checks || []).map((c, i) => (SP_JSX.jsxs("div", { style: {
+                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }, children: t("diag.copy") })] }), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.report") }), SP_JSX.jsx("div", { style: box, children: report })] })), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.checks") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (data.checks || []).map((c, i) => (SP_JSX.jsxs("div", { style: {
                                 display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6,
                                 borderRadius: 8, fontSize: 13,
                                 background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
                                 border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
-                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: "\u540E\u7AEF\u6A21\u5757" }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: "\u547D\u4EE4\u53EF\u7528\u6027" }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " \u914D\u5BF9 agent"] })] }), SP_JSX.jsx(SectionTitle, { children: "\u9002\u914D\u5668\u539F\u59CB\u4FE1\u606F" }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: "\u97F3\u9891\u72B6\u6001" }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: "\u63D2\u4EF6\u65E5\u5FD7" }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
+                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: c.name }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || "（空）" }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || "（空）" })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || "（空）" })] }))] }));
 }
 
 var index = definePlugin(() => {
@@ -946,7 +1347,8 @@ var index = definePlugin(() => {
     catch { /* ignore */ }
     routerHook.addRoute(ROUTE, BtSpeakerPage);
     return {
-        name: "蓝牙音箱",
+        // 名称跟随 Steam 界面语言：英文环境显示 "Bluetooth Speaker"，中文显示「蓝牙音箱」
+        name: t("plugin.name"),
         icon: SP_JSX.jsx(FaBluetoothB, {}),
         content: SP_JSX.jsx(Speaker, {}),
         onDismount() {

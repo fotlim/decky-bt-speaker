@@ -134,6 +134,103 @@ def parse_kv(text):
     return out
 
 
+# 按蓝牙 Class 推断设备类型，用于给没有名称的设备一个可读标签
+def _class_label(klass):
+    """从 Class of Device 推断友好类型名。"""
+    try:
+        # Class 形如 "0x005a020c" 或 "0x240404"
+        v = int(str(klass).strip(), 16)
+    except (ValueError, TypeError):
+        return ""
+    major = (v >> 8) & 0x1F          # Major Device Class
+    minor = (v >> 2) & 0x3F          # Minor Device Class
+
+    if major == 0x01:
+        return "电脑"
+    if major == 0x02:
+        if minor & 0x04:
+            return "手机"
+        if minor & 0x08:
+            return "平板"
+        return "手机"
+    if major == 0x04:
+        # 音频/视频
+        if minor & 0x01:
+            return "耳机"
+        if minor & 0x02:
+            return "音箱"
+        if minor & 0x04:
+            return "麦克风"
+        return "音频设备"
+    if major == 0x05:
+        return "外设"
+    if major == 0x06:
+        return "键盘鼠标"
+    if major == 0x07:
+        return "穿戴设备"
+    if major == 0x08:
+        return "玩具"
+    return ""
+
+
+def _icon_label(icon):
+    """从 BlueZ 的 Icon 属性推断友好类型名。"""
+    table = {
+        "phone": "手机",
+        "computer": "电脑",
+        "audio-card": "音频设备",
+        "audio-headphones": "耳机",
+        "audio-headset": "耳麦",
+        "input-keyboard": "键盘",
+        "input-mouse": "鼠标",
+        "input-gaming": "手柄",
+        "multimedia-player": "播放器",
+        "video-display": "显示器",
+        "printer": "打印机",
+        "camera-photo": "相机",
+        "scanner": "扫描仪",
+        "modem": "调制解调器",
+        "network-wireless": "网络设备",
+    }
+    return table.get((icon or "").strip().lower(), "")
+
+
+def friendly_device_name(name, alias, icon, klass, mac):
+    """给设备拼一个可读名称。
+
+    优先级：
+      1. Name（设备自己广播的名字）
+      2. Alias（BlueZ 侧别名，用户可能改过）
+      3. 按 Icon / Class 推断的类型 + MAC 后四位，例如「手机 · EE:FF」
+      4. 纯 MAC 兜底
+
+    为什么要这个？
+    ------------
+    `bluetoothctl devices` 对**没有广播名称**的设备只输出 MAC，界面就会显示
+    一串 `AA:BB:CC:DD:EE:FF`，用户反馈「显示没有名称的蓝牙设备」。
+    这类设备通常是：刚进入配对模式还没广播名字、BLE 设备、或某些手机的隐私模式。
+
+    给一个「手机 · EE:FF」这样的标签，至少能让人判断该不该连。
+    """
+    name = (name or "").strip()
+    alias = (alias or "").strip()
+    mac = (mac or "").strip().upper()
+
+    # 1/2：真实名字优先。注意排除「名字就是 MAC」的情况
+    for cand in (name, alias):
+        if cand and cand.upper() != mac and not is_mac(cand):
+            return cand
+
+    # 3：按类型推断
+    label = _icon_label(icon) or _class_label(klass)
+    tail = mac[-5:] if len(mac) >= 5 else mac
+    if label:
+        return "%s · %s" % (label, tail)
+    if tail:
+        return "未知设备 · %s" % tail
+    return "未知设备"
+
+
 # ---------------------------------------------------------------------------
 # BlueZ
 # ---------------------------------------------------------------------------
@@ -337,7 +434,10 @@ class BlueZ:
 
     # -- 设备 -------------------------------------------------------------
     async def list_devices(self, kind=""):
-        """kind: '' | 'Paired' | 'Connected'。返回 [{'mac','name'}]。"""
+        """kind: '' | 'Paired' | 'Connected'。返回 [{'mac','name','display'}]。
+
+        `name` 是原始名（可能为空或等于 MAC），`display` 是给界面用的可读名。
+        """
         args = ["devices"] + ([kind] if kind else [])
         rc, out = await self._ctl(*args)
         if rc != 0:
@@ -346,7 +446,13 @@ class BlueZ:
         for line in out.splitlines():
             m = re.match(r"^\s*Device\s+([0-9A-Fa-f:]{17})\s*(.*)$", line)
             if m:
-                devs.append({"mac": m.group(1).upper(), "name": (m.group(2) or "").strip() or m.group(1).upper()})
+                mac = m.group(1).upper()
+                raw = (m.group(2) or "").strip()
+                devs.append({
+                    "mac": mac,
+                    "name": raw,
+                    "display": friendly_device_name(raw, "", "", "", mac),
+                })
         return devs
 
     async def info(self, mac):
@@ -356,12 +462,22 @@ class BlueZ:
         if rc != 0:
             raise BtError("读取设备 %s 信息失败" % mac)
         kv = parse_kv(out)
+        name = kv.get("Name", "")
+        alias = kv.get("Alias", "")
+        icon = kv.get("Icon", "")
+        klass = kv.get("Class", "")
         return {
             "mac": mac.upper(),
-            "name": kv.get("Name") or kv.get("Alias") or mac.upper(),
-            "alias": kv.get("Alias", ""),
-            "icon": kv.get("Icon", ""),
-            "class": kv.get("Class", ""),
+            "name": name,
+            "alias": alias,
+            # display 永远非空：没名字就按类型+MAC 后缀拼一个
+            "display": friendly_device_name(name, alias, icon, klass, mac),
+            "has_real_name": bool(
+                (name and name.upper() != mac.upper() and not is_mac(name))
+                or (alias and alias.upper() != mac.upper() and not is_mac(alias))
+            ),
+            "icon": icon,
+            "class": klass,
             "paired": yes(kv.get("Paired", "no")),
             "trusted": yes(kv.get("Trusted", "no")),
             "connected": yes(kv.get("Connected", "no")),
@@ -427,14 +543,22 @@ class BlueZ:
             if not m:
                 continue
             mac = m.group(1).upper()
-            name = (m.group(2) or "").strip() or mac
-            item = {"mac": mac, "name": name, "paired": False, "connected": False,
-                    "icon": "", "rssi": None}
+            raw = (m.group(2) or "").strip()
+            item = {
+                "mac": mac,
+                "name": raw,
+                "display": friendly_device_name(raw, "", "", "", mac),
+                "has_real_name": bool(raw and not is_mac(raw)),
+                "paired": False, "connected": False,
+                "icon": "", "rssi": None,
+            }
             # 逐个补详情（数量一般不多，可以接受）
             try:
                 info = await self.info(mac)
                 item.update({
-                    "name": info.get("name") or name,
+                    "name": info.get("name") or raw,
+                    "display": info.get("display") or item["display"],
+                    "has_real_name": info.get("has_real_name", item["has_real_name"]),
                     "paired": info.get("paired", False),
                     "connected": info.get("connected", False),
                     "icon": info.get("icon", ""),
@@ -444,8 +568,8 @@ class BlueZ:
             if not include_paired and item["paired"]:
                 continue
             devs.append(item)
-        # 已连接的排前面，然后按名字排序
-        devs.sort(key=lambda d: (not d["connected"], d["name"].lower()))
+        # 已连接的排前面；有真实名字的排前面（无名的通常是不该连的杂项设备）
+        devs.sort(key=lambda d: (not d["connected"], not d["has_real_name"], d["display"].lower()))
         return devs
 
     async def pair_and_trust(self, mac):

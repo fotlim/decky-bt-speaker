@@ -8,6 +8,7 @@ import { api } from "../backend";
 import { useSpeaker } from "../store";
 import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText } from "../components";
+import { t } from "../i18n";
 
 export function Speaker() {
   const { state, error } = useSpeaker();
@@ -23,8 +24,8 @@ export function Speaker() {
   // （后端写 wpctl 是异步的，轮询可能早一步读到旧值）
   useEffect(() => {
     if (vol === null || dragging) return;
-    const t = setTimeout(() => setVol(null), 3000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setVol(null), 3000);
+    return () => clearTimeout(timer);
   }, [vol, dragging]);
 
   const ad = state?.adapter;
@@ -38,14 +39,14 @@ export function Speaker() {
       await fn();
       if (okMsg) toaster.toast({ title: okMsg, body: "" });
     } catch (e: any) {
-      toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     } finally {
       setBusy(false);
     }
   };
 
   const toggleDiscoverable = async (on: boolean) => {
-    await act(() => api.setDiscoverable(on), on ? "已开启可被发现" : "已关闭可被发现");
+    await act(() => api.setDiscoverable(on), on ? t("qam.discoverable") : t("qam.notVisible"));
   };
 
   const changeVolume = (v: number) => {
@@ -61,7 +62,7 @@ export function Speaker() {
 
   const toggleMute = () => {
     if (!state) return;
-    act(() => api.setMute(!state.volume.muted), state.volume.muted ? "已取消静音" : "已静音");
+    act(() => api.setMute(!state.volume.muted), state.volume.muted ? t("common.ok") : t("common.ok"));
   };
 
   return (
@@ -77,12 +78,12 @@ export function Speaker() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {ad ? ad.alias : "蓝牙音箱"}
+            {ad ? ad.alias : t("plugin.name")}
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-            {ad?.powered ? <Pill tone="ok">蓝牙已开</Pill> : <Pill tone="warn">蓝牙已关</Pill>}
-            {ad?.discoverable ? <Pill tone="accent">可被发现</Pill> : <Pill>不可见</Pill>}
-            {connected.length > 0 && <Pill tone="ok">{connected.length} 台已连接</Pill>}
+            {ad?.powered ? <Pill tone="ok">{t("qam.btOn")}</Pill> : <Pill tone="warn">{t("qam.btOff")}</Pill>}
+            {ad?.discoverable ? <Pill tone="accent">{t("qam.discoverable")}</Pill> : <Pill>{t("qam.notVisible")}</Pill>}
+            {connected.length > 0 && <Pill tone="ok">{t("qam.connectedCount", { n: connected.length })}</Pill>}
           </div>
         </div>
       </div>
@@ -92,8 +93,8 @@ export function Speaker() {
       {/* 主开关 */}
       <PanelSectionRow>
         <ToggleField
-          label="允许设备发现并连接"
-          description={ad?.discoverable ? "手机 / 电脑的蓝牙列表里能看到这台 Deck" : "打开后其它设备才能搜到"}
+          label={t("qam.allowDiscover")}
+          description={ad?.discoverable ? t("qam.allowDiscoverDescOn") : t("qam.allowDiscoverDescOff")}
           checked={!!ad?.discoverable}
           disabled={busy || !ad?.powered}
           onChange={toggleDiscoverable}
@@ -111,25 +112,25 @@ export function Speaker() {
               color: "#ffb3b3",
             }}>
               {state.rfkill.hard
-                ? "蓝牙被硬件开关阻挡（Hard blocked），软件解不了，请重启 Deck。"
-                : "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。"}
+                ? t("qam.rfkillHard")
+                : t("qam.rfkillSoft")}
             </div>
           )}
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              onClick={() => act(() => api.setPower(true), "蓝牙已打开")}
+              onClick={() => act(() => api.setPower(true), t("qam.btOn"))}
             >
-              打开蓝牙
+              {t("qam.turnOnBt")}
             </ButtonItem>
           </PanelSectionRow>
           {state?.rfkill?.soft && !state.rfkill.hard && (
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
-                onClick={() => act(() => api.unblockRfkill(), "已尝试解除阻挡")}
+                onClick={() => act(() => api.unblockRfkill(), t("qam.unblockRfkill"))}
               >
-                解除射频阻挡（需要 sudo）
+                {t("qam.unblockRfkill")}
               </ButtonItem>
             </PanelSectionRow>
           )}
@@ -149,15 +150,15 @@ export function Speaker() {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {d.name}
+                  {d.display || d.name}
                 </div>
-                <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 1 }}>正在播放</div>
+                <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 1 }}>{t("qam.playingLabel")}</div>
               </div>
               <Focusable
-                onClick={() => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name)}
-                onActivate={() => act(() => api.deviceAction(d.mac, "disconnect"), "已断开 " + d.name)}
+                onClick={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
+                onActivate={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
                 style={{ fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }}
-              >断开</Focusable>
+              >{t("qam.disconnect")}</Focusable>
             </div>
           ))}
         </div>
@@ -176,7 +177,7 @@ export function Speaker() {
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {state.track?.title || `正在播放：${state.live.name}`}
+                {state.track?.title || t("qam.playing", { name: state.live.name })}
               </div>
               {state.track?.artist && (
                 <div style={{ fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -184,7 +185,7 @@ export function Speaker() {
                 </div>
               )}
             </div>
-            <Pill tone="accent">{state.track?.status_label || "外部音源"}</Pill>
+            <Pill tone="accent">{state.track?.status_label || t("qam.externalSource")}</Pill>
           </div>
           {state.track && state.track.duration_ms > 0 && (
             <div style={{ fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }}>
@@ -193,7 +194,7 @@ export function Speaker() {
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Focusable
-              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted), state.live!.muted ? "已取消静音" : "已静音外部音源")}
+              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted), t("common.ok"))}
               onActivate={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted))}
               style={{ cursor: "pointer", color: COLORS.sub, flexShrink: 0 }}
             >
@@ -225,14 +226,14 @@ export function Speaker() {
             style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }}
           >
             {state?.volume.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
-            <span style={{ fontSize: 12 }}>音量</span>
+            <span style={{ fontSize: 12 }}>{t("qam.volume")}</span>
           </Focusable>
           <span style={{
             fontSize: 11.5,
             color: showVol > 100 ? COLORS.accentWarm : COLORS.sub,
             fontVariantNumeric: "tabular-nums",
           }}>
-            {showVol}%{showVol > 100 ? " · 可能破音" : ""}
+            {showVol}%{showVol > 100 ? " · " + t("qam.clipping") : ""}
           </span>
         </div>
         <SliderField
@@ -248,8 +249,8 @@ export function Speaker() {
       {/* 声音太小？一键增益到 130%（安全范围内） */}
       {showVol < 120 && (
         <Focusable
-          onClick={() => act(() => api.boostVolume(1.3), "已增益到 130%")}
-          onActivate={() => act(() => api.boostVolume(1.3), "已增益到 130%")}
+          onClick={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
+          onActivate={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
           style={{
             marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -257,20 +258,20 @@ export function Speaker() {
             fontSize: 12.5, color: COLORS.accent,
           }}
         >
-          <FaVolumeUp size={11} /> 声音太小？增强到 130%
+          <FaVolumeUp size={11} /> {t("qam.boost")}
         </Focusable>
       )}
 
       {connected.length === 0 && ad?.discoverable && (
         <div style={{ fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>
-          在手机的「蓝牙」里找 <b style={{ color: COLORS.sub }}>{ad.alias}</b>，配对后直接放歌即可～
+          {t("qam.hintFind", { alias: ad.alias })}
         </div>
       )}
 
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => Navigation.Navigate(ROUTE)}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <FaCog size={12} /> 设备管理 / 设置
+            <FaCog size={12} /> {t("qam.manage")}
           </div>
         </ButtonItem>
       </PanelSectionRow>

@@ -5,6 +5,7 @@ import { api } from "../backend";
 import { useSpeaker } from "../store";
 import { COLORS } from "../route";
 import { Pill, ErrorText, Hint, Avatar, SectionTitle, Loading, Card } from "../components";
+import { t } from "../i18n";
 
 type Tab = "devices" | "settings" | "eq" | "diag";
 
@@ -29,7 +30,7 @@ export function BtSpeakerPage() {
       toaster.toast({ title: label, body: "" });
       setTimeout(refresh, 800);
     } catch (e: any) {
-      toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     } finally {
       setBusyMac(null);
     }
@@ -59,15 +60,15 @@ export function BtSpeakerPage() {
       {/* 头部 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: COLORS.text }}>蓝牙音箱</div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: COLORS.text }}>{t("page.title")}</div>
           <div style={{ fontSize: 13, color: COLORS.sub, marginTop: 3 }}>
-            {ad ? `${ad.alias} · ${ad.address || "未知地址"}` : "正在读取蓝牙适配器…"}
+            {ad ? `${ad.alias} · ${ad.address || t("common.unknown")}` : t("page.readingAdapter")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {ad?.powered ? <Pill tone="ok">蓝牙已开</Pill> : <Pill tone="warn">蓝牙已关</Pill>}
-          {ad?.discoverable ? <Pill tone="accent">可被发现</Pill> : <Pill>不可见</Pill>}
-          {ad?.a2dp_sink ? <Pill tone="ok">A2DP Sink</Pill> : <Pill tone="warn">无 Sink 角色</Pill>}
+          {ad?.powered ? <Pill tone="ok">{t("qam.btOn")}</Pill> : <Pill tone="warn">{t("qam.btOff")}</Pill>}
+          {ad?.discoverable ? <Pill tone="accent">{t("qam.discoverable")}</Pill> : <Pill>{t("qam.notVisible")}</Pill>}
+          {ad?.a2dp_sink ? <Pill tone="ok">{t("page.a2dpSink")}</Pill> : <Pill tone="warn">{t("page.noSink")}</Pill>}
         </div>
       </div>
 
@@ -76,10 +77,10 @@ export function BtSpeakerPage() {
       {/* Tab 切换 */}
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, margin: "14px 0 4px" }}>
         {([
-          ["devices", "已配对设备"],
-          ["settings", "设置"],
-          ["eq", "均衡器"],
-          ["diag", "诊断"],
+          ["devices", t("tab.devices")],
+          ["settings", t("tab.settings")],
+          ["eq", t("tab.eq")],
+          ["diag", t("tab.diag")],
         ] as [Tab, string][]).map(([k, label]) => (
           <Focusable
             key={k}
@@ -120,7 +121,7 @@ export function BtSpeakerPage() {
 function DevicesTab({
   paired, connectedMacs, busyMac, onAction, discoverable, alias,
 }: {
-  paired: { mac: string; name: string }[];
+  paired: { mac: string; name: string; display?: string; has_real_name?: boolean; icon?: string }[];
   connectedMacs: Set<string>;
   busyMac: string | null;
   onAction: (mac: string, action: "connect" | "disconnect" | "remove" | "repair", label: string) => void;
@@ -132,8 +133,7 @@ function DevicesTab({
       <div style={{ marginTop: 16 }}>
         <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
         <Hint>
-          还没有配对过任何设备。用上面的「搜索附近设备」找到手机后点「配对」即可，
-          不用退出插件去系统蓝牙设置。
+          {t("dev.noDevices")}
         </Hint>
       </div>
     );
@@ -142,7 +142,7 @@ function DevicesTab({
     <div style={{ marginTop: 16 }}>
       <ScanPanel alias={alias} discoverable={discoverable} onPaired={() => onAction("", "connect", "")} />
 
-      <SectionTitle>已配对（{paired.length}）</SectionTitle>
+      <SectionTitle>{t("dev.pairedCount", { n: paired.length })}</SectionTitle>
       <Focusable flow-children="column">
         {paired.map((d) => {
           const connected = connectedMacs.has(d.mac);
@@ -152,48 +152,52 @@ function DevicesTab({
               display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
               borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
             }}>
-              <Avatar connected={connected} />
+              <Avatar connected={connected} icon={(d as any).icon} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {d.name}
+                  {(d as any).display || d.name}
                 </div>
-                <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>{d.mac}</div>
+                <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
+                  {d.mac}
+                  {d.has_real_name === false && (
+                    <span style={{ marginLeft: 6, color: "#e0a800" }}>· {t("dev.noName")}</span>
+                  )}
+                </div>
               </div>
-              {connected ? <Pill tone="ok">已连接</Pill> : <Pill>未连接</Pill>}
+              {connected ? <Pill tone="ok">{t("dev.connected")}</Pill> : <Pill>{t("dev.notConnected")}</Pill>}
               <Focusable
-                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…")}
-                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? "已断开" : "正在连接…")}
+                onClick={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting"))}
+                onActivate={() => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connecting"))}
                 style={{
                   padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
                   background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
                   color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
                 }}
-              >{busy ? "…" : connected ? "断开" : "连接"}</Focusable>
+              >{busy ? "…" : connected ? t("qam.disconnect") : t("dev.connect")}</Focusable>
               <Focusable
-                onClick={() => onAction(d.mac, "repair", "正在修复配对…")}
-                onActivate={() => onAction(d.mac, "repair", "正在修复配对…")}
+                onClick={() => onAction(d.mac, "repair", t("dev.repairing"))}
+                onActivate={() => onAction(d.mac, "repair", t("dev.repairing"))}
                 style={{
                   padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
                   background: "rgba(76,154,255,0.16)", color: COLORS.accent,
                 }}
-              >修复配对</Focusable>
+              >{t("dev.repair")}</Focusable>
               <Focusable
-                onClick={() => onAction(d.mac, "remove", "已移除配对")}
-                onActivate={() => onAction(d.mac, "remove", "已移除配对")}
+                onClick={() => onAction(d.mac, "remove", t("dev.removed"))}
+                onActivate={() => onAction(d.mac, "remove", t("dev.removed"))}
                 style={{
                   padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
                   background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm,
                 }}
-              >移除</Focusable>
+              >{t("common.remove")}</Focusable>
             </div>
           );
         })}
       </Focusable>
       <Hint>
-        连接成功后在手机上播放音乐，声音就会从 Deck 的喇叭出来。同一时间只能有一个源在放（蓝牙 A2DP 的限制）。
+        {t("dev.hint")}
         <br />
-        <b style={{ color: COLORS.sub }}>配对码 / 通行密钥不正确？</b>点「修复配对」——
-        它会清除 Deck 端保存的旧绑定密钥再重新配对。如果仍失败，请在手机端也「忘记」这个设备后重新搜索。
+        <b style={{ color: COLORS.sub }}>{t("dev.hintPair")}</b>
       </Hint>
     </div>
   );
@@ -220,12 +224,12 @@ function ScanPanel({ alias, discoverable, onPaired }: {
       setScanned(true);
       if (!r.devices || !r.devices.length) {
         toaster.toast({
-          title: "没搜到设备",
-          body: "确认手机蓝牙已打开、并且在可被发现状态",
+          title: t("dev.noneFound"),
+          body: t("dev.noneFound"),
         });
       }
     } catch (e: any) {
-      toaster.toast({ title: "搜索失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     } finally {
       setScanning(false);
     }
@@ -236,11 +240,11 @@ function ScanPanel({ alias, discoverable, onPaired }: {
     setBusyMac(mac);
     try {
       await api.pairDeviceFull(mac);
-      toaster.toast({ title: `已配对 ${name}`, body: "" });
+      toaster.toast({ title: t("dev.paired", { name }), body: "" });
       setDevices((prev) => prev.filter((d) => d.mac !== mac));
       onPaired();
     } catch (e: any) {
-      toaster.toast({ title: "配对失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("dev.pairFailed"), body: e?.message || String(e) });
     } finally {
       setBusyMac(null);
     }
@@ -248,11 +252,11 @@ function ScanPanel({ alias, discoverable, onPaired }: {
 
   return (
     <div style={{ marginBottom: 8 }}>
-      <SectionTitle>搜索附近设备</SectionTitle>
+      <SectionTitle>{t("dev.search")}</SectionTitle>
       <Hint>
         {discoverable
-          ? "扫描 20 秒，找到设备后点「配对」即可，不用去系统蓝牙设置。"
-          : "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。"}
+          ? t("dev.searchHint")
+          : t("dev.searchHintWarn")}
       </Hint>
       <Focusable
         onClick={scan}
@@ -264,7 +268,7 @@ function ScanPanel({ alias, discoverable, onPaired }: {
           color: scanning ? COLORS.sub : "#fff", fontSize: 13.5,
         }}
       >
-        {scanning ? "正在搜索…（约 20 秒）" : "搜索附近设备"}
+        {scanning ? t("dev.searching") : t("dev.search")}
       </Focusable>
 
       {devices.length > 0 && (
@@ -285,20 +289,25 @@ function ScanPanel({ alias, discoverable, onPaired }: {
                 }}>{isPhone ? "📱" : isComputer ? "💻" : "🔊"}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {d.name}
+                    {d.display || d.name}
                   </div>
-                  <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>{d.mac}</div>
+                  <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>
+                    {d.mac}
+                    {d.has_real_name === false && (
+                      <span style={{ marginLeft: 6, color: "#e0a800" }}>· {t("dev.noName")}</span>
+                    )}
+                  </div>
                 </div>
                 <Focusable
-                  onClick={() => pair(d.mac, d.name)}
-                  onActivate={() => pair(d.mac, d.name)}
+                  onClick={() => pair(d.mac, d.display || d.name)}
+                  onActivate={() => pair(d.mac, d.display || d.name)}
                   style={{
                     padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
                     cursor: busy ? "default" : "pointer",
                     background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
                     color: busy ? COLORS.sub : "#fff",
                   }}
-                >{busy ? "配对中…" : "配对"}</Focusable>
+                >{busy ? t("dev.pairing") : t("dev.pair")}</Focusable>
               </div>
             );
           })}
@@ -307,8 +316,7 @@ function ScanPanel({ alias, discoverable, onPaired }: {
 
       {scanned && devices.length === 0 && (
         <Hint>
-          没搜到未配对的设备。可能是：手机已经配过这台 Deck（去下面「已配对」里看）、
-          或手机蓝牙没打开、或对方不可被发现。
+          {t("dev.noneFound")}
         </Hint>
       )}
     </div>
@@ -328,7 +336,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
       await api.setSetting(key, value);
       toaster.toast({ title: label, body: "" });
     } catch (e: any) {
-      toaster.toast({ title: "保存失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
     }
   };
 
@@ -336,12 +344,12 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     try {
       const r = await api.setFocusMode(mode);
       toaster.toast({
-        title: "焦点模式已切换",
+        title: t("set.focus"),
         body: r.applied && r.applied.length ? r.applied.join("、") : "",
       });
       refresh();
     } catch (e: any) {
-      toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
     }
   };
 
@@ -350,7 +358,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
       await api.setSilenceTimeout(sec);
       refresh();
     } catch (e: any) {
-      toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
     }
   };
 
@@ -360,9 +368,9 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
     setBusy(true);
     try {
       await api.setAlias(v);
-      toaster.toast({ title: "设备名已改为 " + v, body: "" });
+      toaster.toast({ title: t("toast.nameChanged", { name: v }), body: "" });
     } catch (e: any) {
-      toaster.toast({ title: "改名失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.renameFailed"), body: e?.message || String(e) });
     } finally {
       setBusy(false);
     }
@@ -370,8 +378,8 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
 
   return (
     <div style={{ marginTop: 16, maxWidth: 720 }}>
-      <SectionTitle>设备名</SectionTitle>
-      <Hint>别人蓝牙列表里看到的名字。建议改成一个好认的名字。</Hint>
+      <SectionTitle>{t("set.name")}</SectionTitle>
+      <Hint>{t("set.nameHint")}</Hint>
       <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
         <input
           value={alias}
@@ -391,38 +399,36 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             padding: "10px 20px", borderRadius: 9, fontSize: 14, cursor: "pointer",
             background: COLORS.accent, color: "#fff", opacity: busy ? 0.6 : 1,
           }}
-        >{busy ? "保存中…" : "保存"}</Focusable>
+        >{busy ? t("common.saving") : t("common.save")}</Focusable>
       </div>
 
-      <SectionTitle>音频调优</SectionTitle>
+      <SectionTitle>{t("set.audioTuning")}</SectionTitle>
       <ToggleRow
-        label="启用「音箱优化」配置"
-        desc="写入用户级 WirePlumber 配置：只保留 A2DP 角色、手机推流直出、避免掉成通话单声道。改完会自动重启 WirePlumber。"
+        label={t("set.audioTuningLabel")}
+        desc={t("set.audioTuningDesc")}
         checked={!!state.tuning?.installed}
         onChange={async (v) => {
           try {
             if (v) {
               await api.applyTuning();
-              toaster.toast({ title: "已启用音箱优化", body: "WirePlumber 已重启" });
+              toaster.toast({ title: t("set.tuningOn"), body: "" });
             } else {
               await api.removeTuning();
-              toaster.toast({ title: "已恢复系统默认", body: "WirePlumber 已重启" });
+              toaster.toast({ title: t("set.tuningOff"), body: "" });
             }
             refresh();
           } catch (e: any) {
-            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
           }
         }}
       />
       <Hint>
-        配置文件：<span style={{ color: COLORS.sub }}>{state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf"}</span>
-        <br />连上了却没声音、或者声音变成单声道发闷时，打开它再重连一次通常就好了。
+        {t("set.tuningHint", { path: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" })}
       </Hint>
 
-      <SectionTitle>配对</SectionTitle>
+      <SectionTitle>{t("set.pairing")}</SectionTitle>
       <Hint>
-        配对 agent 负责应答手机的配对请求。如果手机弹了配对码但 Deck 没反应，
-        说明 agent 没工作，点下面的按钮重启它再试。
+        {t("set.pairingHint")}
       </Hint>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
         <div style={{
@@ -431,22 +437,22 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         }} />
         <div style={{ flex: 1, fontSize: 13, color: COLORS.text }}>
           {state.agent_registered
-            ? "配对 agent 已就绪"
+            ? t("set.agentReady")
             : state.agent
-              ? "配对 agent 运行中，但未确认注册"
-              : "配对 agent 未运行"}
+              ? t("set.agentRunning")
+              : t("set.agentDown")}
         </div>
         <Focusable
           onClick={async () => {
             try {
               const r = await api.restartAgent();
               toaster.toast({
-                title: r.registered ? "配对 agent 已重启并就绪" : "已重启，但未确认注册",
-                body: r.registered ? "" : "配对时可能需要手动确认",
+                title: r.registered ? t("set.agentReady") : t("set.agentRunning"),
+                body: "",
               });
               setTimeout(refresh, 800);
             } catch (e: any) {
-              toaster.toast({ title: "重启失败", body: e?.message || String(e) });
+              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
             }
           }}
           onActivate={async () => {
@@ -456,13 +462,12 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
             background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
           }}
-        >重启 agent</Focusable>
+        >{t("set.restartAgent")}</Focusable>
       </div>
 
-      <SectionTitle>音质（编码器）</SectionTitle>
+      <SectionTitle>{t("set.codec")}</SectionTitle>
       <Hint>
-        蓝牙音质主要由编码器决定。<b style={{ color: COLORS.sub }}>SBC-XQ</b> 是普通 SBC 的高质量变体，
-        码率从 328 提到约 452 kbps，兼容性几乎无损失，是最划算的提升。
+        {t("set.codecHint")}
       </Hint>
       <Focusable flow-children="column" style={{ marginTop: 8 }}>
         {(state.quality?.presets || []).map((p: any) => {
@@ -474,12 +479,12 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                 try {
                   const r = await api.setCodecPreset(p.key);
                   toaster.toast({
-                    title: `音质预设：${p.label}`,
-                    body: r.active_profile ? `当前编码器：${r.active_profile}` : "WirePlumber 已重启",
+                    title: `${t("set.codec")}: ${p.label}`,
+                    body: r.active_profile ? `${t("set.codecCurrent", { codec: r.active_profile })}` : "",
                   });
                   setTimeout(refresh, 1500);
                 } catch (e: any) {
-                  toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                  toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
                 }
               }}
               onActivate={async () => {
@@ -503,20 +508,20 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
                 <div style={{ fontSize: 14, color: COLORS.text }}>{p.label}</div>
                 <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 2 }}>{p.desc}</div>
               </div>
-              <Pill>重采样 {p.resample}</Pill>
+              <Pill>resample {p.resample}</Pill>
             </Focusable>
           );
         })}
       </Focusable>
       <Hint>
-        当前实际编码器：<span style={{ color: COLORS.accent }}>
-          {state.quality?.active_profile || "未连接"}
+        {t("set.codecCurrent", { codec: state.quality?.active_profile || t("common.none") })}
+        <span style={{ color: COLORS.accent }}>
         </span>
         <br />
-        改完编码器后，<b style={{ color: COLORS.sub }}>需要在手机上断开重连一次</b>才会重新协商。
+        {t("set.codecReconnect")}
       </Hint>
 
-      <SectionTitle>卡顿 / 音质</SectionTitle>
+      <SectionTitle>{t("set.stutter")}</SectionTitle>
       {/* 2.4GHz 干扰是蓝牙卡顿的头号原因，直接显示出来 */}
       {state.wifi && state.wifi.risk === "high" && (
         <div style={{
@@ -524,18 +529,17 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
           background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
           color: "#ffb3b3", whiteSpace: "pre-wrap",
         }}>
-          <b>⚠️ 检测到 2.4GHz Wi-Fi 干扰</b>
+          <b>⚠️ {t("set.stutterWifi")}</b>
           {"\n"}
           {state.wifi.wifi_24g.map((w: any) =>
-            `${w.ssid || w.interface}（信道 ${w.channel}，${w.freq_mhz} MHz）`).join("、")}
+            `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / ")}
           {"\n"}
-          蓝牙与 2.4GHz Wi-Fi 共用同一个射频，这是音频卡顿的头号原因。
-          <b>把 Wi-Fi 切到 5GHz 通常能立刻解决。</b>
+          {t("set.stutterWifiBody")}
         </div>
       )}
       {state.wifi && state.wifi.risk === "none" && (
         <Hint>
-          Wi-Fi 在 5GHz 或未连接，与蓝牙不冲突。
+          {t("set.stutterOk")}
         </Hint>
       )}
 
@@ -545,12 +549,12 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             try {
               const r = await api.fixStutter();
               toaster.toast({
-                title: "已应用抗卡顿设置",
+                title: t("set.fixStutter"),
                 body: (r.applied || []).join("、"),
               });
               setTimeout(refresh, 1500);
             } catch (e: any) {
-              toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
             }
           }}
           onActivate={async () => {
@@ -560,25 +564,25 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
             background: COLORS.accent, color: "#fff",
           }}
-        >一键抗卡顿</Focusable>
+        >{t("set.fixStutter")}</Focusable>
         <Focusable
           onClick={async () => {
             try {
               const r = await api.diagnoseStutter();
               const lines = [];
               if (r.too_slow?.count > 0) {
-                lines.push(`PipeWire 报告 ${r.too_slow.count} 次 client too slow（带宽不足）`);
+                lines.push(`client too slow x${r.too_slow.count}`);
               } else if (r.too_slow?.checked) {
-                lines.push("PipeWire 日志里没有 client too slow");
+                lines.push("no client too slow in log");
               }
-              if (r.codec) lines.push(`当前编码器：${r.codec}`);
+              if (r.codec) lines.push(`${t("set.codecCurrent", { codec: r.codec })}`);
               if (r.wifi?.advice) lines.push(r.wifi.advice);
               toaster.toast({
-                title: "卡顿诊断",
-                body: lines.join("；").slice(0, 300) || "未发现明显问题",
+                title: t("set.diagStutter"),
+                body: lines.join("; ").slice(0, 300) || t("common.none"),
               });
             } catch (e: any) {
-              toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
             }
           }}
           onActivate={async () => {
@@ -588,20 +592,19 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
             background: "rgba(255,255,255,0.08)", color: COLORS.text,
           }}
-        >诊断卡顿</Focusable>
+        >{t("set.diagStutter")}</Focusable>
       </Focusable>
       <Hint>
-        「一键抗卡顿」会把延迟档位切到抗卡顿（加大缓冲）并把音量拉到 100%。
-        如果卡顿是 Wi-Fi 干扰导致的，更彻底的办法是把 Wi-Fi 切到 5GHz。
+        {t("set.stutterHint")}
       </Hint>
 
-      <SectionTitle>音频焦点</SectionTitle>
-      <Hint>决定「手机推流」和「Deck 游戏声音」怎么共存。不会改写你的系统默认输出。</Hint>
+      <SectionTitle>{t("set.focus")}</SectionTitle>
+      <Hint>{t("set.focusHint")}</Hint>
       <Focusable flow-children="column" style={{ marginTop: 8 }}>
         {([
-          ["coexist", "与游戏共存", "两者都出声，互不抢占（推荐）"],
-          ["receiver_first", "接收端优先", "优先保证手机推流音质，关闭自动切通话模式"],
-          ["manual", "手动", "插件不插手，完全自己用系统音量面板调"],
+          ["coexist", t("set.focusCoexist"), t("set.focusCoexistDesc")],
+          ["receiver_first", t("set.focusReceiver"), t("set.focusReceiverDesc")],
+          ["manual", t("set.focusManual"), t("set.focusManualDesc")],
         ] as [string, string, string][]).map(([mode, label, desc]) => {
           const active = (s.focus_mode || "coexist") === mode;
           return (
@@ -632,13 +635,13 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         })}
       </Focusable>
 
-      <SectionTitle>省电</SectionTitle>
-      <Hint>手机放完歌常忘了断开，A2DP 链路会一直占着蓝牙射频。这里可以自动收尾。</Hint>
+      <SectionTitle>{t("set.power")}</SectionTitle>
+      <Hint>{t("set.powerHint")}</Hint>
       <div style={{ marginTop: 8 }}>
         <div style={{ fontSize: 13.5, color: COLORS.text, marginBottom: 6 }}>
-          静音多久后自动断开
+          {t("set.silence")}
           {state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
-            ? `（还有 ${state.silence.remaining} 秒）`
+            ? t("set.silenceRemain", { n: state.silence.remaining })
             : ""}
         </div>
         <SliderField
@@ -650,25 +653,24 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
           onChange={(v) => { setSilence(v); }}
         />
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }}>
-          <span>关闭</span><span>5 分钟</span><span>10 分钟</span>
+          <span>{t("set.silenceOff")}</span><span>5m</span><span>10m</span>
         </div>
       </div>
 
-      <SectionTitle>音量归一化</SectionTitle>
+      <SectionTitle>{t("set.normalize")}</SectionTitle>
       <Hint>
-        手机切歌时音量忽大忽小很常见。这里记录一个基线，跳变超过 25% 会提示。
-        当前基线：{state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : "未设置"}
-        {state.normalize?.jumps ? ` · 已检测到 ${state.normalize.jumps} 次跳变` : ""}
+        {t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") })}
+        {state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""}
       </Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
         <Focusable
           onClick={async () => {
             try {
               await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
-              toaster.toast({ title: "已把当前音量设为基线", body: "" });
+              toaster.toast({ title: t("set.setBaseline"), body: "" });
               refresh();
             } catch (e: any) {
-              toaster.toast({ title: "设置失败", body: e?.message || String(e) });
+              toaster.toast({ title: t("toast.saveFailed"), body: e?.message || String(e) });
             }
           }}
           onActivate={async () => {
@@ -678,7 +680,7 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             } catch { /* ignore */ }
           }}
           style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}
-        >以当前音量为准</Focusable>
+        >{t("set.setBaseline")}</Focusable>
         <Focusable
           onClick={async () => {
             try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
@@ -687,10 +689,10 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
             try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
           }}
           style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }}
-        >重置</Focusable>
+        >{t("set.resetBaseline")}</Focusable>
       </Focusable>
 
-      <SectionTitle>延迟档位</SectionTitle>
+      <SectionTitle>{t("set.behavior")}</SectionTitle>
       <Hint>蓝牙 A2DP 的延迟取决于编码器与缓冲。这里是「省电 / 低延迟 / 抗卡顿」的取舍。</Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
         {(state.output?.latency_profiles || []).map((p: any) => {
@@ -701,10 +703,10 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
               onClick={async () => {
                 try {
                   await api.setLatencyProfile(p.key);
-                  toaster.toast({ title: `延迟档位：${p.label}`, body: "WirePlumber 已重启" });
+                  toaster.toast({ title: `${p.label}`, body: "WirePlumber 已重启" });
                   setTimeout(refresh, 1200);
                 } catch (e: any) {
-                  toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+                  toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
                 }
               }}
               onActivate={async () => {
@@ -717,25 +719,25 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
               }}
             >
               <div style={{ fontSize: 13.5, color: COLORS.text }}>{p.label}</div>
-              <div style={{ fontSize: 11, color: COLORS.accent, marginTop: 2 }}>约 {p.latency_ms}ms</div>
+              <div style={{ fontSize: 11, color: COLORS.accent, marginTop: 2 }}>~{p.latency_ms}ms</div>
               <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>
             </Focusable>
           );
         })}
       </Focusable>
 
-      <SectionTitle>多输出同步</SectionTitle>
+      <SectionTitle>{t("set.sysinfo")}</SectionTitle>
       <ToggleRow
-        label="创建一个「Deck 多输出」设备"
-        desc="声音同时送到内置喇叭 + 蓝牙耳机 + 有线耳机。开启后在系统音量里把输出切到「Deck 多输出（同步）」。"
+        label="Deck multi-output"
+        desc="Play to speakers + BT headset + wired headset at once."
         checked={!!s.multi_output}
         onChange={async (v) => {
           try {
             await api.setMultiOutput(v);
-            toaster.toast({ title: v ? "已开启多输出同步" : "已关闭多输出同步", body: "PipeWire 已重启" });
+            toaster.toast({ title: v ? "multi-output on" : "multi-output off", body: "" });
             setTimeout(refresh, 1500);
           } catch (e: any) {
-            toaster.toast({ title: "操作失败", body: e?.message || String(e) });
+            toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
           }
         }}
       />
@@ -752,43 +754,42 @@ function SettingsTab({ state, refresh }: { state: any; refresh: () => void }) {
         <div>方向：{state.codec?.role || "—"}</div>
       </div>
 
-      <SectionTitle>行为</SectionTitle>
+      <SectionTitle>{t("set.behavior")}</SectionTitle>
       <ToggleRow
-        label="插件加载时自动进入可被发现"
-        desc="打开 Decky 后自动开好蓝牙，省得每次手动点"
+        label={t("set.autoStart")}
+        desc={t("set.autoStartDesc")}
         checked={!!s.auto_start}
-        onChange={(v) => save("auto_start", v, v ? "已开启自动启动" : "已关闭自动启动")}
+        onChange={(v) => save("auto_start", v, t("common.ok"))}
       />
       <ToggleRow
-        label="保持可被发现"
-        desc="BlueZ 默认 180 秒后自动隐藏，这里每分钟复查一次"
+        label={t("set.keepAlive")}
+        desc={t("set.keepAliveDesc")}
         checked={!!s.keep_alive}
-        onChange={(v) => save("keep_alive", v, v ? "已开启保活" : "已关闭保活")}
+        onChange={(v) => save("keep_alive", v, t("common.ok"))}
       />
       <ToggleRow
-        label="睡眠唤醒后自动恢复"
+        label={t("set.resume")}
         desc={
           state.power?.watching
-            ? `已监听（${state.power.backend}）：唤醒后自动恢复可发现并重连上次的设备`
-            : "监听 logind 的睡眠信号，唤醒后自动恢复蓝牙状态（合盖再开盖不会失联）"
+            ? t("set.resumeDescOn", { backend: state.power.backend })
+            : t("set.resumeDescOff")
         }
         checked={!!s.resume_restore}
-        onChange={(v) => save("resume_restore", v, v ? "已开启唤醒恢复" : "已关闭唤醒恢复")}
+        onChange={(v) => save("resume_restore", v, t("common.ok"))}
       />
       {state.power?.watching && (
         <Hint>
-          已捕获 {state.power.events} 次睡眠/唤醒事件
-          {state.power.last ? `，最近一次：${state.power.last[0] === "sleep" ? "睡眠" : "唤醒"}` : ""}
-          {s.last_device ? ` · 上次设备 ${s.last_device}` : ""}
+          {t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" })}
+          {s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""}
         </Hint>
       )}
 
-      <SectionTitle>系统信息</SectionTitle>
+      <SectionTitle>{t("set.sysinfo")}</SectionTitle>
       <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
-        <div>PipeWire：{state.versions?.pipewire || "未知"}</div>
-        <div>WirePlumber：{state.versions?.wireplumber || "未知"}</div>
-        <div>BlueZ：{state.versions?.bluez || "未知"}</div>
-        <div>默认输出：{state.sink || "未知"}</div>
+        <div>PipeWire：{state.versions?.pipewire || t("common.unknown")}</div>
+        <div>WirePlumber：{state.versions?.wireplumber || t("common.unknown")}</div>
+        <div>BlueZ：{state.versions?.bluez || t("common.unknown")}</div>
+        <div>默认输出：{state.sink || t("common.unknown")}</div>
       </div>
     </div>
   );
@@ -835,10 +836,10 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
     setBusy(key);
     try {
       await api.setEqPreset(key);
-      toaster.toast({ title: "均衡器已切换", body: "PipeWire 已重启，可能有一两秒静音" });
+      toaster.toast({ title: t("eq.applied"), body: t("eq.appliedBody") });
       setTimeout(refresh, 1500);
     } catch (e: any) {
-      toaster.toast({ title: "切换失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.switchFailed"), body: e?.message || String(e) });
     } finally {
       setBusy(null);
     }
@@ -850,14 +851,14 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
     try {
       const r = await api.importAutoeq(importText);
       toaster.toast({
-        title: `已导入 ${r.bands} 段 EQ`,
-        body: r.skipped ? `跳过 ${r.skipped} 行无法识别` : "PipeWire 已重启",
+        title: t("eq.imported", { n: r.bands }),
+        body: r.skipped ? t("eq.skipped", { n: r.skipped }) : "",
       });
       setShowImport(false);
       setImportText("");
       setTimeout(refresh, 1500);
     } catch (e: any) {
-      toaster.toast({ title: "导入失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     } finally {
       setBusy(null);
     }
@@ -872,9 +873,9 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
 
   return (
     <div style={{ marginTop: 16, maxWidth: 760 }}>
-      <SectionTitle>预设</SectionTitle>
+      <SectionTitle>{t("eq.presets")}</SectionTitle>
       <Hint>
-        用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。
+        {t("eq.hint")}
       </Hint>
       <Focusable flow-children="column" style={{ marginTop: 10 }}>
         {presets.map((p) => {
@@ -902,26 +903,26 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14.5, color: COLORS.text }}>
-                  {p.label}{isBusy ? "（应用中…）" : ""}
+                  {p.label}{isBusy ? " …" : ""}
                 </div>
                 <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 3 }}>{p.desc}</div>
               </div>
-              {p.bands > 0 && <Pill>{p.bands} 段</Pill>}
+              {p.bands > 0 && <Pill>{t("eq.bands", { n: p.bands })}</Pill>}
             </Focusable>
           );
         })}
         {current === "custom" && (
           <Card active>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, color: COLORS.text }}>自定义（AutoEQ 导入）</div>
-              <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 3 }}>当前正在使用导入的曲线</div>
+              <div style={{ fontSize: 14, color: COLORS.text }}>{t("eq.custom")}</div>
+              <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 3 }}>{t("eq.customActive")}</div>
             </div>
-            <Pill tone="accent">生效中</Pill>
+            <Pill tone="accent">{t("eq.active")}</Pill>
           </Card>
         )}
       </Focusable>
 
-      <SectionTitle>导入 AutoEQ / Squiglink 曲线</SectionTitle>
+      <SectionTitle>{t("eq.import")}</SectionTitle>
       <Hint>
         从 <span style={{ color: COLORS.sub }}>AutoEq</span> 或 <span style={{ color: COLORS.sub }}>squig.link</span> 复制
         ParametricEQ.txt 的内容粘进来。格式形如 `Filter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100`。
@@ -931,23 +932,23 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
           onClick={() => setShowImport(!showImport)}
           onActivate={() => setShowImport(!showImport)}
           style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}
-        >{showImport ? "收起" : "粘贴曲线…"}</Focusable>
+        >{showImport ? t("eq.collapse") : t("eq.paste")}</Focusable>
         {state.eq?.installed && (
           <Focusable
             onClick={async () => {
               try {
                 await api.removeEq();
-                toaster.toast({ title: "已移除均衡器", body: "PipeWire 已重启" });
+                toaster.toast({ title: t("eq.removeEq"), body: "" });
                 setTimeout(refresh, 1500);
               } catch (e: any) {
-                toaster.toast({ title: "移除失败", body: e?.message || String(e) });
+                toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
               }
             }}
             onActivate={async () => {
               try { await api.removeEq(); setTimeout(refresh, 1500); } catch { /* ignore */ }
             }}
             style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }}
-          >完全移除 EQ</Focusable>
+          >{t("eq.removeEq")}</Focusable>
         )}
       </Focusable>
 
@@ -967,7 +968,7 @@ function EqTab({ state, refresh }: { state: any; refresh: () => void }) {
               background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
               opacity: busy === "import" ? 0.5 : 1,
             }}
-          >{busy === "import" ? "导入中…" : "导入并应用"}</Focusable>
+          >{busy === "import" ? t("eq.importing") : t("eq.applyImport")}</Focusable>
         </div>
       )}
 
@@ -990,7 +991,7 @@ function DiagTab() {
     try {
       setData(await api.diagnose());
     } catch (e: any) {
-      toaster.toast({ title: "诊断失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     } finally {
       setLoading(false);
     }
@@ -1000,7 +1001,7 @@ function DiagTab() {
     try {
       setLog(await api.getLog(200));
     } catch (e: any) {
-      toaster.toast({ title: "读取日志失败", body: e?.message || String(e) });
+      toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
     }
   };
 
@@ -1016,10 +1017,10 @@ function DiagTab() {
     <div style={{ marginTop: 16 }}>
       <Focusable flow-children="row" style={{ display: "flex", gap: 10 }}>
         <Focusable onClick={load} onActivate={load} style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}>
-          {loading ? "读取中…" : "重新读取"}
+          {loading ? t("common.reading") : t("common.retry")}
         </Focusable>
         <Focusable onClick={loadLog} onActivate={loadLog} style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}>
-          查看日志
+          {t("diag.viewLog")}
         </Focusable>
         <Focusable
           onClick={async () => {
@@ -1028,31 +1029,31 @@ function DiagTab() {
               setReport(r.text);
               try {
                 await navigator.clipboard.writeText(r.text);
-                toaster.toast({ title: "诊断报告已复制", body: "直接粘贴给作者即可" });
+                toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
               } catch {
-                toaster.toast({ title: "报告已生成", body: "下面可手动选中复制" });
+                toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
               }
             } catch (e: any) {
-              toaster.toast({ title: "生成失败", body: e?.message || String(e) });
+              toaster.toast({ title: t("toast.failed"), body: e?.message || String(e) });
             }
           }}
           onActivate={async () => {
             try { const r = await api.report(); setReport(r.text); } catch { /* ignore */ }
           }}
           style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }}
-        >复制诊断报告</Focusable>
+        >{t("diag.copy")}</Focusable>
       </Focusable>
 
       {report && (
         <>
-          <SectionTitle>完整报告</SectionTitle>
+          <SectionTitle>{t("diag.report")}</SectionTitle>
           <div style={box}>{report}</div>
         </>
       )}
 
       {data && (
         <>
-          <SectionTitle>自检</SectionTitle>
+          <SectionTitle>{t("diag.checks")}</SectionTitle>
           <Focusable flow-children="column" style={{ marginTop: 8 }}>
             {(data.checks || []).map((c: any, i: number) => (
               <div key={i} style={{
@@ -1070,32 +1071,32 @@ function DiagTab() {
             ))}
           </Focusable>
 
-          <SectionTitle>后端模块</SectionTitle>
+          <SectionTitle>{t("diag.modules")}</SectionTitle>
           <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
             {Object.entries(data.modules || {}).map(([k, v]: any) => (
               <div key={k}>{v ? "✅" : "❌"} {k}.py</div>
             ))}
           </div>
 
-          <SectionTitle>命令可用性</SectionTitle>
+          <SectionTitle>{t("diag.tools")}</SectionTitle>
           <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
             {Object.entries(data.tools || {}).map(([k, v]: any) => (
               <div key={k}>{v ? "✅" : "❌"} {k}</div>
             ))}
-            <div>{data.agent ? "✅" : "❌"} 配对 agent</div>
+            <div>{data.agent ? "✅" : "❌"} {t("diag.agent")}</div>
           </div>
 
-          <SectionTitle>适配器原始信息</SectionTitle>
+          <SectionTitle>{t("diag.adapterRaw")}</SectionTitle>
           <div style={box}>{data.adapter_raw || "（空）"}</div>
 
-          <SectionTitle>音频状态</SectionTitle>
+          <SectionTitle>{t("diag.wpStatus")}</SectionTitle>
           <div style={box}>{data.wp_status || "（空）"}</div>
         </>
       )}
 
       {log && (
         <>
-          <SectionTitle right={<span style={{ fontSize: 11, color: COLORS.dim }}>{log.path}</span>}>插件日志</SectionTitle>
+          <SectionTitle right={<span style={{ fontSize: 11, color: COLORS.dim }}>{log.path}</span>}>{t("diag.pluginLog")}</SectionTitle>
           <div style={box}>{log.text || "（空）"}</div>
         </>
       )}
