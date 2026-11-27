@@ -657,6 +657,66 @@ def test_wifi():
     check("None 不崩", wifi.analyze([])["risk"] == "none")
 
 
+def test_settings_validation():
+    print("设置项类型校验（防脏数据）")
+    # main.py 会 import decky（Decky Loader 注入），这里用桩模块替代
+    import types
+    if "decky" not in sys.modules:
+        fake = types.ModuleType("decky")
+
+        class _L:
+            def info(self, *a):
+                pass
+
+            def error(self, *a):
+                pass
+
+        fake.logger = _L()
+        fake.DECKY_PLUGIN_RUNTIME_DIR = os.path.join(os.path.dirname(__file__), "_test_rt")
+        fake.DECKY_PLUGIN_LOG_DIR = os.path.join(os.path.dirname(__file__), "_test_log")
+        sys.modules["decky"] = fake
+
+    import main as m
+
+    D = m.DEFAULT_SETTINGS
+
+    # bool
+    check("bool 接受 True", m._setting_ok("auto_start", True, D["auto_start"]))
+    check("bool 拒绝字符串", not m._setting_ok("auto_start", "true", D["auto_start"]))
+    check("bool 拒绝数字 1", not m._setting_ok("auto_start", 1, D["auto_start"]))
+    check("bool 拒绝 None", not m._setting_ok("auto_start", None, D["auto_start"]))
+
+    # int
+    check("int 接受 0", m._setting_ok("silence_disconnect", 0, D["silence_disconnect"]))
+    check("int 接受 600", m._setting_ok("silence_disconnect", 600, D["silence_disconnect"]))
+    check("int 拒绝负数", not m._setting_ok("silence_disconnect", -1, D["silence_disconnect"]))
+    check("int 拒绝超范围", not m._setting_ok("silence_disconnect", 99999, D["silence_disconnect"]))
+    check("int 拒绝 bool（Python 里 bool 是 int 子类）",
+          not m._setting_ok("silence_disconnect", True, D["silence_disconnect"]))
+    check("int 拒绝字符串", not m._setting_ok("silence_disconnect", "600", D["silence_disconnect"]))
+
+    # str 枚举
+    check("focus_mode 接受合法值", m._setting_ok("focus_mode", "coexist", D["focus_mode"]))
+    check("focus_mode 拒绝非法值", not m._setting_ok("focus_mode", "evil", D["focus_mode"]))
+    check("latency 接受 stable", m._setting_ok("latency_profile", "stable", D["latency_profile"]))
+    check("latency 拒绝非法值", not m._setting_ok("latency_profile", "ultra", D["latency_profile"]))
+    check("eq_preset 接受 bass", m._setting_ok("eq_preset", "bass", D["eq_preset"]))
+    check("eq_preset 拒绝非法值", not m._setting_ok("eq_preset", "hack", D["eq_preset"]))
+
+    # 超长字符串
+    check("str 拒绝超长", not m._setting_ok("alias", "x" * 300, D["alias"]))
+    check("str 接受正常长度", m._setting_ok("alias", "Steam Deck", D["alias"]))
+
+    # last_device 必须是空或合法 MAC
+    check("last_device 接受空", m._setting_ok("last_device", "", D["last_device"]))
+    check("last_device 接受合法 MAC",
+          m._setting_ok("last_device", "AA:BB:CC:DD:EE:FF", D["last_device"]))
+    check("last_device 拒绝垃圾", not m._setting_ok("last_device", "not-a-mac", D["last_device"]))
+
+    # 未知类型默认值
+    check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
+
+
 def test_power_parse():
     print("睡眠信号解析")
     import power
@@ -691,7 +751,8 @@ if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
-               test_output, test_metadata, test_quality, test_wifi, test_power_parse):
+               test_output, test_metadata, test_quality, test_wifi,
+               test_settings_validation, test_power_parse):
         fn()
     print()
     if FAILED:

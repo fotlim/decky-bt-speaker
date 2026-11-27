@@ -5,7 +5,7 @@ import {
 import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog } from "react-icons/fa";
 import { api } from "../backend";
-import { useSpeaker } from "../store";
+import { useSpeaker, setPanelVisible } from "../store";
 import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText } from "../components";
 import { t } from "../i18n";
@@ -17,6 +17,12 @@ export function Speaker() {
   // 拖动中标记：拖动期间完全用本地值，防止轮询把滑块拽回去
   const [dragging, setDragging] = useState(false);
   const dragTimer = useRef<any>(null);
+
+  // QAM 面板挂载即视为可见；卸载时通知 store 降频
+  useEffect(() => {
+    setPanelVisible(true);
+    return () => setPanelVisible(false);
+  }, []);
 
   const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
 

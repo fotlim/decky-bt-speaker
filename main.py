@@ -17,6 +17,7 @@ import time
 import asyncio
 import functools
 import traceback
+import re
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -117,6 +118,48 @@ _ERR = "__bt_error__"
 MANUAL_GRACE = 90
 
 
+def _setting_ok(key, value, default):
+    """校验单个设置项的类型与取值。
+
+    返回 True 表示可以接受。原则：
+    - 类型必须和默认值一致（bool / int / str）
+    - 字符串有长度上限，避免被写入超长内容
+    - 枚举型字段必须在白名单里
+    """
+    # bool 必须单独判断（Python 里 bool 是 int 的子类）
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+
+    if isinstance(default, int):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+        # 数值范围保护
+        if key == "silence_disconnect":
+            return 0 <= value <= 3600
+        return 0 <= value <= 1_000_000
+
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            return False
+        if len(value) > 200:
+            return False
+        # 枚举白名单
+        if key == "focus_mode":
+            return value in ("receiver_first", "coexist", "manual")
+        if key == "latency_profile":
+            return value in ("low", "balanced", "stable")
+        if key == "codec_preset":
+            return value in ("", "balanced", "quality", "stable")
+        if key == "eq_preset":
+            return value in ("flat", "bass", "vocal", "bright", "loudness", "custom")
+        if key == "last_device":
+            # 空字符串或合法 MAC
+            return value == "" or bool(re.match(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", value))
+        return True
+
+    return False
+
+
 def _safe(fn):
     """RPC 兜底：把真实错误文本回传给前端（否则只有笼统的 Python Exception）。"""
 
@@ -181,17 +224,34 @@ class Plugin:
     # 设置持久化
     # ------------------------------------------------------------------
     def _load_settings(self):
+        """读取设置。
+
+        ⚠️ 不信任磁盘上的内容。评审意见指出「后端假设读到的东西都是自己写的」
+        是不安全的 —— 这个文件用户可能手改过、可能被别的程序覆盖、可能损坏。
+        所以这里做**逐项类型校验**：类型不对就丢弃该项、回退默认值，
+        而不是把任意 JSON 值塞进运行时。
+        """
         s = dict(DEFAULT_SETTINGS)
         try:
             if self.settings_path and os.path.exists(self.settings_path):
                 with open(self.settings_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict):
-                    for k in DEFAULT_SETTINGS:
-                        if k in data:
-                            s[k] = data[k]
+                    dropped = []
+                    for k, default in DEFAULT_SETTINGS.items():
+                        if k not in data:
+                            continue
+                        v = data[k]
+                        if _setting_ok(k, v, default):
+                            s[k] = v
+                        else:
+                            dropped.append(k)
+                    if dropped:
+                        self._log("设置项类型不合法，已回退默认值：%s" % ", ".join(dropped))
+                else:
+                    self._log("设置文件不是 JSON 对象，已忽略并回退默认值")
         except Exception as e:  # noqa: BLE001
-            self._log("读取设置失败：%s" % e)
+            self._log("读取设置失败（将使用默认值）：%s" % e)
         self.settings = s
         return s
 
