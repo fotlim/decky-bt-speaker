@@ -119,6 +119,8 @@ const api = {
     setAlias: (alias) => call("set_alias", alias),
     deviceAction: (mac, action) => call("device_action", mac, action),
     setVolume: (v) => call("set_volume", v),
+    /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
+    stepVolume: (delta) => call("step_volume", delta),
     setMute: (m) => call("set_mute", m),
     setSourceVolume: (nodeId, v) => call("set_source_volume", nodeId, v),
     setSourceMute: (nodeId, m) => call("set_source_mute", nodeId, m),
@@ -383,6 +385,9 @@ const EN = {
     "qam.externalSource": "External source",
     "qam.disconnect": "Disconnect",
     "qam.volume": "Volume",
+    "qam.volumeHint": "use Steam volume keys for exact value",
+    "qam.mute": "Mute",
+    "qam.unmute": "Unmute",
     "qam.clipping": "may clip",
     "qam.boost": "Too quiet? Boost to 130%",
     "qam.boosted": "Boosted to 130%",
@@ -544,6 +549,9 @@ const ZH = {
     "qam.externalSource": "外部音源",
     "qam.disconnect": "断开",
     "qam.volume": "音量",
+    "qam.volumeHint": "精确数值请用 Steam 音量键",
+    "qam.mute": "静音",
+    "qam.unmute": "取消静音",
     "qam.clipping": "可能破音",
     "qam.boost": "声音太小？增强到 130%",
     "qam.boosted": "已增益到 130%",
@@ -736,13 +744,22 @@ function t(key, vars) {
     return s;
 }
 
+/** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
+function VolBtn({ onClick, label }) {
+    return (SP_JSX.jsx(DFL.Focusable, { onClick: onClick, onActivate: onClick, style: {
+            flex: 1, minWidth: 0, padding: "9px 0", borderRadius: 9, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(255,255,255,0.07)", border: `1px solid ${COLORS.border}`,
+            fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap",
+        }, children: label }));
+}
 function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
     // 本地音量值：用户拖动后一直保留，直到「后端确认读到我们设的值」才交还
     const [vol, setVol] = SP_REACT.useState(null);
-    const [dragging, setDragging] = SP_REACT.useState(false);
-    const dragTimer = SP_REACT.useRef(null);
+    const [dragging] = SP_REACT.useState(false);
+    SP_REACT.useRef(null);
     const settleTimer = SP_REACT.useRef(null);
     // 外部音源音量：同样的确认式交还
     const [srcVol, setSrcVol] = SP_REACT.useState(null);
@@ -805,9 +822,6 @@ function Speaker() {
     }, [state?.live?.volume, srcVol]);
     const ad = state?.adapter;
     const connected = state?.connected || [];
-    const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
-    // 后端读取失败时不能显示成 0%（会误导），单独标记
-    const volFailed = !!state && state.volume.ok === false;
     const act = async (fn, okMsg) => {
         if (busy)
             return;
@@ -826,17 +840,6 @@ function Speaker() {
     };
     const toggleDiscoverable = async (on) => {
         await act(() => api.setDiscoverable(on), on ? t("qam.discoverable") : t("qam.notVisible"));
-    };
-    const changeVolume = (v) => {
-        setVol(v);
-        setDragging(true);
-        // 每次拖动都重置松手定时器
-        if (dragTimer.current)
-            clearTimeout(dragTimer.current);
-        dragTimer.current = setTimeout(() => {
-            setDragging(false);
-        }, 600);
-        api.setVolume(v / 100).catch(() => { });
     };
     const toggleMute = () => {
         if (!state)
@@ -869,23 +872,15 @@ function Speaker() {
                                             clearTimeout(srcTimer.current);
                                         srcTimer.current = setTimeout(() => setSrcVol(null), 15000);
                                         api.setSourceVolume(state.live.id, v / 100).catch(() => { });
-                                    } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 6 }, children: [SP_JSX.jsxs("div", { style: {
-                            display: "flex", alignItems: "center", justifyContent: "space-between",
-                            marginBottom: 2, padding: "0 2px",
-                        }, children: [SP_JSX.jsxs(DFL.Focusable, { onClick: toggleMute, onActivate: toggleMute, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { style: { fontSize: 12 }, children: t("qam.volume") })] }), SP_JSX.jsx("span", { style: {
-                                    fontSize: 11.5,
-                                    color: volFailed ? COLORS.accentWarm : (showVol > 100 ? COLORS.accentWarm : COLORS.sub),
-                                    fontVariantNumeric: "tabular-nums",
-                                }, children: volFailed ? "读取失败" : `${showVol}%${showVol > 100 ? " · " + t("qam.clipping") : ""}` })] }), SP_JSX.jsx(DFL.SliderField, { value: showVol, min: 0, max: 150, step: 5, showValue: false, onChange: changeVolume }), volFailed && (SP_JSX.jsxs("div", { style: {
-                            marginTop: 6, padding: "8px 10px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
-                            background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
-                            color: "#ffb3b3",
-                        }, children: ["\u8BFB\u4E0D\u5230\u7CFB\u7EDF\u97F3\u91CF\uFF08wpctl \u5931\u8D25\uFF09\u3002\u8FD9\u901A\u5E38\u610F\u5473\u7740\u63D2\u4EF6\u540E\u7AEF\u7F3A\u5C11\u4F1A\u8BDD\u73AF\u5883\u53D8\u91CF\u3002", SP_JSX.jsx("br", {}), "\u8BF7\u5230\u5168\u5C4F\u9875 \u2192 \u8BCA\u65AD \u2192 \u590D\u5236\u8BCA\u65AD\u62A5\u544A\u53D1\u7ED9\u4F5C\u8005\u3002"] }))] }), showVol < 120 && (SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
+                                    } }) })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
+                            display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
+                            color: COLORS.sub, fontSize: 12,
+                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs(DFL.Focusable, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted")), onActivate: () => act(() => api.boostVolume(1.3), t("qam.boosted")), style: {
                     marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
                     fontSize: 12.5, color: COLORS.accent,
-                }, children: [SP_JSX.jsx(FaVolumeUp, { size: 11 }), " ", t("qam.boost")] })), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
+                }, children: [SP_JSX.jsx(FaVolumeUp, { size: 11 }), " ", t("qam.boost")] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) })] }));
 }
 
 function BtSpeakerPage() {

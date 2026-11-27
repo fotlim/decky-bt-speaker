@@ -937,6 +937,41 @@ class Wp:
             raise BtError("设置音量失败：%s" % (out or "").strip())
         return True
 
+    async def step_volume(self, delta):
+        """相对调节音量（+/-），不需要先读取当前值。
+
+        为什么用这个而不是 set_volume？
+        ------------------------------
+        真机上 `wpctl get-volume` 读取一直不可靠（显示 0%），
+        但 `wpctl set-volume N%+` 这种**相对语法由 wpctl 内部完成加减**，
+        完全不需要我们先读到当前值。所以它永远有效，不会有同步问题。
+
+        wpctl 的相对语法：
+          wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%+   # 加 10%
+          wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-    # 减 5%
+        """
+        try:
+            d = int(delta)
+        except (TypeError, ValueError):
+            raise BtError("音量增量不合法：%s" % delta)
+        if d == 0:
+            return True
+        sign = "+" if d > 0 else "-"
+        arg = "%d%%%s" % (abs(d), sign)
+        # 用 -l 限制上限，避免一路加爆导致削波
+        rc, out = await run_cmd(
+            ["wpctl", "set-volume", "-l", "%.2f" % MAX_GAIN, "@DEFAULT_AUDIO_SINK@", arg],
+            timeout=5.0,
+        )
+        if rc != 0:
+            # 某些版本不支持 -l，退回不带限制
+            rc2, out2 = await run_cmd(
+                ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", arg], timeout=5.0
+            )
+            if rc2 != 0:
+                raise BtError("调节音量失败：%s" % ((out2 or out or "").strip().splitlines() or ["未知错误"])[-1])
+        return True
+
     async def set_mute(self, muted):
         rc, out = await run_cmd(
             ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if muted else "0"], timeout=5.0

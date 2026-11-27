@@ -10,6 +10,24 @@ import { COLORS, ROUTE } from "../route";
 import { Pill, ErrorText } from "../components";
 import { t } from "../i18n";
 
+/** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
+function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <Focusable
+      onClick={onClick}
+      onActivate={onClick}
+      style={{
+        flex: 1, minWidth: 0, padding: "9px 0", borderRadius: 9, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "rgba(255,255,255,0.07)", border: `1px solid ${COLORS.border}`,
+        fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </Focusable>
+  );
+}
+
 export function Speaker() {
   const { state, error } = useSpeaker();
   const [busy, setBusy] = useState(false);
@@ -264,63 +282,43 @@ export function Speaker() {
         </div>
       )}
 
-      {/* 音量：数值放滑杆上方，避开 SliderField 自带的底边框 */}
-      <div style={{ width: "100%", marginTop: 6 }}>
+      {/* 音量：不再显示滑杆。
+          真机上 wpctl 读取一直失败，显示出来的数字是错的（滑杆在最右却显示 0%），
+          与其显示错误数据，不如只保留「相对调节」按钮 —— 它们只发指令、不读状态，
+          因此不存在同步问题。想看具体数值请用 Steam 自己的音量键或系统音量面板。 */}
+      <div style={{ width: "100%", marginTop: 8 }}>
         <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          marginBottom: 2, padding: "0 2px",
+          display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
+          color: COLORS.sub, fontSize: 12,
         }}>
-          <Focusable
-            onClick={toggleMute}
-            onActivate={toggleMute}
-            style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: COLORS.sub }}
-          >
-            {state?.volume.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
-            <span style={{ fontSize: 12 }}>{t("qam.volume")}</span>
-          </Focusable>
-          <span style={{
-            fontSize: 11.5,
-            color: volFailed ? COLORS.accentWarm : (showVol > 100 ? COLORS.accentWarm : COLORS.sub),
-            fontVariantNumeric: "tabular-nums",
-          }}>
-            {volFailed ? "读取失败" : `${showVol}%${showVol > 100 ? " · " + t("qam.clipping") : ""}`}
+          {state?.volume.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
+          <span>{t("qam.volume")}</span>
+          <span style={{ fontSize: 11, color: COLORS.dim, marginLeft: "auto" }}>
+            {t("qam.volumeHint")}
           </span>
         </div>
-        <SliderField
-          value={showVol}
-          min={0}
-          max={150}
-          step={5}
-          showValue={false}
-          onChange={changeVolume}
-        />
-        {volFailed && (
-          <div style={{
-            marginTop: 6, padding: "8px 10px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
-            background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
-            color: "#ffb3b3",
-          }}>
-            读不到系统音量（wpctl 失败）。这通常意味着插件后端缺少会话环境变量。
-            <br />请到全屏页 → 诊断 → 复制诊断报告发给作者。
-          </div>
-        )}
+        <Focusable flow-children="row" style={{ display: "flex", gap: 8 }}>
+          <VolBtn onClick={() => act(() => api.stepVolume(-10))} label="−10%" />
+          <VolBtn onClick={() => act(() => api.stepVolume(-5))} label="−5%" />
+          <VolBtn onClick={toggleMute} label={state?.volume.muted ? t("qam.unmute") : t("qam.mute")} />
+          <VolBtn onClick={() => act(() => api.stepVolume(5))} label="+5%" />
+          <VolBtn onClick={() => act(() => api.stepVolume(10))} label="+10%" />
+        </Focusable>
       </div>
 
       {/* 声音太小？一键增益到 130%（安全范围内） */}
-      {showVol < 120 && (
-        <Focusable
-          onClick={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
-          onActivate={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
-          style={{
-            marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
-            fontSize: 12.5, color: COLORS.accent,
-          }}
-        >
-          <FaVolumeUp size={11} /> {t("qam.boost")}
-        </Focusable>
-      )}
+      <Focusable
+        onClick={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
+        onActivate={() => act(() => api.boostVolume(1.3), t("qam.boosted"))}
+        style={{
+          marginTop: 8, padding: "9px 12px", borderRadius: 9, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          background: "rgba(76,154,255,0.12)", border: "1px solid rgba(76,154,255,0.28)",
+          fontSize: 12.5, color: COLORS.accent,
+        }}
+      >
+        <FaVolumeUp size={11} /> {t("qam.boost")}
+      </Focusable>
 
       {connected.length === 0 && ad?.discoverable && (
         <div style={{ fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>

@@ -796,6 +796,13 @@ class Plugin:
         return {"ok": True, "volume": max(0.0, min(bt.MAX_GAIN, float(value)))}
 
     @_safe
+    async def step_volume(self, delta):
+        """相对调节音量（不读取当前值，因此不受 wpctl 读取问题影响）。"""
+        self._last_manual_volume = time.time()
+        await self.wp.step_volume(delta)
+        return {"ok": True, "delta": int(delta)}
+
+    @_safe
     async def set_mute(self, muted):
         await self.wp.set_mute(bool(muted))
         return {"ok": True, "muted": bool(muted)}

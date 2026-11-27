@@ -28,6 +28,8 @@ export const api = {
   deviceAction: (mac: string, action: "connect" | "disconnect" | "trust" | "untrust" | "pair" | "remove") =>
     call<[string, string], { ok: boolean }>("device_action", mac, action),
   setVolume: (v: number) => call<[number], { ok: boolean }>("set_volume", v),
+  /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
+  stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),
   setMute: (m: boolean) => call<[boolean], { ok: boolean }>("set_mute", m),
   setSourceVolume: (nodeId: number, v: number) =>
     call<[number, number], { ok: boolean; volume: number }>("set_source_volume", nodeId, v),

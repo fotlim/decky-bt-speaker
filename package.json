@@ -1,6 +1,6 @@
 {
   "name": "decky-bt-speaker",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "把 Steam Deck 变成蓝牙音箱：手机 / 电脑可连接并播放音乐",
   "type": "module",
   "scripts": {
