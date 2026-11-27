@@ -720,6 +720,35 @@ def test_settings_validation():
     check("未知类型一律拒绝", not m._setting_ok("x", [1, 2], []))
 
 
+def test_classify_peer():
+    print("对端设备类型识别（电脑推流音量低的关键）")
+    import bt
+
+    # Icon 优先
+    check("icon=computer", bt.classify_peer("computer", "", "") == "computer")
+    check("icon=phone", bt.classify_peer("phone", "", "") == "phone")
+    check("icon=audio-card 不算电脑", bt.classify_peer("audio-card", "", "") == "other")
+
+    # Class of Device 兜底
+    check("Class 0x01 是电脑", bt.classify_peer("", "0x00010c", "") == "computer")
+    check("Class 0x02 是手机", bt.classify_peer("", "0x005a020c", "") == "phone")
+    check("Class 0x04 音频不算电脑", bt.classify_peer("", "0x240404", "") == "other")
+
+    # 名字关键词兜底（wpctl status 里节点名就是对端设备名）
+    for nm in ["DESKTOP-ABC123", "MacBook Pro", "ThinkPad X1", "Windows PC"]:
+        check("名字识别为电脑: %s" % nm, bt.classify_peer("", "", nm) == "computer")
+    for nm in ["Pixel 8", "iPhone 15", "Galaxy S24", "Redmi Note"]:
+        check("名字识别为手机: %s" % nm, bt.classify_peer("", "", nm) == "phone")
+
+    # 认不出的归 other（不能误判成电脑，否则会给错增益）
+    check("中文名归 other", bt.classify_peer("", "", "Ciallo~(∠・ω< )⌒★") == "other")
+    check("空输入归 other", bt.classify_peer("", "", "") == "other")
+    check("None 归 other", bt.classify_peer(None, None, None) == "other")
+
+    # Icon 优先级高于名字（避免名字里含 pc 但实际是手机）
+    check("icon=phone 压过名字里的 pc", bt.classify_peer("phone", "", "my-pc-phone") == "phone")
+
+
 def test_normalize_mac():
     print("MAC 归一化（修复「设备地址不合法」）")
     import bt
@@ -878,7 +907,7 @@ if __name__ == "__main__":
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
-               test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
+               test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse):
         fn()
     print()

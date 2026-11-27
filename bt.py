@@ -277,6 +277,47 @@ def _parse_rssi(text):
     return None
 
 
+def classify_peer(icon, klass, name=""):
+    """判断推流的对端是什么类型的设备。
+
+    为什么需要区分？
+    --------------
+    不同对端的 A2DP 推流电平差别很大，且 AVRCP 绝对音量实现程度不同：
+      - **Windows / macOS 电脑**：完整实现 AVRCP 绝对音量，
+        会把 Deck 的音量绑定到电脑的音量滑块上；
+        而且推流电平通常比手机低（尤其系统音量不满时）
+      - **手机**：多数不实现或实现不完整，Deck 自己控制音量
+
+    真机反馈「电脑声音小、手机没问题」就是这个差异造成的。
+
+    返回 'computer' | 'phone' | 'other'
+    """
+    ic = (icon or "").lower()
+    nm = (name or "").lower()
+    if "computer" in ic or "laptop" in ic:
+        return "computer"
+    if "phone" in ic:
+        return "phone"
+    # 按 Class of Device 兜底
+    try:
+        v = int(str(klass or "").strip(), 16)
+        major = (v >> 8) & 0x1F
+        if major == 0x01:
+            return "computer"
+        if major == 0x02:
+            return "phone"
+    except (ValueError, TypeError):
+        pass
+    # 按名字关键词兜底
+    for kw in ("windows", "pc", "laptop", "desktop", "macbook", "thinkpad"):
+        if kw in nm:
+            return "computer"
+    for kw in ("iphone", "android", "phone", "pixel", "galaxy", "redmi", "xiaomi"):
+        if kw in nm:
+            return "phone"
+    return "other"
+
+
 def _parse_uuids(info_text):
     """从 `bluetoothctl info` 输出里提取设备支持的 UUID 短码列表。
 
@@ -1359,8 +1400,19 @@ WP_CONF_TEMPLATE = """# 由「蓝牙音箱」Decky 插件生成
 monitor.bluez.properties = {{
   # 只保留 A2DP 的收发两个角色，避免手机把 Deck 当成通话网关
   bluez5.roles = [ a2dp_sink a2dp_source ]
-  # 接收端也启用蓝牙硬件音量
-  bluez5.hw-volume = [ a2dp_sink a2dp_source ]
+  # ⚠️ hw-volume 只保留 a2dp_source（Deck 连耳机时用蓝牙硬件音量）。
+  #
+  # 为什么把 a2dp_sink 从 hw-volume 里去掉？
+  # ------------------------------------
+  # 启用 a2dp_sink 的 hw-volume 后，音量控制权会通过 AVRCP 绝对音量
+  # 交给**对端设备**。不同对端实现差异极大：
+  #   - 手机：多数不实现或实现不完整 -> Deck 自己控制音量，正常
+  #   - Windows：完整实现 -> 电脑的音量滑块直接决定 Deck 的音量，
+  #     Deck 上怎么调都没用（真机反馈「电脑声音小、手机没问题」）
+  #
+  # 去掉之后，接收方向的音量完全由 PipeWire 软件音量控制，
+  # 不再受对端音量滑块牵制。
+  bluez5.hw-volume = [ a2dp_source ]
   bluez5.enable-sbc-xq = true
 }}
 

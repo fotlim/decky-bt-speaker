@@ -1,0 +1,26 @@
+fix(v2.5.5): 电脑推流声音小 - AVRCP 绝对音量把控制权交给了对端
+
+用户反馈：电脑连上来声音小，手机没问题。
+
+根因是 hw-volume 配置：
+    bluez5.hw-volume = [ a2dp_sink a2dp_source ]
+                       ^^^^^^^^^^ 这一项让对端控制 Deck 的音量
+
+启用 a2dp_sink 的 hw-volume 后，音量控制权通过 AVRCP 绝对音量
+交给对端设备，而不同对端实现差异极大：
+  - 手机：多数不实现或实现不完整 -> Deck 自己控制音量，正常
+  - Windows：完整实现 -> 电脑的音量滑块直接决定 Deck 的音量，
+    Deck 上怎么调都没用
+
+修法一（根本）：
+- hw-volume 只保留 a2dp_source（Deck 连耳机时用蓝牙硬件音量）
+- 接收方向的音量完全由 PipeWire 软件音量控制，不再受对端牵制
+
+修法二（补偿）：
+- 新增 bt.classify_peer()：按 Icon / Class / 名字判断对端是
+  电脑还是手机（wpctl status 里节点名就是对端设备名）
+- boost_volume 识别到电脑推流时，额外再给 1.2 倍增益
+  （电脑 A2DP 推流电平普遍低于手机）
+
+新增 21 项对端识别测试：Icon 优先、Class 兜底、名字关键词兜底、
+认不出归 other（避免误判成电脑给错增益）

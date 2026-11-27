@@ -937,16 +937,48 @@ class Plugin:
             except Exception as e:  # noqa: BLE001
                 self._log("增益：设置外部源音量失败 %s" % e)
 
+        # 3. 若推流方是电脑，额外再给一档
+        #
+        # 为什么？电脑（尤其 Windows）的 A2DP 推流电平普遍低于手机，
+        # 而且它会通过 AVRCP 绝对音量把 Deck 的音量绑到自己的音量滑块上。
+        # 真机反馈「电脑声音小、手机没问题」就是这个原因。
+        # 这里对电脑再补 1.2 倍，让两种设备的听感接近。
+        peer = "other"
+        try:
+            text2 = await self.wp.status_text()
+            if nodes is not None:
+                src2 = nodes.find_bt_input(text2)
+                if src2:
+                    peer = self._peer_kind(src2.get("name", ""))
+        except Exception:
+            pass
+        if peer == "computer" and src_id is not None:
+            extra = min(bt.MAX_GAIN, g * 1.2)
+            try:
+                await self.wp.set_volume_of(src_id, extra)
+                applied.append("电脑推流额外增益 -> %d%%" % round(extra * 100))
+            except Exception as e:  # noqa: BLE001
+                self._log("增益：电脑额外增益失败 %s" % e)
+
         warn = g > 1.0
-        self._log("一键增益 %s：%s" % (g, "、".join(applied) or "无操作"))
+        self._log("一键增益 %s（对端 %s）：%s" % (g, peer, "、".join(applied) or "无操作"))
         return {
             "ok": True,
             "gain": g,
+            "peer": peer,
             "applied": applied,
             "clipping_warning": warn,
             "hint": ("超过 100% 会削波，可能出现爆音。"
                      "如果听到破音请调回 100% 以内。") if warn else "",
         }
+
+    def _peer_kind(self, node_name):
+        """从推流节点名猜对端类型。
+
+        `wpctl status` 里蓝牙输入节点的名字是**对端设备名**
+        （例如 `Pixel 8`、`DESKTOP-ABC123`），所以可以直接按关键词判断。
+        """
+        return bt.classify_peer("", "", node_name)
 
     @_safe
     async def set_auto_gain(self, enabled):
