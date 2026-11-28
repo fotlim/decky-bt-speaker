@@ -337,6 +337,104 @@ async def _noop():
     return True
 
 
+def test_inflight_dedup():
+    """同一 key 的并发缓存计算只能真的算一次（QAM + 全屏页会并发进来）。"""
+    print("\n[并发缓存去重]")
+    import main as M
+
+    p = M.Plugin.__new__(M.Plugin)
+    p._cache = {}
+    p._inflight_cache = {}
+    p._log = lambda *a: None
+
+    calls = {"n": 0}
+
+    async def slow():
+        calls["n"] += 1
+        await asyncio.sleep(0.15)   # 故意慢，让并发真的重叠
+        return "value"
+
+    async def go():
+        # 5 个并发请求同一个 key
+        return await asyncio.gather(*[
+            p._cached_async("same-key", 30.0, slow) for _ in range(5)
+        ])
+
+    results = asyncio.run(go())
+    check("并发 5 次只真正计算 1 次", calls["n"] == 1, "实际 %d 次" % calls["n"])
+    check("5 个调用都拿到结果", all(r == "value" for r in results), str(results))
+    check("in-flight 表已清空", not p._inflight_cache, str(p._inflight_cache))
+
+
+def test_cache_failure_not_cached():
+    """factory 失败不能把 None 写进缓存（否则 Wi-Fi 信息会整块消失 60 秒）。"""
+    print("\n[失败不污染缓存]")
+    import main as M
+
+    p = M.Plugin.__new__(M.Plugin)
+    p._cache = {}
+    p._inflight_cache = {}
+    p._log = lambda *a: None
+
+    state = {"fail": True, "n": 0}
+
+    async def flaky():
+        state["n"] += 1
+        if state["fail"]:
+            raise RuntimeError("boom")
+        return "good"
+
+    async def go():
+        first = await p._cached_async("flaky", 60.0, flaky)
+        # 缓存里不该有这条（失败不写）
+        in_cache = "flaky" in p._cache
+        # 让下一次成功
+        state["fail"] = False
+        second = await p._cached_async("flaky", 60.0, flaky)
+        return first, in_cache, second, state["n"]
+
+    first, in_cache, second, n = asyncio.run(go())
+    check("失败时返回 None（不抛给调用方）", first is None, repr(first))
+    check("失败的结果没有写进缓存", in_cache is False)
+    check("下次调用会重试并成功", second == "good", repr(second))
+    check("确实重试了（共调用 2 次）", n == 2, "实际 %d 次" % n)
+
+
+def test_keepalive_decoupled():
+    """静音守卫不能被「可被发现」开关连带关掉。
+
+    ⚠️ 用 AST 检查而不是搜字符串：docstring 里就写着
+    「早期静音守卫写在 `if not discoverable: continue` 之后」，
+    搜字符串会把这句说明当成真代码，造成假失败。
+    """
+    print("\n[保活与静音守卫解耦]")
+    import ast
+    import inspect
+    import main as M
+
+    src = inspect.getsource(M.Plugin._keep_alive_loop)
+    tree = ast.parse(src.lstrip())
+
+    # 找出所有 `continue`，看它是不是在 `if discoverable` 里面
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Continue):
+            continue
+        # 这个 continue 是否直接挂在 if 里？检查所有 If 节点的 body
+        for parent in ast.walk(tree):
+            if isinstance(parent, ast.If) and any(b is node for b in parent.body):
+                cond = ast.unparse(parent.test) if hasattr(ast, "unparse") else ""
+                if "discoverable" in cond:
+                    bad.append((node.lineno, cond))
+    check("保活循环里没有因 discoverable 而 continue", not bad, str(bad))
+
+    # 静音检查必须存在
+    names = [n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
+    check("保活循环仍然调用静音检查", "_check_silence" in names, str(names))
+    check("可发现保活拆成了独立方法",
+          hasattr(M.Plugin, "_keep_discoverable"))
+
+
 def main():
     if not install_decky_stub():
         print("缺少 _decky_stub.py，无法导入 main")
@@ -345,7 +443,9 @@ def main():
                test_versions_cached, test_player_tree_cached,
                test_multi_property_busctl, test_multi_property_fallback,
                test_run_cached_only_caches_success,
-               test_cache_bounded, test_auto_gain_session_reset):
+               test_cache_bounded, test_auto_gain_session_reset,
+               test_inflight_dedup, test_cache_failure_not_cached,
+               test_keepalive_decoupled):
         fn()
     print()
     if FAILED:

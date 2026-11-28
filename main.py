@@ -228,6 +228,7 @@ class Plugin:
     _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
     _auto_gain_done = False     # 本次音源会话是否已自动增益过
     _gain_session = None        # 当前音源会话标识（外部源节点 id）
+    _inflight_cache = None      # 同一 key 的并发缓存计算去重
     # status() 的分层缓存：{key: (时间戳, 值)}
     _cache = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
@@ -304,6 +305,7 @@ class Plugin:
     async def _main(self):
         # 分层缓存容器（status() 用）
         self._cache = {}
+        self._inflight_cache = {}
         runtime = getattr(decky, "DECKY_PLUGIN_RUNTIME_DIR", _PLUGIN_DIR)
         logdir = getattr(decky, "DECKY_PLUGIN_LOG_DIR", runtime)
         try:
@@ -570,28 +572,52 @@ class Plugin:
         self._pre_sleep = None
 
     async def _keep_alive_loop(self):
-        """BlueZ 的 DiscoverableTimeout 默认 180s，这里定期复查，保证一直能被搜到。"""
+        """后台保活：BlueZ 的 DiscoverableTimeout 默认 180s，定期复查保证能被搜到。
+
+        ⚠️ 同时承载「静音守卫」，但两者**必须解耦**（v3.3.1 修）
+        -----------------------------------------------------
+        早期静音守卫写在 `if not discoverable: continue` **之后**，
+        于是用户一关掉「可被发现」（配对完成后很常见的选择），
+        「静音自动断开」这个完全不相关的功能也跟着失效了。
+
+        现在拆成两段独立逻辑：可被发现是一件事，静音断开是另一件事。
+
+        另外轮询间隔从固定 60 秒改成 **15 秒**：静音超时最短可设 30 秒，
+        60 秒一跳意味着用户设 30 秒实际最坏要 120 秒才断。15 秒足够灵敏，
+        而这里每次只做「读节点状态」（走共享缓存，通常零进程）。
+        """
         while True:
             try:
-                await asyncio.sleep(60)
-                if not self.settings.get("discoverable", True):
-                    continue
-                if self.bz is None or not self.bz.agent_alive():
-                    try:
-                        await self.bz.start_agent()
-                    except Exception as e:  # noqa: BLE001
-                        self._log("保活：agent 重启失败 %s" % e)
-                info = await self.bz.show(force=True)
-                if info.get("powered") and not info.get("discoverable"):
-                    await self.bz.set_discoverable(True)
-                    self._log("保活：重新打开可被发现")
-                # 静音守卫：外部源长时间不活跃就断开（省电、避免吞通知）
+                await asyncio.sleep(15)
+
+                # --- 1. 可被发现保活（与静音守卫无关）---
+                if self.settings.get("discoverable", True):
+                    await self._keep_discoverable()
+
+                # --- 2. 静音守卫（独立判断，不受上面影响）---
                 if self.guard is not None and self.guard.enabled:
                     await self._check_silence()
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 self._log("保活循环异常：%s" % e)
+
+    async def _keep_discoverable(self):
+        """确保 agent 活着、适配器一直可被发现。
+
+        `bluetoothctl show` 自带 2 秒缓存，所以 15 秒一跳并不会频繁 fork。
+        """
+        if self.bz is None:
+            return
+        if not self.bz.agent_alive():
+            try:
+                await self.bz.start_agent()
+            except Exception as e:  # noqa: BLE001
+                self._log("保活：agent 重启失败 %s" % e)
+        info = await self.bz.show(force=True)
+        if info.get("powered") and not info.get("discoverable"):
+            await self.bz.set_discoverable(True)
+            self._log("保活：重新打开可被发现")
 
     # ------------------------------------------------------------------
     # 静音守卫
@@ -678,20 +704,55 @@ class Plugin:
         return val
 
     async def _cached_async(self, key, ttl, factory):
-        """异步版的缓存。"""
+        """异步版的缓存。
+
+        ⚠️ 三个修复（v3.3.1）
+        -------------------
+        1. **in-flight 去重**：原来先查缓存、再 `await factory()`、最后写回，
+           中间没有任何互斥。QAM 面板和全屏页各自订阅，两个 `status()`
+           并发进来时会**同时 miss**，各自 fork 一遍 `bluetoothctl info`。
+           （前端的 `_inflight` 只是前端单例，拦不住两个组件各自发起的 RPC。）
+           现在同一个 key 的并发请求共享同一个 future。
+
+        2. **时间戳用「写入时刻」而不是「开始时刻」**：原来 `now` 在
+           `await` 之前捕获，慢调用（如 `wifi.detect` 3 秒）写进去时
+           已经「过期一半」，下次调用立刻再 fork。
+
+        3. **失败不污染缓存**：原来 factory 抛异常时把 `None` 写进缓存并
+           刷新时间戳，于是一次瞬时失败会把 `wifi` 缓存成 `None` 达 60 秒
+           （界面表现为「Wi-Fi 信息整块消失」）。现在失败只回退到旧值，
+           **不更新缓存**，下次调用会重试。
+        """
         if self._cache is None:
             self._cache = {}
         now = time.time()
         hit = self._cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
+
+        # in-flight 去重：同一个 key 的并发请求共享一次计算
+        if self._inflight_cache is None:
+            self._inflight_cache = {}
+        inflight = self._inflight_cache.get(key)
+        if inflight is not None:
+            return await inflight
+
+        async def _compute():
+            try:
+                val = await factory()
+            except Exception as e:  # noqa: BLE001
+                self._log("缓存 %s 计算失败：%s" % (key, e))
+                # 失败不写缓存，只回退到旧值（让下次调用重试）
+                return hit[1] if hit is not None else None
+            self._cache_put(key, ttl, val)
+            return val
+
+        task = asyncio.ensure_future(_compute())
+        self._inflight_cache[key] = task
         try:
-            val = await factory()
-        except Exception as e:  # noqa: BLE001
-            self._log("缓存 %s 计算失败：%s" % (key, e))
-            val = hit[1] if hit is not None else None
-        self._cache_put(key, ttl, val)
-        return val
+            return await task
+        finally:
+            self._inflight_cache.pop(key, None)
 
     # ------------------------------------------------------------------
     # RPC：状态
@@ -834,7 +895,7 @@ class Plugin:
         a2dp_state = {"ready": False, "profile": "", "available": [], "reason": ""}
         if a2dp is not None and connected:
             try:
-                cards = await a2dp.read_cards()
+                cards = await a2dp.read_cards(connected[0].get("mac"))
                 card = a2dp.find_sink_card(cards, connected[0].get("mac"))
                 by_profile = a2dp.sink_ready(card)
                 # 强判据：有 bluez_input 节点 = 音频链路真的通了
@@ -1156,7 +1217,7 @@ class Plugin:
         """
         if a2dp is None:
             return {_ERR: "a2dp 模块未加载"}
-        cards = await a2dp.read_cards()
+        cards = await a2dp.read_cards(bt.normalize_mac(mac) if mac else None)
         card = a2dp.find_sink_card(cards, bt.normalize_mac(mac) if mac else None)
         if card is None:
             return {"ok": False, "reason": "no-card",
@@ -1684,16 +1745,45 @@ class Plugin:
 
     @_safe
     async def set_setting(self, key, value):
+        """改一个设置项并落盘。
+
+        ⚠️ 必须走 `_setting_ok` 校验（v3.3.1 修）
+        --------------------------------------
+        早期这里只检查「key 在不在 DEFAULT_SETTINGS 里」就把任意 JSON 值
+        写进 `self.settings` 并落盘，**完全绕过**同文件里那套
+        `_setting_ok()` 的类型/范围/枚举白名单校验。
+
+        后果：外部 RPC 可以把 `discoverable` 写成字符串、把
+        `silence_disconnect` 写成 -5 或 "abc"，污染 settings.json
+        直到下次重启才被 `_load_settings()` 清掉 —— 而 `status()` 还会
+        把污染后的值原样回吐给前端，界面直接显示错乱。
+        """
         if key not in DEFAULT_SETTINGS:
             raise bt.BtError("未知设置项：%s" % key)
+
+        default = DEFAULT_SETTINGS[key]
+        if not _setting_ok(key, value, default):
+            raise bt.BtError(
+                "设置项 %s 的值不合法：%r（期望类型 %s）"
+                % (key, value, type(default).__name__))
+
         self.settings[key] = value
         self._save_settings()
+
+        # 有些设置项需要立刻产生副作用，不能只落盘
         if key == "keep_alive":
             if value and self._keep_task is None:
                 self._keep_task = asyncio.create_task(self._keep_alive_loop())
             elif not value and self._keep_task is not None:
                 self._keep_task.cancel()
                 self._keep_task = None
+        elif key == "discoverable":
+            # 「可被发现」原来只写进配置，要等下一次保活循环（最长 60 秒）
+            # 才真正生效，用户以为开关坏了。这里立刻应用。
+            try:
+                await self.bz.set_discoverable(bool(value))
+            except Exception as e:  # noqa: BLE001
+                self._log("立即应用 discoverable 失败（保活循环会重试）：%s" % e)
         return {"ok": True, "settings": self.settings}
 
     # ------------------------------------------------------------------

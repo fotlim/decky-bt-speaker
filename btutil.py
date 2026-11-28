@@ -108,6 +108,18 @@ async def run_cmd(argv, timeout=8.0, env_extra=None):
     """执行外部命令，返回 (returncode, 合并后的输出)。找不到命令直接抛 BtError。
 
     ⚠️ 默认注入用户会话环境变量（见 _user_session_env 的说明）。
+
+    ⚠️ 子进程回收（v3.3.1 修）
+    ------------------------
+    早期只在**超时**时 `proc.kill()`，既不 `await proc.wait()`，也没有
+    处理「调用方被取消」的情况。后果：
+
+    - 超时后子进程变僵尸，要等 GC 才回收
+    - 调用方被 `CancelledError` 取消（插件卸载、任务被 cancel）时，
+      子进程原地变孤儿，继续跑满自己的生命周期
+
+    现在统一在 `finally` 里：进程还活着就 kill，然后**等它真正退出**。
+    等待本身也加了超时，避免极端情况下卡在 wait 上。
     """
     exe = which(argv[0])
     if not exe:
@@ -128,15 +140,27 @@ async def run_cmd(argv, timeout=8.0, env_extra=None):
         )
     except Exception as e:  # noqa: BLE001
         raise BtError("failed to start %s: %s" % (argv[0], e))
+
+    timed_out = False
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        return proc.returncode, strip_ansi(out.decode("utf-8", "replace"))
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        timed_out = True
         raise BtError("%s timed out (%.0fs)" % (argv[0], timeout))
-    return proc.returncode, strip_ansi(out.decode("utf-8", "replace"))
+    finally:
+        # 无论是超时、被取消、还是正常结束，都保证子进程被回收。
+        # 正常结束时 returncode 已就绪，下面的 kill 会被跳过。
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), 2.0)
+            except Exception:  # noqa: BLE001
+                # 被取消 / 等待失败：至少已经把 kill 发出去了
+                pass
 
 
 # ---------------------------------------------------------------------------

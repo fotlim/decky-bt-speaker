@@ -48,6 +48,11 @@ from bt import BtError, is_mac, run_cmd, strip_ansi, which
 _TREE_TTL = 8.0
 _tree_cache = (0.0, [])   # (时间戳, 路径列表)
 
+# 合法的八进制转义：反斜杠 + 恰好三位 0-7。
+# ⚠️ 必须用 [0-7] 而不是 \d / isdigit() —— 后者会匹配 8 和 9，
+#    导致 int(..., 8) 抛异常（曾因此死循环，详见 decode_octal_escapes）。
+_OCT_RE = re.compile(r"\\([0-7]{3})")
+
 
 def reset_cache():
     """清空模块级缓存（测试用）。"""
@@ -119,6 +124,19 @@ def decode_octal_escapes(text):
 
     实现：先把所有 \\NNN 收集成字节，再整体按 UTF-8 解码。
     注意不能逐个字节转 chr() —— 那会把多字节序列拆坏。
+
+    ⚠️⚠️ 血泪教训（v3.3.1）
+    ----------------------
+    旧实现用 `text[i+1:i+4].isdigit()` 判断「是不是八进制」，但
+    **`isdigit()` 对 `899` 也返回 True**（它只看「是不是数字字符」），
+    而 `int("899", 8)` 会抛 `ValueError`。捕获后 `break` 跳出内层循环，
+    可 `i` **没有前进** —— 外层 `continue` 回到同一个 `\\` 又走一遍，
+    于是变成死循环，**整个 asyncio 事件循环被卡死**，所有 RPC 永久无响应。
+
+    触发条件极低：歌名里带 `\\999` 这种文本就够了（比如某些 ID3 标签）。
+
+    现在改成用 `_OCT_RE` 显式匹配 `\\[0-7]{3}`，非法的 `\\899` 根本
+    不会进入内层循环，按普通字符处理。内层循环也保证 `i` 一定前进。
     """
     if not text or "\\" not in text:
         return text
@@ -127,24 +145,23 @@ def decode_octal_escapes(text):
     i = 0
     n = len(text)
     while i < n:
-        ch = text[i]
-        if ch == "\\" and i + 3 < n and text[i + 1:i + 4].isdigit():
-            # 收集连续的八进制转义
-            raw = bytearray()
-            while (i + 3 < n and text[i] == "\\"
-                   and text[i + 1:i + 4].isdigit()):
-                try:
-                    raw.append(int(text[i + 1:i + 4], 8) & 0xFF)
-                except ValueError:
-                    break
-                i += 4
-            try:
-                out.append(raw.decode("utf-8", "replace"))
-            except Exception:  # noqa: BLE001
-                out.append(raw.decode("latin-1"))
+        m = _OCT_RE.match(text, i)
+        if not m:
+            out.append(text[i])
+            i += 1
             continue
-        out.append(ch)
-        i += 1
+        # 收集连续的合法八进制转义（每个固定 4 字符，i 必然前进）
+        raw = bytearray()
+        while True:
+            m = _OCT_RE.match(text, i)
+            if not m:
+                break
+            raw.append(int(m.group(1), 8) & 0xFF)
+            i += 4
+        try:
+            out.append(raw.decode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            out.append(raw.decode("latin-1"))
     return "".join(out)
 
 

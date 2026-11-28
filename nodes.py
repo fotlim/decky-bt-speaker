@@ -109,8 +109,25 @@ def find_bt_input(status_text):
 
     这个函数保留作**降级路径**：如果节点名碰巧就是 `bluez_input...`
     （某些 PipeWire 版本会直接显示 node.name），仍然能认出来。
-    另外它现在也会**按「是不是内置声卡」来兜底**：Sources 里只要不是
-    内置麦克风、且不是内置声卡，就认为是外部蓝牙输入。
+    另外它也会**按「是不是内置声卡」来兜底**：Sources 里只要不是
+    内置设备，就认为是外部蓝牙输入。
+
+    ⚠️⚠️ 血泪教训（v3.3.1）
+    ----------------------
+    兜底的关键词列表原来只有 `built-in` / `builtin` / `alsa_input` /
+    `internal` 四个。但 Deck 内置麦克风的真实友好名是：
+
+        Family 17h/19h HD Audio Controller Headset Microphone
+
+    四个关键词**一个都不含**，于是内置麦克风被当成「外部蓝牙源」。
+    后果连锁反应：
+
+    - 没有手机连接时 `status().live` 也不为 None，界面显示「正在播放」
+    - `_apply_auto_gain` 会把**内置麦克风节点**的音量拉到 100%
+    - 前端因为 `live` 非空，永远按 4 秒高频轮询（白耗电）
+
+    现在改成**先判断「像不像内置声卡」**，把 AMD/Intel/Realtek 的
+    常见命名都覆盖进去，并且要求「确实是设备名而不是通用词」。
     """
     parsed = parse_status(status_text)
 
@@ -121,16 +138,43 @@ def find_bt_input(status_text):
             return node
 
     # 2. 兜底：Sources 里不是内置设备的，就是外部推流
-    #
-    #    内置设备的典型名字：Built-in Audio Microphone / alsa_input.*
-    #    蓝牙输入在 wpctl 里显示为对端设备名（如 "Ciallo"、"Pixel 8"）
     for node in parsed["sources"]:
-        name = node["name"] or ""
-        low = name.lower()
-        if any(k in low for k in ("built-in", "builtin", "alsa_input", "internal")):
+        if _looks_builtin(node["name"] or ""):
             continue
         node["kind"] = "external"
         return node
+
+    return None
+
+
+# 内置声卡/麦克风的命名特征。
+#
+# 这份列表来自实际 `wpctl status` 输出，覆盖：
+#   - PulseAudio 传统写法：Built-in Audio Microphone / alsa_input.*
+#   - Steam Deck（AMD）：Family 17h/19h HD Audio Controller Headset Microphone
+#   - Intel 平台：sof-hda-dsp / HDA Intel PCH
+#   - 通用：analog-input / internal
+#
+# ⚠️ 宁可多列：漏掉一个词就会把内置麦克风当成外部蓝牙源，
+#    引发「虚假正在播放 + 自动增益打到麦克风」的连锁问题。
+_BUILTIN_HINTS = (
+    "built-in", "builtin", "alsa_input", "internal",
+    "family 17h", "family 19h",           # AMD Deck / 常见 APU
+    "hd audio controller",                 # AMD/Intel 板载声卡
+    "hda intel", "sof-hda", "sof_",        # Intel
+    "realtek", "analog-input", "analog input",
+    "microphone", "mic",                   # 内置麦克风（蓝牙源不会叫这个）
+    "headset microphone",
+)
+
+
+def _looks_builtin(name):
+    """名字看起来像不像板载声卡 / 内置麦克风。"""
+    low = (name or "").lower()
+    if not low:
+        # 空名字无法判断，按内置处理（宁可漏报也不要误报外部源）
+        return True
+    return any(k in low for k in _BUILTIN_HINTS)
 
     return None
 

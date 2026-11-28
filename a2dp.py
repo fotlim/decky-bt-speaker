@@ -196,10 +196,19 @@ def best_sink_profile(card):
     return max(cands, key=score)
 
 
-async def read_cards():
+async def read_cards(mac=None):
     """跑 `pactl list cards` 并解析。失败返回空列表（不抛异常）。
 
-    ⚠️ 走 `run_cached`：同一次 `status()` 里 `focus.get_active_profile()`
+    ⚠️ `mac` 必须传下去（v3.3.1 修）
+    ------------------------------
+    早期这里调 `parse_cards(out)` **不带 mac**，于是每张卡的
+    `matches_mac` 恒为 False，调用方 `find_sink_card(cards, mac)` 传进来的
+    MAC 被静默忽略，退化成「第一张有 a2dp-sink profile 的卡」。
+
+    真机场景：系统里同时留着旧设备的 `bluez_card`（profile=off）和当前
+    手机的卡时，会选中**错的那张**，于是 `status()` 误报「正在协商」。
+
+    另外走 `run_cached`：同一次 `status()` 里 `focus.get_active_profile()`
     也会跑一模一样的命令。共享 1.5 秒缓存，把两个进程压成一个。
     """
     if not which("pactl"):
@@ -210,7 +219,7 @@ async def read_cards():
         return []
     if rc != 0:
         return []
-    return parse_cards(out)
+    return parse_cards(out, mac)
 
 
 async def set_profile(card_name, profile):
@@ -371,7 +380,7 @@ async def wait_for_sink(mac=None, log=None, max_wait=MAX_WAIT,
 
     while True:
         elapsed = time.monotonic() - started
-        cards = await read_cards()
+        cards = await read_cards(mac)
         card = find_sink_card(cards, mac)
         if card:
             last_card = card

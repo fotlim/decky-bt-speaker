@@ -291,12 +291,32 @@ class CombineConfig:
 
 
 async def list_sinks(wp):
-    """列出当前所有 sink，供多输出配置选择。"""
+    """列出当前所有 sink，供多输出配置选择。
+
+    ⚠️⚠️ 血泪教训（v3.3.1）
+    ----------------------
+    旧正则以 `^\\s*(\\*)?\\s*(\\d+)\\.` 开头，但真实的 `wpctl status`
+    行首是**制表符和竖线字符**：
+
+        │  *   48. Family 17h/19h HD Audio Controller Speaker [vol: 0.65]
+
+    `│`（U+2502）不是 `\\s`，所以 `^\\s*` 匹配不上 ——
+    **一行都解析不出来，永远返回空列表**。多输出 sink 选择因此一直是空的。
+
+    `nodes.py` 的 `_NODE_RE` 早就把 `\\u2502\\u251c\\u2514` 写进字符类了，
+    说明这个坑踩过一次，这里漏了。
+
+    现在复用同一套「行首装饰字符」定义，并用 `\\s*` 兜住音量方括号前的
+    单个空格（原来要求两个空格，导致名字带着 `[vol: ...]` 尾巴）。
+    """
     try:
         text = await wp.status_text()
     except BtError:
         return []
     import re as _re
+
+    # 行首装饰：空白 + wpctl 的树形字符
+    deco = r"[\s\u2502\u251c\u2514\u2500]*"
 
     out = []
     in_sinks = False
@@ -307,7 +327,11 @@ async def list_sinks(wp):
         if in_sinks:
             if any(k in line for k in ("Sources:", "Streams:", "Clients:", "Devices:", "Video")):
                 break
-            m = _re.search(r"^\s*(\*)?\s*(\d+)\.\s+(.+?)(?:\s{2,}\[vol:\s*([0-9.]+)\])?\s*$", line)
+            m = _re.search(
+                deco + r"(\*)?\s*(\d+)\.\s+(.+?)"
+                r"(?:\s*\[vol:\s*([0-9.]+)\])?\s*$",
+                line,
+            )
             if m:
                 out.append({
                     "id": int(m.group(2)),

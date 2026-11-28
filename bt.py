@@ -987,6 +987,22 @@ class Wp:
 
     @staticmethod
     def parse_default_sink(text):
+        """从 `wpctl status` 里取出默认 sink 的名字。
+
+        ⚠️⚠️ 血泪教训（v3.3.1）
+        ----------------------
+        旧正则要求音量方括号前有**两个**空格：`(?:\\s{2,}\\[|$)`。
+        但真实的 `wpctl status` 只有一个空格：
+
+            │  *   48. Family 17h/19h HD Audio Controller Speaker [vol: 0.65]
+
+        于是 `.+?` 一路吞到行尾，返回的名字带着 ` [vol: 0.65]` 尾巴，
+        界面上把音量后缀当成设备名显示（真机截图里能看到）。
+
+        现在用 `\\s*\\[vol:` 匹配单个空格，并兼容行首的树形字符。
+        """
+        # 行首装饰：空白 + wpctl 的树形字符
+        deco = r"[\s\u2502\u251c\u2514\u2500]*"
         in_sinks = False
         for line in (text or "").splitlines():
             if "Sinks:" in line:
@@ -996,7 +1012,11 @@ class Wp:
                 if any(k in line for k in ("Sources:", "Streams:", "Clients:", "Devices:", "Video")):
                     break
                 if "*" in line:
-                    m = re.search(r"\*\s+\d+\.\s+(.+?)(?:\s{2,}\[|$)", line)
+                    m = re.search(
+                        deco + r"\*\s+\d+\.\s+(.+?)"
+                        r"(?:\s*\[vol:\s*[0-9.]+\])?\s*$",
+                        line,
+                    )
                     if m:
                         return m.group(1).strip()
         return ""

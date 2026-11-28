@@ -170,6 +170,51 @@ def test_sink():
     check("识别 bluez_output", bt.Wp.has_bt_stream("52. bluez_output.AA_BB") is True)
     check("识别 bluez_input", bt.Wp.has_bt_stream("61. bluez_input.AA_BB") is True)
 
+    # ---- 回归：sink 名里绝不能带 [vol: ...] 尾巴（v3.3.1）----
+    #
+    # 旧正则要求音量方括号前有**两个**空格 `\s{2,}\[`，而真实 wpctl
+    # 输出只有一个空格。于是 `.+?` 吞到行尾，名字带着 ` [vol: 0.65]`。
+    # 旧测试只断言 `"Speaker" in sink`，所以这个 bug 一直没被发现。
+    check("sink 名不含音量后缀", "[vol:" not in sink, repr(sink))
+    check("sink 名精确匹配",
+          sink == "Family 17h/19h HD Audio Controller Speaker", repr(sink))
+
+    # ---- 回归：find_bt_input 不能把内置麦克风当外部源（v3.3.1）----
+    #
+    # 兜底关键词原来只有 built-in / alsa_input 等四个，而 Deck 内置
+    # 麦克风叫 "Family 17h/19h HD Audio Controller Headset Microphone"，
+    # 一个都不含 → 被当成外部蓝牙源，引发「虚假正在播放 + 自动增益
+    # 打到麦克风 + 前端永远高频轮询」。
+    import nodes
+    import output
+
+    check("只有内置麦克风时不算有外部源",
+          nodes.has_external_source(WP_STATUS) is False,
+          repr(nodes.find_bt_input(WP_STATUS)))
+
+    # 真正的蓝牙源仍然要认出来。
+    # 注意要把节点加进 **Sources** 分节（`bluez_output` 是 sink，不是源）。
+    WITH_BT = WP_STATUS.replace(
+        " │  *   49. Family 17h/19h HD Audio Controller Headset Microphone [vol: 1.00]",
+        " │  *   49. Family 17h/19h HD Audio Controller Headset Microphone [vol: 1.00]\n"
+        " │      61. Ciallo [vol: 0.80]")
+    check("有蓝牙源时能认出来",
+          nodes.has_external_source(WITH_BT) is True,
+          repr(nodes.find_bt_input(WITH_BT)))
+
+    # ---- 回归：list_sinks 不能因为行首 │ 而返回空（v3.3.1）----
+    class _FakeWp:
+        async def status_text(self):
+            return WP_STATUS
+
+    import asyncio as _aio
+    sinks = _aio.run(output.list_sinks(_FakeWp()))
+    check("list_sinks 解析出 2 个 sink", len(sinks) == 2, repr(sinks))
+    check("list_sinks 标出默认项",
+          any(s.get("default") for s in sinks), repr(sinks))
+    check("list_sinks 名字不含音量后缀",
+          all("[vol:" not in s["name"] for s in sinks), repr(sinks))
+
 
 def test_adapter_flags():
     print("A2DP 角色判断")
@@ -206,7 +251,9 @@ def test_wp_config():
             check("包含 a2dp_sink 角色", "a2dp_sink" in text)
             check("没有 hfp_ag（避免通话网关）", "hfp_ag" not in text)
             check("media-source-role=playback", 'bluez5.media-source-role = "playback"' in text)
-            check("hw-volume 含 a2dp_sink", "bluez5.hw-volume" in text)
+            check("hw-volume 存在且只含 a2dp_source（不含 a2dp_sink）",
+                  "bluez5.hw-volume = [ a2dp_source ]" in text,
+                  [ln.strip() for ln in text.splitlines() if "hw-volume =" in ln])
             check("禁用自动切耳机模式", "autoswitch-to-headset-profile = false" in text)
             check("占位符已替换", "{name}" not in text)
             check("installed() 为真", bt.WpConfig.installed())
@@ -580,12 +627,43 @@ def test_quality():
     conf = quality.build_quality_conf("balanced")
     check("配置含 bluez5.codecs", "bluez5.codecs" in conf)
     check("配置含 enable-sbc-xq", "bluez5.enable-sbc-xq = true" in conf)
-    check("配置含 resample.quality", "resample.quality = 10" in conf)
     check("配置含 hw-volume", "bluez5.hw-volume" in conf)
     check("占位符已替换", "{name}" not in conf and "{codecs}" not in conf)
     check("预设 key 写进注释", "Preset / 预设: balanced" in conf)
 
-    qconf = quality.build_quality_conf("quality")
+    # ---- 回归：音质配置不能再把 a2dp_sink 加回 hw-volume（v3.3.1）----
+    #
+    # bt.py 的 50-bt-speaker.conf 特意只留 a2dp_source，因为带上 a2dp_sink
+    # 会把音量控制权通过 AVRCP 绝对音量交给对端（Windows 滑块直接改
+    # Deck 音量）。而 quality.py 原来写的是 [ a2dp_sink a2dp_source ]，
+    # 且 55- 排在 50- 后面会覆盖 —— 用户一切换音质预设，那个已修好的
+    # bug 就回来了。
+    #
+    # ⚠️ 只检查真正的配置行，不能 `split("hw-volume")` ——
+    #    注释里也提到 hw-volume 字样，会误判。
+    hw_lines = [ln.strip() for ln in conf.splitlines()
+                if ln.strip().startswith("bluez5.hw-volume")]
+    check("hw-volume 只有一行配置", len(hw_lines) == 1, str(hw_lines))
+    check("hw-volume 不含 a2dp_sink（否则对端会抢音量控制权）",
+          bool(hw_lines) and "a2dp_sink" not in hw_lines[0], str(hw_lines))
+    check("hw-volume 保留 a2dp_source",
+          bool(hw_lines) and "a2dp_source" in hw_lines[0], str(hw_lines))
+
+    # ---- 回归：重采样配置必须写到 PipeWire 目录（v3.3.1）----
+    #
+    # default.clock.rate / resample.quality 是 PipeWire 主配置的键，
+    # WirePlumber 不认。原来写在 wireplumber.conf.d/ 下，等于从未生效。
+    resample_conf = quality.build_resample_conf("balanced")
+    check("重采样配置含 resample.quality",
+          "resample.quality = 10" in resample_conf, resample_conf[:80])
+    check("重采样配置不在 WirePlumber 配置里",
+          "resample.quality" not in conf)
+    # 路径分隔符在 Windows 上是 \\，统一成正斜杠再断言
+    rpath = quality.QualityConfig.resample_path().replace("\\", "/")
+    check("重采样配置写到 pipewire 目录",
+          "/pipewire/pipewire.conf.d/" in rpath, rpath)
+
+    qconf = quality.build_resample_conf("quality")
     check("quality 预设重采样 15", "resample.quality = 15" in qconf)
     check("未知预设回退 balanced", "Preset / 预设: balanced" in quality.build_quality_conf("xxx"))
 
@@ -784,6 +862,39 @@ def test_metadata_encoding():
     check("parse_track 解出歌手", t and t["artist"] == "Someone")
     check("parse_track 解出时长", t and t["duration_ms"] == 207000)
     check("parse_track 格式化时长", t and t["duration"] == "3:27", str(t and t["duration"]))
+
+    # ---- 回归：非法八进制绝不能死循环（v3.3.1）----
+    #
+    # 旧实现用 `isdigit()` 判断「是不是八进制」，而 isdigit() 对 "899"
+    # 也返回 True，但 int("899", 8) 抛 ValueError。捕获后 break，
+    # 而 i 没有前进 —— 外层 continue 回到同一个反斜杠，死循环卡死
+    # 整个 asyncio 事件循环。
+    #
+    # 触发条件极低：歌名里带 `\999` 这种文本就够了。
+    # 这里用 subprocess + 超时来测，因为死循环会把测试进程本身卡住。
+    import subprocess
+    import sys as _sys
+    import os as _os
+    probe = (
+        "import sys; sys.path.insert(0, %r);"
+        "import metadata;"
+        "print(repr(metadata.decode_octal_escapes('\\\\899')))"
+    ) % _os.path.dirname(_os.path.abspath(__file__))
+    hung = False
+    try:
+        r = subprocess.run([_sys.executable, "-c", probe],
+                           capture_output=True, text=True, timeout=5)
+        out = (r.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        hung = True
+        out = "(timeout)"
+    check("非法八进制 \\899 不死循环（旧实现会卡死事件循环）", not hung, out)
+    check("非法八进制原样返回", out == "'\\\\899'", out)
+
+    # 合法转义仍然正常
+    check("合法转义不受影响",
+          metadata.decode_octal_escapes(r'\347\272\257') == "纯",
+          repr(metadata.decode_octal_escapes(r'\347\272\257')))
 
 
 def test_settings_validation():
@@ -1305,6 +1416,48 @@ Card #53
     only_builtin = WPCTL_FRIENDLY.replace(
         " \u2502      51. Ciallo [vol: 0.80]\n", "")
     check("只有内置设备时不误判", nodes.find_bt_input(only_builtin) is None)
+
+    # ---- 回归：read_cards 必须把 mac 传给 parse_cards（v3.3.1）----
+    #
+    # 早期 `read_cards()` 调 `parse_cards(out)` 不带 mac，于是每张卡的
+    # `matches_mac` 恒为 False，`find_sink_card(cards, mac)` 的 MAC 参数
+    # 形同虚设，退化成「第一张有 a2dp-sink profile 的卡」。
+    # 系统里留着旧设备卡时会选错卡，status() 误报「正在协商」。
+    TWO_CARDS = """Card #50
+    Name: bluez_card.AA_BB_CC_DD_EE_FF
+    Profiles:
+        a2dp-sink: High Fidelity Playback (A2DP Sink)
+        off: Off
+    Active Profile: off
+
+Card #52
+    Name: bluez_card.CC_42_10_8A_70_42
+    Profiles:
+        a2dp-sink-sbc_xq: High Fidelity Playback (A2DP Sink, codec SBC-XQ)
+        off: Off
+    Active Profile: a2dp-sink-sbc_xq
+"""
+    # 不传 mac：选到第一张（错的）
+    pick_wrong = a2dp.find_sink_card(a2dp.parse_cards(TWO_CARDS),
+                                     "CC:42:10:8A:70:42")
+    check("不传 mac 时会选错卡（这就是原 bug）",
+          (pick_wrong or {}).get("name") == "bluez_card.AA_BB_CC_DD_EE_FF",
+          str((pick_wrong or {}).get("name")))
+
+    # 传 mac：选对
+    pick_right = a2dp.find_sink_card(
+        a2dp.parse_cards(TWO_CARDS, "CC:42:10:8A:70:42"),
+        "CC:42:10:8A:70:42")
+    check("传 mac 时选对卡",
+          (pick_right or {}).get("name") == "bluez_card.CC_42_10_8A_70_42",
+          str((pick_right or {}).get("name")))
+
+    # 源码级断言：read_cards 内部必须把 mac 传下去
+    import inspect
+    rc_src = inspect.getsource(a2dp.read_cards)
+    check("read_cards 把 mac 传给 parse_cards",
+          "parse_cards(out, mac)" in rc_src,
+          [ln.strip() for ln in rc_src.splitlines() if "parse_cards(" in ln])
 
 
 def test_dimsession():

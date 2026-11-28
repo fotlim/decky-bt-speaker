@@ -4,6 +4,159 @@
 
 ---
 
+## [3.3.1] - 2026-11-28
+
+**一次深度审计后修掉的问题：一个能卡死插件的死循环、几个「一直在悄悄失效」的功能**
+
+这一版全部来自对后端 17 个文件的逐行审计 + 逐条实测复现。
+**每一条都先写脚本复现，再改代码，再补回归测试。**
+
+### 1. 曲名解析会死循环，卡死整个插件（严重）
+
+`decode_octal_escapes()` 用 `isdigit()` 判断「是不是八进制」，但
+**`isdigit()` 对 `899` 也返回 True**，而 `int("899", 8)` 会抛 `ValueError`。
+捕获后 `break` 跳出内层循环，可 `i` **没有前进** —— 外层 `continue`
+回到同一个反斜杠，又走一遍。死循环。
+
+后果不是「某首歌显示错」，而是**整个 asyncio 事件循环被卡死**，
+所有 RPC 永久无响应，插件等于挂了。
+
+触发条件极低：歌名里带 `\999` 这种文本就够了（某些 ID3 标签就有）。
+
+**修法**：用 `_OCT_RE = re.compile(r"\\([0-7]{3})")` 显式匹配合法八进制，
+非法的 `\899` 根本进不了内层循环。内层循环保证 `i` 一定前进。
+
+> 实测验证：修复前子进程 3 秒超时未返回；修复后立即返回 `'\899'`。
+
+### 2. 内置麦克风被当成「外部蓝牙源」
+
+`find_bt_input()` 的兜底是「Sources 里名字不含内置关键词就当蓝牙源」，
+而关键词只有 `built-in` / `alsa_input` / `internal` 四个。Deck 内置
+麦克风的真实友好名是：
+
+```
+Family 17h/19h HD Audio Controller Headset Microphone
+```
+
+四个词一个都不含 → 被判成外部音源。连锁后果：
+
+- 没有手机连接时 `status().live` 也不为 None，界面显示「正在播放」
+- 自动增益会把**内置麦克风节点**的音量拉到 100%
+- 前端因为 `live` 非空，永远按 2 秒高频轮询（白耗电）
+
+**修法**：新增 `_looks_builtin()`，覆盖 AMD/Intel/Realtek 的常见命名
+（`family 17h`、`hd audio controller`、`hda intel`、`sof-hda`、
+`analog-input`、`microphone` 等）。宁可多列，因为漏一个词就会误判。
+
+### 3. 多输出 sink 列表永远是空的
+
+`list_sinks()` 的正则以 `^\s*(\*)?\s*(\d+)\.` 开头，但真实
+`wpctl status` 的行首是**树形字符**：
+
+```
+ │  *   48. Family 17h/19h HD Audio Controller Speaker [vol: 0.65]
+```
+
+`│`（U+2502）不是 `\s`，所以**一行都匹配不上，永远返回空列表**。
+
+`nodes.py` 的 `_NODE_RE` 早就把 `\u2502\u251c\u2514` 写进字符类了，
+说明这个坑踩过一次，这里漏了。现在复用同一套定义。
+
+### 4. 默认 sink 的名字带着 `[vol: 0.65]` 尾巴
+
+`parse_default_sink()` 的正则要求音量方括号前有**两个**空格
+（`\s{2,}\[`），而真实输出只有一个。于是 `.+?` 吞到行尾，界面把
+音量后缀当设备名显示。
+
+旧测试只断言 `"Speaker" in sink`，所以这个 bug 一直没被发现。
+现在断言精确匹配。
+
+### 5. A2DP 在多卡场景会选错卡
+
+`read_cards()` 调 `parse_cards(out)` **不带 mac**，于是每张卡的
+`matches_mac` 恒为 False，`find_sink_card(cards, mac)` 的 MAC 参数
+形同虚设，退化成「第一张有 a2dp-sink profile 的卡」。
+
+系统里留着旧设备卡时会选中错的那张 → `status()` 误报「正在协商」。
+
+**修法**：`read_cards(mac=None)` 把 mac 传下去，三个调用点全部更新。
+
+### 6. 音质预设会把「对端抢音量」的老 bug 带回来
+
+`bt.py` 的 `50-bt-speaker.conf` 特意只留 `bluez5.hw-volume = [ a2dp_source ]`，
+并用大段注释解释了原因：带上 `a2dp_sink` 会把音量控制权通过 AVRCP
+绝对音量交给对端，Windows 的滑块会直接改 Deck 音量。
+
+而 `quality.py` 写的是 `[ a2dp_sink a2dp_source ]`，且 `55-` 排在
+`50-` 后面**覆盖**了前者 —— 用户一切换音质预设，那个已修好的 bug
+就回来了。现在统一只留 `a2dp_source`。
+
+### 7. 「重采样质量」这一项从未生效
+
+`default.clock.rate` / `resample.quality` 是 **PipeWire 主配置**的键，
+WirePlumber 不认。原来写在 `wireplumber.conf.d/` 下，等于安慰剂。
+
+**修法**：拆成两个文件 —— 蓝牙部分留在 WirePlumber，重采样写到
+`~/.config/pipewire/pipewire.conf.d/`。删除时两个一起删。
+
+### 8. `set_setting` 绕过校验直接落盘
+
+同文件里有一套很完善的 `_setting_ok()`（类型/范围/枚举白名单），
+但 `set_setting` **完全没调用**，只检查 key 存在就把任意 JSON 值
+写进 settings.json。外部 RPC 可以把 `discoverable` 写成字符串、
+把 `silence_disconnect` 写成 -5，污染持久化状态直到重启。
+
+现在走 `_setting_ok` 校验，并且给 `discoverable` 加了立即生效的副作用
+（原来要等下一次保活循环，最长 60 秒，用户以为开关坏了）。
+
+### 9. 静音自动断开被「可被发现」开关连带关掉
+
+`_check_silence()` 排在 `if not discoverable: continue` **之后**，
+于是用户一关掉「可被发现」（配对完成后很常见），静音自动断开
+这个完全不相关的功能也跟着失效。
+
+现在拆成 `_keep_discoverable()` 和 `_check_silence()` 两段独立逻辑。
+轮询间隔也从固定 60 秒改成 15 秒 —— 静音超时最短可设 30 秒，
+60 秒一跳意味着最坏要 120 秒才触发。
+
+### 10. 缓存层的三个问题
+
+- **并发无去重**：`_cached_async` 先查、再 await、最后写回，中间没有
+  互斥。QAM 和全屏页并发进来会同时 miss，各自 fork 一遍。现在同一 key
+  的并发请求共享同一个 future。
+- **时间戳用开始时刻**：慢调用（`wifi.detect` 3 秒）写进去时已过期一半。
+  改用写入时刻。
+- **失败污染缓存**：factory 抛异常时把 `None` 写进缓存并刷新时间戳，
+  一次瞬时失败会让 Wi-Fi 信息整块消失 60 秒。现在失败不写缓存，
+  下次调用重试。
+
+### 11. 子进程回收
+
+`run_cmd()` 只在超时时 `kill()`，既不 `wait()`，也不处理调用方被取消
+的情况 —— 子进程变僵尸或孤儿。现在统一在 `finally` 里 kill + wait
+（等待本身也有超时）。
+
+### 12. 顺手清理
+
+- 删除无人调用的 `nodes.find_bt_output()`、`_MAC_RE`
+- 修正测试里一条**断言了错误行为**的用例（`hw-volume 含 a2dp_sink`）
+
+### 测试
+
+`tests_perf.py` 从 8 个用例扩到 13 个，新增：并发缓存去重、失败不污染
+缓存、保活与静音守卫解耦（用 AST 检查，避免被 docstring 误伤）。
+
+`tests_offline.py` 新增：非法八进制不死循环（用子进程 + 超时）、
+内置麦克风不误判、sink 名精确匹配、list_sinks 能解析出内容、
+多卡场景选对卡、hw-volume 不含 a2dp_sink、重采样配置写到 PipeWire 目录。
+
+### 升级提示
+
+无配置变更。若之前设过音质预设，重新应用一次即可让重采样配置
+落到正确位置。
+
+---
+
 ## [3.3.0] - 2026-11-28
 
 **减轻系统压力：一次轮询从 17 个进程降到 8 个，顺便修掉一批手柄和稳定性问题**
