@@ -17,6 +17,7 @@ v3.3.0 做了一轮「减轻系统压力」的优化，核心是三件事：
 """
 
 import asyncio
+import importlib.util
 import io
 import os
 import sys
@@ -31,6 +32,23 @@ import silence
 import metadata
 
 FAILED = []
+
+STUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_decky_stub.py")
+
+
+def install_decky_stub():
+    """`main.py` 顶层 `import decky`，离线测试需要一个桩。"""
+    if "decky" in sys.modules:
+        return True
+    if not os.path.exists(STUB):
+        return False
+    spec = importlib.util.spec_from_file_location("decky", STUB)
+    if spec is None or spec.loader is None:
+        return False
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules["decky"] = mod
+    return True
 
 
 def check(name, cond, detail=""):
@@ -267,11 +285,67 @@ def test_run_cached_only_caches_success():
           "实际执行 %d 次" % len(calls))
 
 
+def test_cache_bounded():
+    """`_cached` 的 dict 不能无限增长（key 里含 MAC，设备越多条目越涨）。"""
+    print("\n[缓存容量上限]")
+    import main as M
+
+    p = M.Plugin.__new__(M.Plugin)
+    p._cache = {}
+    p._log = lambda *a: None
+
+    for i in range(300):
+        p._cached("dev_info:AA:BB:CC:DD:EE:%02X" % (i % 256), 30.0, lambda: i)
+
+    n = len(p._cache)
+    check("写入 300 条后缓存不超过硬上限（%d）" % M.Plugin._CACHE_MAX,
+          n <= M.Plugin._CACHE_MAX, "实际 %d 条" % n)
+
+
+def test_auto_gain_session_reset():
+    """换音源后自动增益标记必须重置（否则「每会话一次」变成「一辈子一次」）。"""
+    print("\n[自动增益的会话边界]")
+    import main as M
+
+    p = M.Plugin.__new__(M.Plugin)
+    p.settings = {"auto_gain": True}
+    p._log = lambda *a: None
+    p._last_manual_volume = 0.0
+    p._auto_gain_done = False
+    p._gain_session = None
+    p.wp = type("W", (), {"set_volume_of": staticmethod(lambda *a: _noop())})()
+
+    async def go():
+        # 第一个音源：偏轻 -> 补一次
+        await p._apply_auto_gain(11, 0.5)
+        first = p._auto_gain_done
+        # 同一音源再来一次：不该重复补（标记仍是 True，且会话没变）
+        await p._apply_auto_gain(11, 0.5)
+        same_session = p._gain_session
+        # 换音源（节点 id 变了）：标记必须重置
+        await p._apply_auto_gain(12, 0.5)
+        return first, same_session, p._gain_session
+
+    first, same_session, new_session = asyncio.run(go())
+    check("首次遇到偏轻音源会补一次", first is True)
+    check("同一音源会话标识不变", same_session == 11, "得到 %r" % (same_session,))
+    check("换音源后会话标识更新（标记随之重置）", new_session == 12,
+          "得到 %r" % (new_session,))
+
+
+async def _noop():
+    return True
+
+
 def main():
+    if not install_decky_stub():
+        print("缺少 _decky_stub.py，无法导入 main")
+        sys.exit(1)
     for fn in (test_pactl_shared, test_pw_dump_shared, test_wpctl_status_shared,
                test_versions_cached, test_player_tree_cached,
                test_multi_property_busctl, test_multi_property_fallback,
-               test_run_cached_only_caches_success):
+               test_run_cached_only_caches_success,
+               test_cache_bounded, test_auto_gain_session_reset):
         fn()
     print()
     if FAILED:

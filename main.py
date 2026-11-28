@@ -227,6 +227,7 @@ class Plugin:
     _keep_task = None
     _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
     _auto_gain_done = False     # 本次音源会话是否已自动增益过
+    _gain_session = None        # 当前音源会话标识（外部源节点 id）
     # status() 的分层缓存：{key: (时间戳, 值)}
     _cache = None
     _pre_sleep = None          # 睡前快照：{"powered","discoverable","connected":[mac]} 
@@ -632,7 +633,31 @@ class Plugin:
     # ------------------------------------------------------------------
     # 轻量缓存：status() 每次要 fork 6~7 个外部进程，其中不少数据几乎不变。
     # 按「变化频率」分层缓存，把轮询开销压下来。
+    #
+    # ⚠️ 容量与过期（v3.3.0）
+    # ---------------------
+    # 早期这个 dict 只写不删：key 里含 MAC（`dev_info:CC:42:...`），
+    # 连过的设备越多、条目越涨，而且**过期的条目永远留在内存里**。
+    # 长时间开着插件（Deck 上很常见）就是慢性泄漏。
+    # 现在写入时顺手清掉过期项，并给一个硬上限兜底。
     # ------------------------------------------------------------------
+    _CACHE_MAX = 64
+
+    def _cache_put(self, key, ttl, val):
+        """写缓存：顺手清理过期条目，并保证不超过硬上限。"""
+        if self._cache is None:
+            self._cache = {}
+        now = time.time()
+        self._cache[key] = (now, val)
+
+        if len(self._cache) <= self._CACHE_MAX:
+            return
+        # 先按「本条的 ttl」清不掉别的条目（ttl 是每条自己的），
+        # 这里用保守策略：清掉**最久没被更新**的一半。
+        items = sorted(self._cache.items(), key=lambda kv: kv[1][0])
+        for k, _ in items[: max(1, len(items) // 2)]:
+            self._cache.pop(k, None)
+
     def _cached(self, key, ttl, factory):
         """取缓存；过期或未命中时调用 factory 重新计算。
 
@@ -649,7 +674,7 @@ class Plugin:
         except Exception as e:  # noqa: BLE001
             self._log("缓存 %s 计算失败：%s" % (key, e))
             val = hit[1] if hit is not None else None
-        self._cache[key] = (now, val)
+        self._cache_put(key, ttl, val)
         return val
 
     async def _cached_async(self, key, ttl, factory):
@@ -665,7 +690,7 @@ class Plugin:
         except Exception as e:  # noqa: BLE001
             self._log("缓存 %s 计算失败：%s" % (key, e))
             val = hit[1] if hit is not None else None
-        self._cache[key] = (now, val)
+        self._cache_put(key, ttl, val)
         return val
 
     # ------------------------------------------------------------------
@@ -1397,9 +1422,27 @@ class Plugin:
         2. 即使开启，也**每个音源会话只补一次**（`_auto_gain_done` 标记），
            之后绝不重复干预
         3. 用户手动调过音量后，本次会话内永久不再自动干预
+
+        ⚠️ 「会话」的边界（v3.3.0 修）
+        ----------------------------
+        注释里一直写「每个音源会话」，但 `_auto_gain_done` 和
+        `_last_manual_volume` **从来没有被重置过** —— 实际语义是
+        「整个插件生命周期只补一次」。后果：
+
+        - 手机 A 补过一次后，换手机 B 连上来就不补了
+        - 用户手动调过一次音量，之后**换设备、重启播放**都永久不再自动增益
+
+        现在用 `_gain_session`（当前音源节点 id）标记会话：节点变了就
+        重置两个标记，语义才和注释一致。
         """
         if not self.settings.get("auto_gain", False):
             return
+
+        # 音源会话切换（换设备 / 重新推流）-> 重置会话内的一次性标记
+        if source_id != self._gain_session:
+            self._gain_session = source_id
+            self._auto_gain_done = False
+            self._last_manual_volume = 0.0
 
         # 用户手动调过 -> 本次会话内永不再干预
         if self._last_manual_volume > 0:

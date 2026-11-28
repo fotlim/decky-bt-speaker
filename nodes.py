@@ -135,16 +135,6 @@ def find_bt_input(status_text):
     return None
 
 
-def find_bt_output(status_text):
-    """找出蓝牙输出节点（Deck 往耳机推流时出现）。"""
-    parsed = parse_status(status_text)
-    for node in parsed["sinks"]:
-        if re.search(r"bluez_output", node["name"], re.I):
-            node["kind"] = "bluez"
-            return node
-    return None
-
-
 def find_default_sink(status_text):
     parsed = parse_status(status_text)
     for node in parsed["sinks"]:
