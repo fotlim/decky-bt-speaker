@@ -708,6 +708,84 @@ def test_metadata_paths():
     check("源码里会尝试多个 player 编号", "range(4)" in src)
 
 
+def test_metadata_encoding():
+    print("AVRCP 输出解码（真机「曲名是反斜杠数字」「状态带 s\" 前缀」的修复）")
+    import metadata
+
+    # ---- 八进制转义解码 ----
+    # 「纯音」的 UTF-8 = E7 BA AF E9 9F B3，busctl 给成 \347\272\257\351\237\263
+    check("解码中文「纯音」",
+          metadata.decode_octal_escapes(r'\347\272\257\351\237\263') == "纯音")
+    # 中英混合
+    check("解码中英混合",
+          metadata.decode_octal_escapes(r'Pure \347\272\257\351\237\263') == "Pure 纯音")
+    # 纯 ASCII 原样返回
+    check("ASCII 原样", metadata.decode_octal_escapes("playing") == "playing")
+    check("空串原样", metadata.decode_octal_escapes("") == "")
+    check("None 原样", metadata.decode_octal_escapes(None) is None)
+    # 单个转义（é = C3 A9）
+    check("解码单字符", metadata.decode_octal_escapes(r'\303\251') == "é")
+
+    # ---- 单个字符串属性解析（Status）----
+    # busctl 返回的是 `s "playing"`，早期只 strip('"') 会留下 `s "playing`
+    check("Status 去类型前缀", metadata.parse_busctl_string('s "playing"') == "playing")
+    check("Status paused", metadata.parse_busctl_string('s "paused"') == "paused")
+    check("Status 无前缀也接受", metadata.parse_busctl_string("playing") == "playing")
+    check("Status 空字符串", metadata.parse_busctl_string('s ""') == "")
+    check("Status None", metadata.parse_busctl_string(None) == "")
+    # 对象路径类型 o
+    check("对象路径 o 前缀", metadata.parse_busctl_string('o "/org/bluez"') == "/org/bluez")
+    # 带八进制的字符串
+    check("Status 里带中文",
+          metadata.parse_busctl_string(r's "\347\272\257\351\237\263"') == "纯音")
+
+    # ---- 无符号整数解析（Position）----
+    check("Position 带前缀", metadata.parse_busctl_uint("u 59000") == 59000)
+    check("Position 无前缀", metadata.parse_busctl_uint("59000") == 59000)
+    check("Position 零", metadata.parse_busctl_uint("u 0") == 0)
+    check("Position 空", metadata.parse_busctl_uint("") == 0)
+    check("Position None", metadata.parse_busctl_uint(None) == 0)
+
+    # ---- 回归：不允许再用裸 strip('"') 解析 Status ----
+    src = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "metadata.py"), encoding="utf-8").read()
+    check("源码用 parse_busctl_string 解析 Status",
+          "status = parse_busctl_string(status_raw)" in src)
+    check("源码用 parse_busctl_uint 解析 Position",
+          "parse_busctl_uint(pos_raw)" in src)
+    # 回归：Status 必须走 parse_busctl_string，不能再手工剥引号。
+    #
+    # 注意：这里只检查**可执行代码**，要把注释和 docstring 都排除掉。
+    # 早期版本用「行里有没有 strip( 和引号」判断，结果被 docstring 里
+    # 引用的旧写法（"早期代码只做 strip('"')"）误报。
+    tree = __import__("ast").parse(src)
+    bad_calls = []
+    for node in __import__("ast").walk(tree):
+        if not isinstance(node, __import__("ast").Call):
+            continue
+        fn = node.func
+        if not (isinstance(fn, __import__("ast").Attribute)
+                and fn.attr == "strip"):
+            continue
+        # strip('"') 这种调用：参数是只含引号的字符串
+        for arg in node.args:
+            if (isinstance(arg, __import__("ast").Constant)
+                    and isinstance(arg.value, str)
+                    and set(arg.value) <= set('"\'')):
+                bad_calls.append(getattr(node, "lineno", 0))
+    check("代码里没有手工 strip 引号（应走 parse_busctl_string）",
+          not bad_calls, "行号: %s" % bad_calls)
+
+    # ---- parse_track 的字符串字段也要解码 ----
+    TRACK = ('a{sv} 3 "Title" s "\\347\\272\\257\\351\\237\\263" '
+             '"Artist" s "Someone" "Duration" u 207000')
+    t = metadata.parse_track(TRACK)
+    check("parse_track 解出曲名", t and t["title"] == "纯音", str(t and t["title"]))
+    check("parse_track 解出歌手", t and t["artist"] == "Someone")
+    check("parse_track 解出时长", t and t["duration_ms"] == 207000)
+    check("parse_track 格式化时长", t and t["duration"] == "3:27", str(t and t["duration"]))
+
+
 def test_settings_validation():
     print("设置项类型校验（防脏数据）")
     # main.py 会 import decky（Decky Loader 注入），这里用桩模块替代
@@ -1359,7 +1437,7 @@ if __name__ == "__main__":
                test_output, test_metadata, test_quality, test_wifi,
                test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
                test_settings_validation, test_power_parse, test_inhibit, test_a2dp,
-               test_dimsession, test_metadata_paths):
+               test_dimsession, test_metadata_paths, test_metadata_encoding):
         fn()
     print()
     if FAILED:

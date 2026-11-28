@@ -90,6 +90,79 @@ def mac_from_path(path):
     return m.group(1).replace("_", ":").upper()
 
 
+def decode_octal_escapes(text):
+    """把 busctl 输出里的八进制转义还原成 UTF-8 文本。
+
+    busctl 在非 UTF-8 locale 下会把非 ASCII 字节输出成 `\\NNN` 八进制，
+    例如「纯音」的 UTF-8 是 E7 BA AF E9 9F B3，busctl 给成：
+        \\347\\272\\257\\351\\237\\263
+
+    直接显示就是这串反斜杠数字（真机截图里就是这个）。
+
+    实现：先把所有 \\NNN 收集成字节，再整体按 UTF-8 解码。
+    注意不能逐个字节转 chr() —— 那会把多字节序列拆坏。
+    """
+    if not text or "\\" not in text:
+        return text
+
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 3 < n and text[i + 1:i + 4].isdigit():
+            # 收集连续的八进制转义
+            raw = bytearray()
+            while (i + 3 < n and text[i] == "\\"
+                   and text[i + 1:i + 4].isdigit()):
+                try:
+                    raw.append(int(text[i + 1:i + 4], 8) & 0xFF)
+                except ValueError:
+                    break
+                i += 4
+            try:
+                out.append(raw.decode("utf-8", "replace"))
+            except Exception:  # noqa: BLE001
+                out.append(raw.decode("latin-1"))
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def parse_busctl_string(text):
+    """解析 `busctl get-property` 返回的**单个字符串**属性。
+
+    busctl 输出形如：
+        s "playing"
+        s "纯音"
+
+    早期代码只做 `strip('"')`，结果得到 `s "playing` ——
+    类型前缀 `s ` 和开头引号都留着（真机截图里状态徽章显示的就是这个）。
+
+    这里统一：去掉开头的类型签名（s/o 等）+ 外层引号，并解码八进制转义。
+    """
+    if not text:
+        return ""
+    t = strip_ansi(text).strip()
+    # 去掉开头的类型签名，如 `s "..."` / `o "/path"` / `u 123`
+    t = re.sub(r'^[a-z]\s+', '', t, count=1)
+    # 去掉外层引号
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
+        t = t[1:-1]
+    elif t.startswith('"'):
+        t = t[1:]
+    return decode_octal_escapes(t)
+
+
+def parse_busctl_uint(text):
+    """解析 `busctl get-property` 返回的无符号整数（如 Position / Duration）。"""
+    if not text:
+        return 0
+    m = re.search(r"\d+", strip_ansi(text))
+    return int(m.group(0)) if m else 0
+
+
 def parse_busctl_dict(text):
     """解析 busctl 输出的 `a{sv}` 字典。
 
@@ -130,11 +203,17 @@ def parse_track(text):
             return default
 
     duration_ms = _int("Duration", 0)
+
+    # ⚠️ 字符串值必须解码八进制转义 —— busctl 会把中文输出成 \347\272\257 这种。
+    # 不解码的话，前端显示的是一串反斜杠数字（真机截图里就是这样）。
+    def _str(key):
+        return decode_octal_escapes(str(raw.get(key, "") or ""))
+
     return {
-        "title": raw.get("Title", ""),
-        "artist": raw.get("Artist", ""),
-        "album": raw.get("Album", ""),
-        "genre": raw.get("Genre", ""),
+        "title": _str("Title"),
+        "artist": _str("Artist"),
+        "album": _str("Album"),
+        "genre": _str("Genre"),
         "track_number": _int("TrackNumber", 0),
         "total_tracks": _int("NumberOfTracks", 0),
         "duration_ms": duration_ms,
@@ -228,13 +307,11 @@ class Metadata:
         status_raw = await self._get(path, "Status")
         pos_raw = await self._get(path, "Position")
 
-        position_ms = 0
-        if pos_raw:
-            m = re.search(r"\d+", pos_raw)
-            if m:
-                position_ms = int(m.group(0))
-
-        status = (status_raw or "").strip().strip('"')
+        # ⚠️ 必须用 parse_busctl_string 而不是 strip('"') ——
+        # busctl 返回的是 `s "playing"`，只 strip 引号会留下类型前缀 `s `，
+        # 前端徽章就会显示成 `s "playing`（真机截图里就是这个）。
+        position_ms = parse_busctl_uint(pos_raw)
+        status = parse_busctl_string(status_raw)
         track.update({
             "status": status,
             "status_label": status_label(status),

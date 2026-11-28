@@ -321,7 +321,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.1**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.2**.
 
 | Version | Contents |
 |---|---|
@@ -372,6 +372,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.1**.
 | 3.1.1 | Real-device screenshots (privacy pixelated) + fixed the broken publish.image |
 | 3.2.0 | QAM "Now playing" is now a pure info card (title/artist/progress bar); removed the external-source volume buttons — they never controlled the phone volume |
 | 3.2.1 | Fixed "no track info from the source device" — the player D-Bus path was guessed (hci0/player0); now discovered via usctl tree |
+| 3.2.2 | Track titles no longer show as octal escapes (\347\272\257) and the status badge no longer shows s "playing |
 
 ---
 
@@ -719,7 +720,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.2.1**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.2.2**。
 
 | 版本 | 内容 |
 |---|---|
@@ -770,6 +771,7 @@ python pack.py          # 打包 zip
 | 3.1.1 | 真机截图（隐私已打码）+ 修好失效的 publish.image |
 | 3.2.0 | QAM「正在播放」改成纯信息卡片（曲名/歌手/进度条）；删掉外部源音量按钮 —— 它控制不了手机音量 |
 | 3.2.1 | 修「对端设备未提供曲目信息」—— player 的 D-Bus 路径原来是猜的（hci0/player0），现改为 busctl tree 动态发现 |
+| 3.2.2 | 修曲名显示成八进制反斜杠数字、状态徽章带 s " 前缀 |
 
 ---
 

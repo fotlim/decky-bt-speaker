@@ -4,6 +4,80 @@
 
 ---
 
+## [3.2.2] - 2026-11-28
+
+**修曲名显示成反斜杠数字、状态徽章带 `s "` 前缀**
+
+真机截图里两个明显的问题：
+
+```
+曲名：\347\272\257\351\237\263\347\272\257\351\237\263...
+状态：s "playing
+```
+
+### 1. 曲名是一串八进制数字
+
+**根因**：`busctl` 在非 UTF-8 locale 下会把非 ASCII 字节输出成
+`\\NNN` 八进制转义。「纯音」的 UTF-8 是 `E7 BA AF E9 9F B3`，
+busctl 给成 `\347\272\257\351\237\263`。插件直接把这串东西塞进界面。
+
+**修法**：新增 `decode_octal_escapes()` —— 把连续的 `\\NNN` 收集成字节，
+再**整体按 UTF-8 解码**。
+
+> ⚠️ 关键：不能逐个字节 `chr()` —— 那会把多字节序列拆坏，
+> 变成 `çº¯é³` 这种乱码。必须收集完再整体 decode。
+
+### 2. 状态徽章显示 `s "playing`
+
+**根因**：`busctl get-property ... Status` 返回的是 **`s "playing"`** ——
+带 D-Bus 类型签名。早期代码只做了 `strip('"')`：
+
+```python
+status = (status_raw or "").strip().strip('"')   # -> s "playing   ❌
+```
+
+引号去掉了，但类型前缀 `s ` 和开头的引号还在。
+
+**修法**：新增 `parse_busctl_string()` —— 先剥类型签名，再去外层引号，
+最后解码八进制。`Position` 也用 `parse_busctl_uint()` 统一处理。
+
+### 新增工具函数
+
+| 函数 | 作用 |
+|---|---|
+| `decode_octal_escapes(text)` | `\\NNN` 八进制 → UTF-8 文本 |
+| `parse_busctl_string(text)` | 解析单个字符串属性（剥签名 + 引号 + 解码） |
+| `parse_busctl_uint(text)` | 解析无符号整数属性 |
+
+### 测试
+
+新增 25 项：
+
+```
+PASS  解码中文「纯音」
+PASS  解码中英混合
+PASS  解码单字符（é）
+PASS  Status 去类型前缀
+PASS  Status 无前缀也接受
+PASS  Status 里带中文
+PASS  Position 带前缀 / 无前缀 / 零 / 空 / None
+PASS  parse_track 解出曲名（纯音）
+PASS  parse_track 格式化时长（3:27）
+...
+```
+
+其中一项是**回归锁**：用 `ast` 检查源码里**没有** `strip('"')` 这类
+手工剥引号的调用。之所以用 AST 而不是字符串匹配 —— 第一版用字符串匹配时，
+被 docstring 里引用的旧写法误报了。
+
+### 验证
+
+```
+tests_offline / i18n(226) / api / rpc(48) / bundle / tsc / pack   全过
+```
+
+---
+
 ## [3.2.1] - 2026-11-28
 
 **修「对端设备未提供曲目信息」—— 其实是我们自己没找到 player 路径**
