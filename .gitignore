@@ -1,6 +1,19 @@
 node_modules/
 __pycache__/
 *.pyc
-dist/*.map
 _scratch/
 *.zip
+
+# 测试运行时写出的临时设置文件（tests_rpc.py 会覆盖 settings_path 到这里）
+_test_settings.json
+
+# 构建产物不入库。
+#
+# 为什么？Decky 商店的 CI（decky-plugin-database 的 build-plugins.yml）
+# 会自己跑 `decky plugin build -b` 重新构建，用的是仓库里的 src/。
+# 把 dist/index.js 提交上去有两个问题：
+#   1. 那是压缩后的产物，审核员按「混淆代码」逐案看，增加不必要的摩擦
+#   2. 产物和源码可能不同步（本项目就出过一次：改了版本号忘重建，
+#      dist 里还是旧版本）
+# 本地开发和打 Release 时照常 rollup 构建，只是不进 git。
+dist/
