@@ -30,6 +30,27 @@ This plugin fills that gap.
 
 ---
 
+## Screenshots
+
+All captured on a real Steam Deck (1280x800, English UI). Privacy details
+(adapter MAC, paired device name, home path, Steam avatar) are pixelated.
+
+| QAM panel | Devices & pairing |
+|---|---|
+| ![QAM panel](docs/screenshots/02-qam-panel-top.jpg) | ![Devices](docs/screenshots/04-devices.jpg) |
+
+| Codec & latency | Equalizer |
+|---|---|
+| ![Codec](docs/screenshots/06-codec.jpg) | ![EQ](docs/screenshots/01-equalizer-presets.jpg) |
+
+| Settings | Behavior & system info |
+|---|---|
+| ![Settings](docs/screenshots/05-settings.jpg) | ![Behavior](docs/screenshots/09-behavior-sysinfo.jpg) |
+
+> Full list with descriptions: [docs/screenshots/README.md](docs/screenshots/README.md)
+
+---
+
 ## Features
 
 ### Core
@@ -397,6 +418,27 @@ MIT © 大肥鱼 (BigFatFish)
 **Decky 商店 118 个插件里，做「Deck 接收音频」的一个都没有**（GitHub 搜 `decky a2dp` / `decky bluetooth sink` 均为 0 结果）。现有插件全在做「Deck 往外送音频」和「调 Deck 自己的音频」。
 
 本插件填的是这个空位。
+
+---
+
+## 截图
+
+全部在真机 Steam Deck 上截取（1280x800，英文界面）。
+隐私信息（适配器 MAC、已配对设备名、家目录路径、Steam 头像）已像素化打码。
+
+| QAM 面板 | 设备与配对 |
+|---|---|
+| ![QAM 面板](docs/screenshots/02-qam-panel-top.jpg) | ![设备](docs/screenshots/04-devices.jpg) |
+
+| 编码器与延迟 | 均衡器 |
+|---|---|
+| ![编码器](docs/screenshots/06-codec.jpg) | ![均衡器](docs/screenshots/01-equalizer-presets.jpg) |
+
+| 设置 | 行为与系统信息 |
+|---|---|
+| ![设置](docs/screenshots/05-settings.jpg) | ![行为](docs/screenshots/09-behavior-sysinfo.jpg) |
+
+> 完整清单与说明：[docs/screenshots/README.md](docs/screenshots/README.md)
 
 ---
 

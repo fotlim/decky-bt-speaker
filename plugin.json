@@ -4,8 +4,15 @@
   "flags": [],
   "api_version": 1,
   "publish": {
-    "tags": ["bluetooth", "audio", "speaker", "a2dp", "utility", "music"],
+    "tags": [
+      "bluetooth",
+      "audio",
+      "speaker",
+      "a2dp",
+      "utility",
+      "music"
+    ],
     "description": "Turn your Steam Deck into a Bluetooth speaker: phones, tablets and PCs can connect and play music straight out of the Deck's stereo speakers. A2DP sink built on PipeWire / WirePlumber — no root required. Discoverable keep-alive, in-plugin pairing, cross-suspend restore, codec tuning, equalizer, multi-output sync. UI follows your Steam language (English / 中文).",
-    "image": "https://raw.githubusercontent.com/fotlim/decky-bt-speaker/main/docs/screenshot.png"
+    "image": "https://raw.githubusercontent.com/fotlim/decky-bt-speaker/main/docs/screenshots/02-qam-panel-top.jpg"
   }
 }
