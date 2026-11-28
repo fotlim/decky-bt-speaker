@@ -17,11 +17,32 @@ import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 I18N = os.path.join(ROOT, "src", "i18n.ts")
-VIEWS = [
-    os.path.join(ROOT, "src", "views", "Speaker.tsx"),
-    os.path.join(ROOT, "src", "views", "BtSpeakerPage.tsx"),
-    os.path.join(ROOT, "src", "index.tsx"),
-]
+
+
+def _collect_tsx():
+    """递归收集所有前端源文件。
+
+    为什么递归而不是写死列表？
+    ----------------------
+    重构前 views 下只有 3 个文件，写死没问题。后来拆成
+    `views/page/*.tsx`（每个 tab 一个文件），写死的列表就漏掉了它们 ——
+    表现为「源码有引用」这项突然从 184 掉到 39。
+
+    改成递归后，以后再加文件也不会漏。
+    """
+    out = []
+    base = os.path.join(ROOT, "src")
+    for dirpath, _dirnames, filenames in os.walk(base):
+        for fn in filenames:
+            if fn.endswith((".tsx", ".ts")):
+                # i18n.ts 本身是词典定义，不算「引用」
+                if fn == "i18n.ts":
+                    continue
+                out.append(os.path.join(dirpath, fn))
+    return sorted(out)
+
+
+VIEWS = _collect_tsx()
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
 
@@ -89,6 +110,26 @@ def main():
 
     print()
     print("硬编码中文残留（注释除外）")
+
+    # 剥掉一行里的行内注释，只留下真正的代码。
+    #
+    # 为什么要这么做？
+    # --------------
+    # 早期只判断「整行是否以 // 或 /* 开头」，所以
+    #     } catch { /* 轮询失败不打断扫描 */ }
+    #     const FAST_MS = 4000;   // 有外部音源在播
+    # 这种**行内注释**会被误报成「硬编码中文」。
+    # 重构后源码里这类注释变多，误报也变多，必须处理。
+    _INLINE_BLOCK = re.compile(r"/\*.*?\*/")
+    # 行内 `//`：只在它前面不是 `:` 时才当注释切掉 ——
+    # 这样 `"http://x"` 这类字符串里的 `//` 不会被误切。
+    _INLINE_LINE = re.compile(r"(?<!:)//.*$")
+
+    def strip_comments(line):
+        s = _INLINE_BLOCK.sub("", line)
+        s = _INLINE_LINE.sub("", s)
+        return s
+
     total_hits = 0
     for f in VIEWS:
         if not os.path.exists(f):
@@ -121,7 +162,9 @@ def main():
                 continue
             if st.startswith("//") or st.startswith("*/"):
                 continue
-            if CJK.search(ln):
+            # 剥掉行内注释后再判断
+            code_only = strip_comments(ln)
+            if CJK.search(code_only):
                 hits.append((i, st[:80]))
         name = os.path.basename(f)
         check("%s 无硬编码中文" % name, not hits,

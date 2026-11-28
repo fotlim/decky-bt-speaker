@@ -105,6 +105,140 @@
 
 ---
 
+## [3.0.0] - 2026-11-28
+
+**结构与视觉重构：不改功能，只让代码和界面变得可维护**
+
+这一版**没有新增任何功能，也没有修 bug**。改的全是「内在质量」——
+拆文件、收敛样式、删死代码。之所以跳大版本号，是因为文件结构变了
+（后端多了一个模块、前端 views 下多了一层目录），对后续维护有实质影响。
+
+### 重构前的问题
+
+| 文件 | 行数 | 问题 |
+|---|---|---|
+| `main.py` | 1608 | 8 类职责混在一起：息屏 / 睡眠恢复 / A2DP / 音量 / EQ / 诊断… |
+| `bt.py` | 962 | （本次未动，见下方「为什么没拆」） |
+| `BtSpeakerPage.tsx` | 1255 | 4 个 Tab 的内容全塞在一个文件里 |
+
+样式更乱。同一个「胶囊按钮」在不同地方有 **3 种 padding**：
+
+```
+padding: "7px 14px", borderRadius: 18   ← 信任 / 修复 / 移除
+padding: "7px 16px", borderRadius: 18   ← 连接按钮
+padding: "8px 16px", borderRadius: 18   ← 诊断页按钮
+```
+
+同一种卡片有 `10px 12px` / `11px 14px` / `12px 14px` 三种；
+字号有 11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14.5 / 15 / 18 九种。
+肉眼看得出「不齐」，但改的时候又不敢动 —— 因为不知道哪处是刻意的。
+
+### Added
+
+- **`src/theme.ts`：设计令牌层**
+
+  颜色 / 间距（4px 栅格）/ 字号（9 种收敛到 6 种）/ 圆角，
+  外加组合样式（`CARD_STYLE` / `PRIMARY_BTN_STYLE` / `ELLIPSIS` 等）。
+
+  ⚠️ 设计原则：**token 只描述视觉，不描述语义**。
+  不写 `buttonPrimaryPadding` 这种名字 —— 那样加个新按钮就得加个新 token。
+  用 `SPACE.md` / `FONT.body` / `RADIUS.md` 这类「量」的名字组合出样式。
+
+- **`src/styles.ts`：全局样式注入**
+
+  React 内联 style 不支持 `@keyframes` 和 `::-webkit-scrollbar`，
+  而这两样是「界面看起来精致」的必要条件：状态点的呼吸动画、
+  深色滚动条（默认浅色条在深色界面上非常刺眼）。
+
+  用 `<style>` 注入而不是 CSS 文件，因为 Decky 的 rollup 对 .css 的处理
+  取决于 loader 版本，`<style>` 在所有版本上都可靠。注入幂等，卸载时移除。
+
+- **`dimsession.py`：息屏会话**
+
+  把散在 `main.py` 里跨 200 多行、7 个方法的息屏逻辑收进一个类：
+  `dim_screen` / `undim_screen` / `_start_dim_guard` / `_keep_link_alive` /
+  `get_screen` / `get_screen_diag` / `get_inhibit`。
+
+  为什么值得单独成类？因为它们共享 3 个状态（`dimmer` / `inhibitor` /
+  定时器）且**有严格顺序要求**：先拿抑制锁再关屏、先开背光再放锁。
+  散着写时这些约束只存在于注释里，后续改动很容易破坏。
+  收进一个类后只有一条路径，漏掉清理变得不可能。
+
+  新增测试**专门锁住顺序**：
+  ```
+  PASS  enter 先 hold 再 dim
+  PASS  exit 先 restore 再 release
+  PASS  拿锁失败仍息屏（但如实汇报）
+  ```
+
+- **`src/views/page/`：按 Tab 拆分全屏页**
+
+  `DevicesTab` / `SettingsTab` / `EqTab` / `DiagTab` 各自一个文件，
+  主页面退化成 154 行的壳层（布局 + 头部 + Tab 切换）。
+
+### Changed
+
+- **`components.tsx` 重写为统一的控件库**
+
+  一种控件只有一种尺寸：`Btn` 组件接管所有按钮，需要不同视觉重量就换
+  `variant`（primary / ghost / danger / ok）+ `small`，不再自己写 style。
+  新增 `Toggle` / `ToggleRow` / `GroupTitle` / `Dot` / `Stack` / `Row`。
+
+- **设备行的按钮分层**：原来「连接 / 信任 / 修复 / 移除」4 个同样大小的
+  按钮挤在一行，Deck 屏幕上很挤。现在「连接」是主操作（大按钮），
+  其余三个收成 `small` 尺寸。
+
+- **QAM 面板（`Speaker.tsx`）也迁到新 token**：字号从 6 种收敛到 3 种，
+  圆角统一。
+
+- `route.ts` 退化成 re-export（颜色移入 `theme.ts`），保留兼容。
+
+### Removed
+
+- **`Speaker.tsx` 里的音量同步死代码**
+
+  `vol` / `srcVol` / `dragging` / `dragTimer` / `settleTimer` / `srcTimer`
+  这套状态是「滑杆时代」留下的。v2.4.3 改用相对调节按钮后，
+  它已经完全不参与逻辑了 —— `changeVolume` / `showVol` / `volFailed`
+  三个标识符在整个文件里只出现 1 次（就是定义处）。
+  删掉约 60 行死代码。
+
+- `main.py` 里的 `dimmer` / `inhibitor` / `_dim_task` 三个属性，
+  以及 `_start_dim_guard` / `_keep_link_alive` 两个方法（已移入 `dimsession.py`）。
+
+### 测试
+
+- 新增 `test_dimsession`（14 项）：用假对象验证顺序约束、幂等性、
+  「拿锁失败不算息屏失败」、无 dimmer 时不崩
+- `tests_i18n.py` 改为**递归扫描** `src/` 下所有 `.tsx`/`.ts`。
+  原来写死了 3 个文件路径，拆目录后漏掉了 `views/page/*`，
+  表现为「源码有引用」从 184 掉到 39
+- `tests_i18n.py` 增强行内注释识别：原来只判断「整行是否以 `//` 或 `/*`
+  开头」，所以 `} catch { /* 中文 */ }` 和 `const X = 1;  // 中文`
+  会被误报成硬编码中文
+
+### 为什么没拆 bt.py
+
+`bt.py`（962 行）里是 `BlueZ` 和 `Wp` 两个类，各约 500 行。
+它们虽然大，但**内聚度很高**（一个是蓝牙封装，一个是 PipeWire 封装），
+再拆会变成「为拆而拆」——比如把 `device_action` 的十几个 action
+拆到不同文件，读代码时要来回跳。
+
+本次优先拆的是「职责混杂」的地方（`main.py` 的 8 类职责、
+`BtSpeakerPage.tsx` 的 4 个 Tab），那些是真正的痛点。
+
+### 验证
+
+```
+python tests_offline.py   全部通过（含新增 14 项 DimSession 测试）
+python tests_i18n.py      212 key 一致，178 处引用全部有定义
+python tests_bundle.py    8 项全过
+tsc --noEmit              exit 0
+pack.py                   自检 1~9 全过，22 文件
+```
+
+---
+
 ## [2.9.3] - 2026-11-27
 
 **修「息屏后还显示 QAM 面板」+ 「音频在放却一直说协商中」**

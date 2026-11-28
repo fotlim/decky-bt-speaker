@@ -3,15 +3,19 @@ import { FaBluetoothB } from "react-icons/fa";
 import { Speaker } from "./views/Speaker";
 import { BtSpeakerPage } from "./views/BtSpeakerPage";
 import { DimOverlay, setWakeHandler } from "./views/DimOverlay";
-import { ROUTE } from "./route";
+import { ROUTE } from "./theme";
 import { stopPolling } from "./store";
 import { setDimmed } from "./dimState";
+import { injectGlobalStyle, removeGlobalStyle } from "./styles";
 import { api } from "./backend";
 import { t } from "./i18n";
 
 const OVERLAY_KEY = "bt-speaker-dim-overlay";
 
 export default definePlugin(() => {
+  // 全局样式（呼吸动画 + 深色滚动条）。幂等，重复加载不会堆叠。
+  injectGlobalStyle();
+
   try { routerHook.removeRoute(ROUTE); } catch { /* ignore */ }
   routerHook.addRoute(ROUTE, BtSpeakerPage);
 
@@ -42,6 +46,7 @@ export default definePlugin(() => {
     onDismount() {
       try { routerHook.removeRoute(ROUTE); } catch { /* ignore */ }
       try { routerHook.removeGlobalComponent(OVERLAY_KEY); } catch { /* ignore */ }
+      removeGlobalStyle();
       setWakeHandler(null);
       stopPolling();
     },

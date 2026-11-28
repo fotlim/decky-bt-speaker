@@ -54,6 +54,13 @@ except Exception:
     _INHIBIT_IMPORT_ERR = traceback.format_exc()
 
 try:
+    import dimsession  # type: ignore
+    _DIMSESSION_IMPORT_ERR = None
+except Exception:
+    dimsession = None
+    _DIMSESSION_IMPORT_ERR = traceback.format_exc()
+
+try:
     import a2dp  # type: ignore
     _A2DP_IMPORT_ERR = None
 except Exception:
@@ -216,10 +223,8 @@ class Plugin:
     outcfg = None
     meta = None
     qcfg = None
-    dimmer = None
-    inhibitor = None
+    dim = None                  # DimSession（息屏会话）
     _keep_task = None
-    _dim_task = None
     _last_manual_volume = 0.0   # 用户最后一次手动调音量的时间戳（0 = 从未调过）
     _auto_gain_done = False     # 本次音源会话是否已自动增益过
     # status() 的分层缓存：{key: (时间戳, 值)}
@@ -325,10 +330,20 @@ class Plugin:
         self.outcfg = output.CombineConfig(self._log) if output is not None else None
         self.meta = metadata.Metadata(self._log) if metadata is not None else None
         self.qcfg = quality.QualityConfig(self._log) if quality is not None else None
-        # 息屏控制（背光归 0）。初始化时确保不是黑屏状态。
-        self.dimmer = screen.Dimmer(self._log) if screen is not None else None
-        # 休眠抑制（息屏当音箱时防止整机自动休眠把蓝牙一起挂起）
-        self.inhibitor = inhibit.Inhibitor(self._log) if inhibit is not None else None
+
+        # 息屏会话：背光 + 休眠抑制 + 兜底定时器 + 链路看护。
+        #
+        # 为什么打包成一个对象而不是散在 Plugin 里？
+        # 这三样共享状态且有严格顺序约束（先拿锁再关屏、先开背光再放锁）。
+        # 散着写时约束只存在于注释里，后续改动很容易破坏；收进 DimSession
+        # 之后只有一条路径，漏掉清理变得不可能。详见 dimsession.py。
+        dimmer = screen.Dimmer(self._log) if screen is not None else None
+        inhibitor = inhibit.Inhibitor(self._log) if inhibit is not None else None
+        self.dim = (dimsession.DimSession(
+            dimmer=dimmer, inhibitor=inhibitor, bz=self.bz,
+            settings=self.settings, log=self._log,
+            screen_mod=screen, inhibit_mod=inhibit,
+        ) if dimsession is not None else None)
 
         if not bt.BlueZ.available():
             self._log("警告：系统里没有 bluetoothctl，蓝牙功能不可用")
@@ -387,26 +402,14 @@ class Plugin:
 
     async def _do_unload(self):
         self._log("插件卸载")
-        # 0. 最优先：释放休眠抑制锁。持有它时系统睡不下去，
-        #    插件卸载后没人再释放，用户会莫名其妙无法自动休眠。
-        if self.inhibitor is not None:
+        # 0. 最优先：结束息屏会话。
+        #    它内部保证「恢复背光 → 释放抑制锁 → 停定时器」的顺序，
+        #    漏掉任何一步都会给用户留下黑屏或无法休眠的机器。
+        if self.dim is not None:
             try:
-                await self.inhibitor.release("插件卸载")
+                await self.dim.session.shutdown()
             except Exception as e:  # noqa: BLE001
-                self._log("卸载时释放休眠抑制失败：%s" % e)
-        # 0.1 恢复背光。如果用户正在息屏状态下卸载/重载插件，
-        #     不恢复就会留下黑屏，用户只能硬重启。
-        if self.dimmer is not None and self.dimmer.dimmed:
-            try:
-                await self.dimmer.restore("插件卸载")
-            except Exception as e:  # noqa: BLE001
-                self._log("卸载时恢复背光失败：%s" % e)
-        if self._dim_task is not None:
-            try:
-                self._dim_task.cancel()
-            except Exception:
-                pass
-            self._dim_task = None
+                self._log("卸载时结束息屏会话失败：%s" % e)
         # 1. 停后台任务（不 await，避免拖慢）
         if self._keep_task is not None:
             try:
@@ -429,172 +432,47 @@ class Plugin:
                 pass
 
     # ------------------------------------------------------------------
-    # RPC：息屏 / 唤醒
+    # RPC：息屏 / 唤醒（逻辑在 dimsession.py）
     # ------------------------------------------------------------------
     @_safe
     async def get_screen(self):
         """屏幕状态：能不能息屏、当前是否已息屏、亮度值。"""
-        if self.dimmer is None:
-            return {"available": False, "dimmed": False, "error": "screen 模块未加载"}
-        st = self.dimmer.status()
-        st["elapsed"] = round(self.dimmer.elapsed(), 1)
-        st["max_seconds"] = screen.MAX_DIM_SECONDS if screen is not None else 0
-        return st
+        return self.dim.session.screen_status()
 
     @_safe
     async def dim_screen(self):
-        """息屏（背光归 0），并**同时**阻止系统自动休眠。
+        """息屏 + 抑制自动休眠。
 
-        ⚠️ 两件事必须一起做，缺一不可：
-
-        1. **背光归 0 / 盖黑遮罩** —— 解决「屏幕亮着费电、烧屏」
-        2. **抑制自动休眠** —— 解决「放着放着蓝牙就断了」
-
-        真机反馈过第二个问题：只做了第 1 步，用户不碰 Deck，
-        SteamOS 的空闲计时器走完就整机休眠，蓝牙适配器一起挂起，
-        手机 / 电脑看到的就是「莫名其妙断连」。所以这里先拿抑制锁再关屏，
-        顺序很重要 —— 万一拿锁失败，至少不会出现「屏幕黑了但马上就睡」。
+        两件事必须一起做（详见 dimsession.DimSession.enter 的说明）：
+        1. 关屏 —— 解决「屏幕亮着费电、烧屏」
+        2. 抑制自动休眠 —— 解决「放着放着蓝牙就断了」
         """
-        if self.dimmer is None:
-            return {_ERR: "screen 模块未加载"}
+        return await self.dim.enter()
 
-        # 1. 先抑制自动休眠（失败不阻断息屏，只在结果里如实报告）
-        inh = {"ok": False, "what": "", "error": "inhibit 模块未加载"}
-        if self.inhibitor is not None:
-            try:
-                inh = await self.inhibitor.hold()
-            except Exception as e:  # noqa: BLE001
-                inh = {"ok": False, "what": "", "error": str(e)}
-                self._log("获取休眠抑制锁异常：%s" % e)
-
-        # 2. 再关屏
-        r = await self.dimmer.dim()
-        if r.get("ok"):
-            self._start_dim_guard()
-        r["inhibit"] = inh
-        return r
+    @_safe
+    async def undim_screen(self):
+        """恢复显示并释放休眠抑制锁。"""
+        return await self.dim.exit("用户唤醒")
 
     @_safe
     async def get_inhibit(self):
         """休眠抑制状态 + 系统里当前所有 inhibitor 锁（排查用）。"""
-        if inhibit is None:
+        st = await self.dim.inhibit_status()
+        if st is None:
             return {_ERR: "inhibit 模块未加载"}
-        st = self.inhibitor.status() if self.inhibitor is not None else {}
-        st["system"] = await inhibit.list_inhibitors()
         return st
 
     @_safe
     async def get_screen_diag(self):
-        """息屏能力诊断：把每个环节的真实结果都报出来。
+        """息屏能力诊断：每个环节的真实结果。
 
-        ⚠️ 这里只**汇报事实**，不提供「修复 bl_power 权限」的入口 ——
-        真机实测证明：即使 `sudo chmod a+w bl_power` 之后写进去，
-        这台 Deck 的驱动也**完全不理**，屏幕照旧亮着。所以那条路是走不通的，
-        留着按钮只会让用户白折腾（详见 screen.Dimmer.dim 的说明）。
+        ⚠️ 只汇报事实，不提供「修复 bl_power 权限」的入口 ——
+        真机实测证明即使 chmod 之后写进去，驱动也完全不理。
         """
-        if screen is None:
+        d = self.dim.diagnose()
+        if d is None:
             return {_ERR: "screen 模块未加载"}
-        d = screen.diagnose()
-        if self.dimmer is not None:
-            d["dimmed"] = self.dimmer.dimmed
-            d["saved"] = self.dimmer._saved
         return d
-
-    @_safe
-    async def undim_screen(self):
-        """恢复显示，并释放休眠抑制锁（把休眠权还给系统）。"""
-        if self.dimmer is None:
-            return {_ERR: "screen 模块未加载"}
-        await self.dimmer.restore("用户唤醒")
-        if self.inhibitor is not None:
-            try:
-                await self.inhibitor.release("用户唤醒")
-            except Exception as e:  # noqa: BLE001
-                self._log("释放休眠抑制失败：%s" % e)
-        return {"ok": True, "dimmed": False}
-
-    def _start_dim_guard(self):
-        """启动息屏兜底定时器（到点自动恢复 + 看护蓝牙链路）。
-
-        两件事都做，因为它们解决的是两个不同的问题：
-
-        1. **超时恢复背光** —— 万一所有唤醒路径都失效，用户不会被永久黑屏
-        2. **看护蓝牙链路** —— 息屏期间如果对端还是掉了（休眠抑制失败、
-           对端自己断开、驱动抽风），这里自动重连回来，用户不用睁眼去点
-
-        第 2 点是「息屏后蓝牙自动断连」这个真机问题的第二道防线：
-        主防线是 inhibit.py 的休眠抑制锁，但那个锁有可能因为权限 /
-        系统版本拿不到，那时至少还有自动重连兜着。
-        """
-        if self._dim_task is not None:
-            try:
-                self._dim_task.cancel()
-            except Exception:
-                pass
-            self._dim_task = None
-        if screen is None or self.dimmer is None:
-            return
-
-        async def _guard():
-            # 记住息屏时连着的设备，用于断了之后重连
-            wanted = []
-            try:
-                for d in await self.bz.list_devices("Connected"):
-                    wanted.append(d["mac"])
-            except Exception:  # noqa: BLE001
-                pass
-            if not wanted:
-                last = (self.settings.get("last_device") or "").strip()
-                if last:
-                    wanted.append(last)
-
-            tick = 0
-            try:
-                while self.dimmer is not None and self.dimmer.dimmed:
-                    await asyncio.sleep(5)
-                    tick += 1
-                    # 1. 超时兜底
-                    if self.dimmer.timed_out():
-                        self._log("息屏超过 %d 秒，自动恢复（兜底保护）"
-                                  % screen.MAX_DIM_SECONDS)
-                        await self.dimmer.restore("超时兜底")
-                        # ⚠️ 抑制锁必须跟着放掉，否则用户会莫名其妙无法自动休眠
-                        if self.inhibitor is not None:
-                            try:
-                                await self.inhibitor.release("超时兜底")
-                            except Exception as e:  # noqa: BLE001
-                                self._log("超时兜底释放休眠抑制失败：%s" % e)
-                        break
-                    # 2. 链路看护：每 15 秒（3 个 tick）检查一次，
-                    #    比每次 5 秒都查省得多（每次要 fork bluetoothctl）
-                    if wanted and tick % 3 == 0:
-                        await self._keep_link_alive(wanted)
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:  # noqa: BLE001
-                self._log("息屏兜底定时器异常：%s" % e)
-
-        self._dim_task = asyncio.create_task(_guard())
-
-    async def _keep_link_alive(self, wanted):
-        """息屏期间：发现连接掉了就自动重连。
-
-        ⚠️ 只在「确实断了」时才动作，不主动重连正常连接的设备 ——
-        对已连接的设备反复发 connect 会让对端闪断，反而更糟。
-        """
-        for mac in list(wanted):
-            try:
-                info = await self.bz.info(mac)
-            except Exception:  # noqa: BLE001
-                continue
-            if info.get("connected"):
-                continue
-            self._log("息屏期间检测到 %s 断开，尝试重连" % (info.get("name") or mac))
-            try:
-                await self.bz.device_action(mac, "connect")
-                self._log("息屏期间重连 %s 成功" % (info.get("name") or mac))
-            except Exception as e:  # noqa: BLE001
-                self._log("息屏期间重连 %s 失败：%s" % (mac, e))
 
     # ------------------------------------------------------------------
     # 睡眠 / 唤醒处理
@@ -955,15 +833,8 @@ class Plugin:
             # Wi-Fi 频段几乎不变，缓存 60 秒（原本每次 status 都跑一次 `iw dev`）
             "wifi": (await self._cached_async("wifi", 60.0, wifi.detect) if wifi is not None else None),
             # 息屏状态（背光是否已归 0）
-            "screen": ({
-                "available": screen.available(),
-                "dimmed": bool(self.dimmer and self.dimmer.dimmed),
-                "elapsed": round(self.dimmer.elapsed(), 1) if self.dimmer else 0,
-                "max_seconds": screen.MAX_DIM_SECONDS,
-                # 休眠抑制是否真的拿到了 —— 拿不到的话息屏后蓝牙仍会断
-                "inhibit_held": bool(self.inhibitor and self.inhibitor.alive()),
-                "inhibit_available": bool(self.inhibitor and self.inhibitor.available()),
-            } if screen is not None and self.dimmer is not None else None),
+            # 息屏状态（背光 / 抑制锁）—— 逻辑在 dimsession.py
+            "screen": (self.dim.session.status() if self.dim is not None else None),
             "quality": {
                 "preset": self.settings.get("codec_preset", "balanced"),
                 # 预设列表是静态数据，缓存 10 分钟
@@ -1833,7 +1704,9 @@ class Plugin:
 
         # 休眠相关证据：回答「为什么息屏后蓝牙会断」
         out["sleep"] = {
-            "inhibit": (self.inhibitor.status() if self.inhibitor is not None else {}),
+            "inhibit": (self.dim.session._inhibitor.status()
+                         if self.dim is not None and self.dim.session._inhibitor is not None
+                         else {}),
             "logind": (await inhibit.logind_info() if inhibit is not None else {}),
         }
         return out

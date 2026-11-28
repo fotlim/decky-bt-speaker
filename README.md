@@ -260,13 +260,20 @@ decky-bt-speaker/
 ├── src/
 │   ├── index.tsx        # definePlugin
 │   ├── backend.ts       # RPC wrapper
+│   ├── theme.ts         # Design tokens (color / spacing / font / radius)
+│   ├── styles.ts        # Global CSS injection (keyframes / scrollbar)
+│   ├── components.tsx   # Shared controls (Btn / Pill / Toggle / Card ...)
 │   ├── store.ts         # State singleton + adaptive polling
 │   ├── i18n.ts          # English / 简体中文 dictionaries
 │   ├── types.ts         # TS types
-│   ├── components.tsx   # Shared controls
 │   └── views/
 │       ├── Speaker.tsx        # QAM panel
-│       └── BtSpeakerPage.tsx  # Full page (devices / settings / EQ / diagnostics)
+│       ├── BtSpeakerPage.tsx  # Full page shell (layout + tabs)
+│       └── page/              # One file per tab
+│           ├── DevicesTab.tsx
+│           ├── SettingsTab.tsx
+│           ├── EqTab.tsx
+│           └── DiagTab.tsx
 └── docs/
     ├── 功能拓展与竞品调研.md   # Competitive research (Chinese)
     └── 商店提交指南.md         # Store submission guide (Chinese)
@@ -293,7 +300,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.3**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.0.0**.
 
 | Version | Contents |
 |---|---|
@@ -338,6 +345,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v2.9.3**.
 | 2.9.1 | A2DP readiness also checked by the bluez_input node (strong signal), not just the card profile name |
 | 2.9.2 | (merged into 2.9.3) |
 | 2.9.3 | Screen-off now closes QAM first and lifts the overlay to the OverlayQAM layer; A2DP readiness reads node.name from pw-dump (the wpctl status check never worked) |
+| 3.0.0 | **Structure & visual refactor (no feature change)** — design-token layer, per-tab files, `dimsession.py`; removed ~60 lines of dead volume code |
 
 ---
 
@@ -622,15 +630,22 @@ decky-bt-speaker/
 ├── src/
 │   ├── index.tsx        # definePlugin
 │   ├── backend.ts       # RPC 封装
+│   ├── theme.ts         # 设计令牌（颜色 / 间距 / 字号 / 圆角）
+│   ├── styles.ts        # 全局样式注入（动画 / 滚动条）
+│   ├── components.tsx   # 通用控件（Btn / Pill / Toggle / Card …）
 │   ├── store.ts         # 状态单例 + 自适应轮询
 │   ├── i18n.ts          # 中英双语词典
 │   ├── types.ts         # TS 类型
-│   ├── components.tsx   # 通用控件
 │   ├── uiComposition.ts # Steam 内部合成层 hook（遮罩盖住顶栏）
 │   └── views/
 │       ├── Speaker.tsx        # QAM 面板
 │       ├── DimOverlay.tsx     # 息屏遮罩（含手柄捕获）
-│       └── BtSpeakerPage.tsx  # 全屏页（设备/设置/均衡器/诊断）
+│       ├── BtSpeakerPage.tsx  # 全屏页壳层（布局 + Tab 切换）
+│       └── page/              # 每个 Tab 一个文件
+│           ├── DevicesTab.tsx
+│           ├── SettingsTab.tsx
+│           ├── EqTab.tsx
+│           └── DiagTab.tsx
 └── docs/
     ├── 功能拓展与竞品调研.md
     └── 商店提交指南.md
@@ -657,7 +672,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v2.9.3**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.0.0**。
 
 | 版本 | 内容 |
 |---|---|
@@ -702,6 +717,7 @@ python pack.py          # 打包 zip
 | 2.9.1 | A2DP 就绪改用 bluez_input 节点判定（强判据），不再只信卡片 profile 名 |
 | 2.9.2 | （已并入 2.9.3） |
 | 2.9.3 | 息屏时先收起 QAM 并把遮罩提到 OverlayQAM 层；A2DP 判据改从 pw-dump 读 node.name（原来在 wpctl status 里搜，永远搜不到） |
+| 3.0.0 | **结构与视觉重构（不改功能）** —— 设计令牌层、按 Tab 拆分、`dimsession.py`；删掉约 60 行音量死代码 |
 
 ---
 

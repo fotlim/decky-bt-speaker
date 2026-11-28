@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"2.9.3","build":"11-27 22:32"};
+var __BT_META__ = {"version":"3.0.0","build":"11-28 10:59"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -289,17 +289,139 @@ function useSpeaker() {
 /** 供 QAM 面板显式标记可见性（QAM 收起时 document.hidden 不一定变）。 */
 function setPanelVisible(v) { setVisible(v); }
 
-const ROUTE = "/decky/bt-speaker";
+/**
+ * 设计令牌（design tokens）：颜色 + 间距 + 字号 + 圆角。
+ *
+ * 为什么要有这个文件？
+ * ------------------
+ * 重构前，同一个「胶囊按钮」在不同地方出现过 3 种写法：
+ *
+ *     padding: "7px 14px", borderRadius: 18   ← 设备卡片里的信任/修复/移除
+ *     padding: "7px 16px", borderRadius: 18   ← 设备卡片里的连接按钮
+ *     padding: "8px 16px", borderRadius: 18   ← 诊断页的按钮
+ *
+ * 同一种卡片也有 `10px 12px` / `11px 14px` / `12px 14px` 三种。
+ * 字号更散：11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14.5 / 15 / 18。
+ *
+ * 肉眼看得出「不齐」，但改的时候又不敢动 —— 因为不知道哪处是刻意的。
+ * 所以先把这些值收敛成 token，之后所有组件都从这里取，不再写字面量。
+ *
+ * ⚠️ 原则：**token 只描述视觉，不描述语义**。
+ * 不要写 `buttonPrimaryPadding` 这种名字 —— 那样加个新按钮就得加个新 token。
+ * 用 `space.*` / `font.*` / `radius.*` 这类「量」的名字，组合出各种样式。
+ */
+// ---------------------------------------------------------------------------
+// 颜色
+// ---------------------------------------------------------------------------
 const COLORS = {
+    /** 页面底色 */
     bg: "#0f1620",
+    /** 主强调色（可交互元素的默认色） */
     accent: "#4c9aff",
+    /** 危险/警告色 */
     accentWarm: "#ec4141",
+    /** 成功/已连接 */
     ok: "#4cc38a",
+    /** 提示性黄色（无名称设备等） */
+    warn: "#e0a800",
+    /** 主文字 */
     text: "#e8ebee",
+    /** 次要文字 */
     sub: "#9aa6b2",
+    /** 最弱的文字（提示、脚注） */
     dim: "#6b7783",
+    /** 边框 */
     border: "rgba(255,255,255,0.07)",
+    /** 表面层：从最弱到最强 */
+    surface: "rgba(255,255,255,0.045)",
+    surfaceHover: "rgba(255,255,255,0.08)",
+    surfaceActive: "rgba(255,255,255,0.12)",
 };
+/**
+ * 语义色板：给 Pill / 提示框这类需要「同色系背景 + 前景」的地方用。
+ *
+ * 为什么单独列出来？—— 因为 `rgba(76,195,138,0.16)` 这种值散落在各处，
+ * 改一个绿色要搜三个文件。集中到这里，改一处就够。
+ */
+const TONES = {
+    ok: { bg: "rgba(76,195,138,0.16)", fg: COLORS.ok, border: "rgba(76,195,138,0.28)" },
+    warn: { bg: "rgba(236,65,65,0.14)", fg: COLORS.accentWarm, border: "rgba(236,65,65,0.28)" },
+    accent: { bg: "rgba(76,154,255,0.16)", fg: COLORS.accent, border: "rgba(76,154,255,0.28)" },
+    neutral: { bg: COLORS.surface, fg: COLORS.sub, border: COLORS.border },
+};
+// ---------------------------------------------------------------------------
+// 间距（4px 基准栅格）
+// ---------------------------------------------------------------------------
+const SPACE = {
+    xs: 4,
+    sm: 6,
+    md: 8,
+    lg: 12,
+    xl: 16,
+    /** 分节之间的大间距 */
+    section: 18,
+};
+// ---------------------------------------------------------------------------
+// 字号
+// ---------------------------------------------------------------------------
+/**
+ * 收敛后的字号阶梯（原来有 9 种，现在 6 种）。
+ *
+ * - `caption` 11   —— 脚注、Pill、状态小字
+ * - `small`   12   —— 辅助说明
+ * - `body`    13   —— 正文（最常用）
+ * - `bodyLg`  14   —— 卡片标题、按钮
+ * - `title`   18   —— 分节标题
+ * - `page`    26   —— 页面主标题
+ */
+const FONT = {
+    caption: 11,
+    small: 12,
+    body: 13,
+    bodyLg: 14,
+    title: 18,
+    page: 26,
+};
+// ---------------------------------------------------------------------------
+// 圆角
+// ---------------------------------------------------------------------------
+const RADIUS = {
+    /** 小元素：Pill、标签 */
+    sm: 10,
+    /** 中元素：按钮、输入框 */
+    md: 18,
+    /** 大元素：卡片、面板 */
+    lg: 11,
+    /** 正圆 */
+    full: 999,
+};
+// ---------------------------------------------------------------------------
+// 组合样式：把常用搭配固化成对象，避免每处手写
+// ---------------------------------------------------------------------------
+/** 卡片容器：设备行、设置分组用 */
+const CARD_STYLE = {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACE.lg,
+    padding: `${SPACE.lg}px ${SPACE.xl}px`,
+    borderRadius: RADIUS.lg,
+    background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`,
+};
+/** 文字截断（设备名等长文本） */
+const ELLIPSIS = {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+};
+/** 单行说明文字 */
+const HINT_STYLE = {
+    fontSize: FONT.small,
+    lineHeight: 1.65,
+    color: COLORS.dim,
+};
+/** 页面路由路径 */
+const ROUTE = "/decky/bt-speaker";
 
 // ---------------------------------------------------------------------------
 // 工具函数
@@ -335,54 +457,156 @@ function errMsg(e) {
     }
     return String(e);
 }
-function Pill({ children, tone = "dim" }) {
-    const map = {
-        ok: { bg: "rgba(76,195,138,0.16)", fg: COLORS.ok },
-        warn: { bg: "rgba(236,65,65,0.16)", fg: COLORS.accentWarm },
-        accent: { bg: "rgba(76,154,255,0.16)", fg: COLORS.accent },
-        dim: { bg: "rgba(255,255,255,0.07)", fg: COLORS.sub },
+const BTN_VARIANTS = {
+    primary: { bg: COLORS.accent, fg: "#fff" },
+    ghost: { bg: COLORS.surfaceHover, fg: COLORS.text },
+    danger: { bg: TONES.warn.bg, fg: TONES.warn.fg },
+    ok: { bg: TONES.ok.bg, fg: TONES.ok.fg },
+};
+/**
+ * 胶囊按钮 —— 全屏页里**唯一**的按钮形态。
+ *
+ * 重构前这个按钮在 3 个地方有 3 种 padding（7/14、7/16、8/16），
+ * 现在统一到一处。需要不同视觉重量就用 `variant`。
+ */
+function Btn({ onClick, children, variant = "ghost", disabled = false, small = false, title, }) {
+    const v = BTN_VARIANTS[variant];
+    const fire = () => {
+        if (!disabled)
+            onClick();
     };
-    const c = map[tone] || map.dim;
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: fire, onClick: fire, title: title, style: {
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            gap: SPACE.xs,
+            padding: small ? `${SPACE.xs}px ${SPACE.lg}px` : `${SPACE.md}px ${SPACE.xl}px`,
+            borderRadius: RADIUS.md,
+            fontSize: small ? FONT.small : FONT.body,
+            cursor: disabled ? "default" : "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            background: disabled ? COLORS.surface : v.bg,
+            color: disabled ? COLORS.dim : v.fg,
+            opacity: disabled ? 0.6 : 1,
+        }, children: children }));
+}
+// ---------------------------------------------------------------------------
+// 标签 / 徽章
+// ---------------------------------------------------------------------------
+/** 小徽章。`tone` 决定配色，全部来自 TONES。 */
+function Pill({ children, tone = "neutral" }) {
+    const c = TONES[tone] || TONES.neutral;
     return (SP_JSX.jsx("span", { style: {
-            display: "inline-flex", alignItems: "center", gap: 4,
-            padding: "2px 8px", borderRadius: 10, fontSize: 11,
+            display: "inline-flex", alignItems: "center", gap: SPACE.xs,
+            padding: `2px ${SPACE.md}px`, borderRadius: RADIUS.sm, fontSize: FONT.caption,
             background: c.bg, color: c.fg, whiteSpace: "nowrap",
         }, children: children }));
 }
+// ---------------------------------------------------------------------------
+// 布局
+// ---------------------------------------------------------------------------
+/** 分节标题 */
 function SectionTitle({ children, right }) {
-    return (SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", margin: "18px 4px 10px" }, children: [SP_JSX.jsx("div", { style: { fontSize: 18, fontWeight: 600, color: COLORS.text }, children: children }), right] }));
+    return (SP_JSX.jsxs("div", { style: {
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            margin: `${SPACE.section}px ${SPACE.xs}px ${SPACE.md}px`,
+        }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.title, fontWeight: 600, color: COLORS.text }, children: children }), right] }));
 }
-function Loading({ text = "加载中…" }) {
-    return SP_JSX.jsx("div", { style: { padding: 24, color: COLORS.sub, fontSize: 14, textAlign: "center" }, children: text });
-}
-function ErrorText({ text }) {
+/** 分组小标题（比分节标题低一级） */
+function GroupTitle({ children }) {
     return (SP_JSX.jsx("div", { style: {
-            margin: "8px 4px", padding: "10px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.6,
-            color: "#ffb3b3", background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.25)",
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
-        }, children: text }));
+            fontSize: FONT.small, fontWeight: 600, color: COLORS.sub,
+            letterSpacing: 0.4, textTransform: "uppercase",
+            margin: `${SPACE.lg}px ${SPACE.xs}px ${SPACE.sm}px`,
+        }, children: children }));
 }
-function Hint({ children }) {
-    return (SP_JSX.jsx("div", { style: { margin: "6px 4px", fontSize: 12, lineHeight: 1.65, color: COLORS.dim }, children: children }));
-}
+/** 卡片容器（纯容器，不带交互） */
 function Card({ children, onClick, active = false }) {
     const inner = (SP_JSX.jsx("div", { style: {
-            display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
-            borderRadius: 10, background: active ? "rgba(76,154,255,0.12)" : "rgba(255,255,255,0.045)",
-            border: `1px solid ${active ? "rgba(76,154,255,0.35)" : COLORS.border}`,
+            ...CARD_STYLE,
+            background: active ? TONES.accent.bg : COLORS.surface,
+            border: `1px solid ${active ? TONES.accent.border : COLORS.border}`,
         }, children: children }));
     if (!onClick)
         return inner;
-    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, onClick: onClick, style: { cursor: "pointer", marginBottom: 8 }, children: inner }));
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, onClick: onClick, style: { cursor: "pointer", marginBottom: SPACE.md }, children: inner }));
 }
+/** 纵向排列的 Focusable 容器 */
+function Stack({ children, gap = SPACE.md }) {
+    return (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { display: "flex", flexDirection: "column", gap }, children: children }));
+}
+// ---------------------------------------------------------------------------
+// 文字
+// ---------------------------------------------------------------------------
+/**
+ * 加载占位。
+ *
+ * ⚠️ 默认文案故意留空 —— 组件本身不该写死任何语言。
+ * 调用方传 `text={t("common.reading")}` 这样才是对的。
+ * 早期这里默认 `"加载中…"`，英文界面下就会漏出中文。
+ */
+function Loading({ text = "" }) {
+    return (SP_JSX.jsx("div", { style: { padding: 24, color: COLORS.sub, fontSize: FONT.bodyLg, textAlign: "center" }, children: text || "…" }));
+}
+function ErrorText({ text }) {
+    return (SP_JSX.jsx("div", { style: {
+            margin: `${SPACE.md}px ${SPACE.xs}px`, padding: `${SPACE.lg}px ${SPACE.xl}px`,
+            borderRadius: RADIUS.sm, fontSize: FONT.small, lineHeight: 1.6,
+            color: "#ffb3b3", background: TONES.warn.bg, border: `1px solid ${TONES.warn.border}`,
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+        }, children: text }));
+}
+/** 说明文字 */
+function Hint({ children }) {
+    return SP_JSX.jsx("div", { style: { margin: `${SPACE.sm}px ${SPACE.xs}px`, ...HINT_STYLE }, children: children });
+}
+/** 单行截断的文字 */
+function EllipsisText({ children, size = FONT.body, color = COLORS.text, bold = false }) {
+    return (SP_JSX.jsx("div", { style: {
+            fontSize: size, color, fontWeight: bold ? 600 : 400, ...ELLIPSIS,
+        }, children: children }));
+}
+// ---------------------------------------------------------------------------
+// 开关
+// ---------------------------------------------------------------------------
+/**
+ * 开关（Toggle）。手写而不是用 `ToggleField`，因为全屏页需要
+ * 「一行内放标签 + 开关」的紧凑布局，原生控件会撑满整行。
+ */
+function Toggle({ checked, onChange, disabled = false }) {
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { if (!disabled)
+            onChange(!checked); }, onClick: () => { if (!disabled)
+            onChange(!checked); }, style: {
+            width: 42, height: 24, borderRadius: RADIUS.full, flexShrink: 0,
+            position: "relative", cursor: disabled ? "default" : "pointer",
+            background: checked ? COLORS.accent : COLORS.surfaceActive,
+            opacity: disabled ? 0.5 : 1,
+            transition: "background 0.15s",
+        }, children: SP_JSX.jsx("div", { style: {
+                position: "absolute", top: 3, left: checked ? 21 : 3,
+                width: 18, height: 18, borderRadius: RADIUS.full,
+                background: "#fff", transition: "left 0.15s",
+            } }) }));
+}
+/** 带标签和说明的一整行开关 */
+function ToggleRow({ label, desc, checked, onChange, disabled = false }) {
+    return (SP_JSX.jsxs("div", { style: {
+            display: "flex", alignItems: "center", gap: SPACE.lg,
+            padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+            borderRadius: RADIUS.lg, background: COLORS.surface,
+            border: `1px solid ${COLORS.border}`,
+        }, children: [SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: label }), desc && (SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3, lineHeight: 1.5 }, children: desc }))] }), SP_JSX.jsx(Toggle, { checked: checked, onChange: onChange, disabled: disabled })] }));
+}
+// ---------------------------------------------------------------------------
+// 设备头像
+// ---------------------------------------------------------------------------
 function Avatar({ icon, connected }) {
     const isPhone = (icon || "").includes("phone");
     const glyph = isPhone ? "📱" : (icon || "").includes("computer") ? "💻" : "🔊";
     return (SP_JSX.jsx("div", { style: {
-            width: 40, height: 40, borderRadius: 20, flexShrink: 0,
+            width: 40, height: 40, borderRadius: RADIUS.full, flexShrink: 0,
             display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
-            background: connected ? "rgba(76,195,138,0.16)" : "rgba(255,255,255,0.06)",
-            border: `1px solid ${connected ? "rgba(76,195,138,0.4)" : COLORS.border}`,
+            background: connected ? TONES.ok.bg : COLORS.surface,
+            border: `1px solid ${connected ? TONES.ok.border : COLORS.border}`,
         }, children: glyph }));
 }
 
@@ -1005,23 +1229,15 @@ function versionLabel() {
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }) {
     return (SP_JSX.jsx(DFL.Focusable, { onClick: onClick, onActivate: onClick, style: {
-            flex: 1, minWidth: 0, padding: "9px 0", borderRadius: 9, cursor: "pointer",
+            flex: 1, minWidth: 0, padding: "9px 0", borderRadius: RADIUS.sm, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             background: "rgba(255,255,255,0.07)", border: `1px solid ${COLORS.border}`,
-            fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap",
+            fontSize: 12, color: COLORS.text, whiteSpace: "nowrap",
         }, children: label }));
 }
 function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
-    // 本地音量值：用户拖动后一直保留，直到「后端确认读到我们设的值」才交还
-    const [vol, setVol] = SP_REACT.useState(null);
-    const [dragging] = SP_REACT.useState(false);
-    SP_REACT.useRef(null);
-    const settleTimer = SP_REACT.useRef(null);
-    // 外部音源音量：同样的确认式交还
-    const [srcVol, setSrcVol] = SP_REACT.useState(null);
-    const srcTimer = SP_REACT.useRef(null);
     // QAM 面板挂载即视为可见；卸载时通知 store 降频
     SP_REACT.useEffect(() => {
         setPanelVisible(true);
@@ -1094,57 +1310,6 @@ function Speaker() {
         }
         catch { /* ignore */ }
     };
-    const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
-    // ⚠️ 同步策略（真机反馈「音量调节没同步」的修复核心）
-    // 之前是「松手后固定 3 秒交还」，但空闲时轮询间隔是 10 秒，
-    // 3 秒时后端读到的还是旧值 -> 滑杆立刻跳回去。
-    //
-    // 现在改为「**确认式交还**」：只有当后端读到的值和我们设的值足够接近
-    // （±2% 容差）时才交还控制权；否则继续用本地值，并给一个 15 秒上限兜底
-    // （防止后端写入失败时滑杆永远卡在本地值）。
-    SP_REACT.useEffect(() => {
-        if (vol === null || dragging)
-            return;
-        const diff = Math.abs(backendVol - vol);
-        if (diff <= 2) {
-            // 后端已确认 -> 交还控制权
-            setVol(null);
-            if (settleTimer.current) {
-                clearTimeout(settleTimer.current);
-                settleTimer.current = null;
-            }
-        }
-    }, [backendVol, vol, dragging]);
-    // 兜底：15 秒还没确认就强制交还，避免永远卡住
-    SP_REACT.useEffect(() => {
-        if (vol === null || dragging)
-            return;
-        if (settleTimer.current)
-            clearTimeout(settleTimer.current);
-        settleTimer.current = setTimeout(() => {
-            setVol(null);
-            settleTimer.current = null;
-        }, 15000);
-        return () => {
-            if (settleTimer.current) {
-                clearTimeout(settleTimer.current);
-                settleTimer.current = null;
-            }
-        };
-    }, [vol, dragging]);
-    // 外部源音量：后端读到的值和我们设的接近时才交还
-    SP_REACT.useEffect(() => {
-        if (srcVol === null)
-            return;
-        const backendSrc = Math.round((state?.live?.volume || 0) * 100);
-        if (Math.abs(backendSrc - srcVol) <= 2) {
-            setSrcVol(null);
-            if (srcTimer.current) {
-                clearTimeout(srcTimer.current);
-                srcTimer.current = null;
-            }
-        }
-    }, [state?.live?.volume, srcVol]);
     const ad = state?.adapter;
     const connected = state?.connected || [];
     const act = async (fn, okMsg) => {
@@ -1176,7 +1341,7 @@ function Speaker() {
                             background: ad?.discoverable ? "rgba(76,154,255,0.18)" : "rgba(255,255,255,0.06)",
                             color: ad?.discoverable ? COLORS.accent : COLORS.dim, flexShrink: 0,
                         }, children: SP_JSX.jsx(FaBluetooth, { size: 17 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: ad ? ad.alias : t("plugin.name") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.btOn") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("qam.btOff") }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: t("qam.discoverable") }) : SP_JSX.jsx(Pill, { children: t("qam.notVisible") }), connected.length > 0 && SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.connectedCount", { n: connected.length }) })] })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ToggleField, { label: t("qam.allowDiscover"), description: ad?.discoverable ? t("qam.allowDiscoverDescOn") : t("qam.allowDiscoverDescOff"), checked: !!ad?.discoverable, disabled: busy || !ad?.powered, onChange: toggleDiscoverable }) }), ad && !ad.powered && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [state?.rfkill?.found && (state.rfkill.soft || state.rfkill.hard) && (SP_JSX.jsx("div", { style: {
-                            margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+                            margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 12, lineHeight: 1.6,
                             background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
                             color: "#ffb3b3",
                         }, children: state.rfkill.hard
@@ -1184,8 +1349,8 @@ function Speaker() {
                             : t("qam.rfkillSoft") })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), t("qam.btOn")), children: t("qam.turnOnBt") }) }), state?.rfkill?.soft && !state.rfkill.hard && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.unblockRfkill(), t("qam.unblockRfkill")), children: t("qam.unblockRfkill") }) }))] })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
                         borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
-                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), connected.length > 0 && state?.a2dp && !state.a2dp.ready && (SP_JSX.jsxs("div", { style: {
-                    margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 11.5,
+                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 12, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), connected.length > 0 && state?.a2dp && !state.a2dp.ready && (SP_JSX.jsxs("div", { style: {
+                    margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 12,
                     lineHeight: 1.6, background: "rgba(76,154,255,0.10)",
                     border: "1px solid rgba(76,154,255,0.28)", color: "#a8c8ff",
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 7 }, children: [SP_JSX.jsx("span", { style: {
@@ -1216,39 +1381,38 @@ function Speaker() {
                         }), style: {
                             marginTop: 7, padding: "7px 11px", borderRadius: 7, cursor: "pointer",
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            background: "rgba(76,154,255,0.18)", fontSize: 11.5, color: "#fff",
+                            background: "rgba(76,154,255,0.18)", fontSize: 12, color: "#fff",
                         }, children: t("qam.a2dpForce") })] })), state?.live && (SP_JSX.jsxs("div", { style: {
                     margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
                     background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
                                     width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
                                     opacity: state.track?.status === "playing" ? 1 : 0.4,
-                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
+                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
-                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
-                            marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
+                            marginTop: 8, padding: "10px 12px", borderRadius: RADIUS.sm, cursor: "pointer",
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                             background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                            fontSize: 12.5, color: COLORS.text,
+                            fontSize: 12, color: COLORS.text,
                         }, children: [SP_JSX.jsx(FaMoon, { size: 11 }), " ", t("qam.dimScreen")] }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, margin: "5px 4px 0", lineHeight: 1.5 }, children: state.screen.inhibit_held
                             ? t("qam.dimKeepAwake")
                             : (state.screen.inhibit_available === false
                                 ? t("qam.inhibitFailedBody")
                                 : t("qam.dimScreenHint")) })] })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => DFL.Navigation.Navigate(ROUTE), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [SP_JSX.jsx(FaCog, { size: 12 }), " ", t("qam.manage")] }) }) }), versionLabel() && (SP_JSX.jsx("div", { style: {
-                    fontSize: 10, color: COLORS.dim, textAlign: "center",
+                    fontSize: 11, color: COLORS.dim, textAlign: "center",
                     marginTop: 6, letterSpacing: 0.3, userSelect: "text",
                 }, children: versionLabel() }))] }));
 }
 
-function BtSpeakerPage() {
-    const { state, error, refresh } = useSpeaker();
-    const [tab, setTab] = SP_REACT.useState("devices");
+function DevicesTab({ paired, connectedMacs, discoverable, alias, onRefresh, }) {
+    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
     const [busyMac, setBusyMac] = SP_REACT.useState(null);
-    const ad = state?.adapter;
-    const paired = state?.paired || [];
-    const connectedMacs = new Set((state?.connected || []).map((d) => d.mac));
-    const act = async (mac, action, label) => {
+    const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
+    const hiddenPaired = paired.length - shownPaired.length;
+    /** 统一的设备操作入口（连接/断开/信任/修复/移除都走这里）。 */
+    const act = async (mac, action, okMsg) => {
         if (busyMac)
             return;
         setBusyMac(mac);
@@ -1259,8 +1423,8 @@ function BtSpeakerPage() {
             else {
                 await api.deviceAction(mac, action);
             }
-            toaster.toast({ title: label, body: "" });
-            setTimeout(refresh, 800);
+            toaster.toast({ title: okMsg, body: "" });
+            setTimeout(onRefresh, 800);
         }
         catch (e) {
             toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
@@ -1269,90 +1433,35 @@ function BtSpeakerPage() {
             setBusyMac(null);
         }
     };
-    return (
-    // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
-    // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
-    // 全屏路由页如果直接用 inset:0 会被两头遮住。
-    // 用 padding 而非 margin，保证背景色仍然铺满整屏。
-    SP_JSX.jsx("div", { style: {
-            position: "absolute", inset: 0, background: COLORS.bg,
-            paddingTop: "calc(env(safe-area-inset-top, 0px) + 58px)",
-            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 62px)",
-            paddingLeft: "calc(env(safe-area-inset-left, 0px) + 34px)",
-            paddingRight: "calc(env(safe-area-inset-right, 0px) + 34px)",
-            display: "flex", flexDirection: "column",
-            boxSizing: "border-box",
-        }, children: SP_JSX.jsxs("div", { style: {
-                flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
-                display: "flex", flexDirection: "column",
-                // 给滚动到底时留一点余量，最后一项不至于贴边
-                paddingBottom: 16,
-            }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }, children: [SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: { fontSize: 26, fontWeight: 700, color: COLORS.text }, children: t("page.title") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, marginTop: 3 }, children: ad ? `${ad.alias} · ${ad.address || t("common.unknown")}` : t("page.readingAdapter") })] }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 8 }, children: [ad?.powered ? SP_JSX.jsx(Pill, { tone: "ok", children: t("qam.btOn") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("qam.btOff") }), ad?.discoverable ? SP_JSX.jsx(Pill, { tone: "accent", children: t("qam.discoverable") }) : SP_JSX.jsx(Pill, { children: t("qam.notVisible") }), ad?.a2dp_sink ? SP_JSX.jsx(Pill, { tone: "ok", children: t("page.a2dpSink") }) : SP_JSX.jsx(Pill, { tone: "warn", children: t("page.noSink") })] })] }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, margin: "14px 0 4px" }, children: [
-                        ["devices", t("tab.devices")],
-                        ["settings", t("tab.settings")],
-                        ["eq", t("tab.eq")],
-                        ["diag", t("tab.diag")],
-                    ].map(([k, label]) => (SP_JSX.jsx(DFL.Focusable, { onActivate: () => setTab(k), onClick: () => setTab(k), style: {
-                            padding: "7px 16px", borderRadius: 18, cursor: "pointer", fontSize: 13.5,
-                            background: tab === k ? COLORS.accent : "rgba(255,255,255,0.06)",
-                            color: tab === k ? "#fff" : COLORS.sub,
-                        }, children: label }, k))) }), !state ? SP_JSX.jsx(Loading, {}) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: paired, connectedMacs: connectedMacs, busyMac: busyMac, onAction: act, discoverable: !!ad?.discoverable, alias: ad?.alias || "" })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "eq" && SP_JSX.jsx(EqTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }) }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: onRefresh, showUnnamed: showUnnamed, busyMac: busyMac, setBusyMac: setBusyMac }), SP_JSX.jsx("div", { style: { marginTop: SPACE.lg }, children: SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }) }), !paired.length ? (SP_JSX.jsx(Hint, { children: t("dev.noDevices") })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: shownPaired.length }) }), !showUnnamed && hiddenPaired > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenPaired", { n: hiddenPaired }) })), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: shownPaired.map((d) => (SP_JSX.jsx(PairedRow, { device: d, connected: connectedMacs.has(d.mac), busy: busyMac === d.mac, onAct: act }, d.mac))) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }))] }));
 }
 // ---------------------------------------------------------------------------
-function DevicesTab({ paired, connectedMacs, busyMac, onAction, discoverable, alias, }) {
-    // 「显示没有名称的设备」开关放在外层，同时作用于「已配对列表」和「扫描结果」。
-    // 早期只作用于扫描结果，用户看到的「未知设备」其实来自已配对列表 —— 所以开关
-    // 看起来没生效。现在两边共用同一个状态。
-    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
-    const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
-    const hiddenPaired = paired.length - shownPaired.length;
-    const unnamedToggle = (SP_JSX.jsx("div", { style: { marginTop: 10, marginBottom: 4 }, children: SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }) }));
-    if (!paired.length) {
-        return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", ""), showUnnamed: showUnnamed }), unnamedToggle, SP_JSX.jsx(Hint, { children: t("dev.noDevices") })] }));
-    }
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: () => onAction("", "connect", ""), showUnnamed: showUnnamed }), unnamedToggle, SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: shownPaired.length }) }), !showUnnamed && hiddenPaired > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenPaired", { n: hiddenPaired }) })), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: shownPaired.map((d) => {
-                    const connected = connectedMacs.has(d.mac);
-                    const busy = busyMac === d.mac;
-                    return (SP_JSX.jsxs("div", { style: {
-                            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
-                            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
-                        }, children: [SP_JSX.jsx(Avatar, { connected: connected, icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: devLabel(d) }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.trusted === false && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.untrusted") }), d.blocked && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.blocked") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) })), onActivate: () => onAction(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: devLabel(d) })), style: {
-                                    padding: "7px 16px", borderRadius: 18, fontSize: 13, cursor: busy ? "default" : "pointer",
-                                    background: connected ? "rgba(255,255,255,0.08)" : COLORS.accent,
-                                    color: connected ? COLORS.sub : "#fff", opacity: busy ? 0.5 : 1,
-                                }, children: busy ? "…" : connected ? t("qam.disconnect") : t("dev.connect") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, d.trusted === false ? "trust" : "untrust", d.trusted === false ? t("dev.trustedOn") : t("dev.trustedOff")), onActivate: () => onAction(d.mac, d.trusted === false ? "trust" : "untrust", d.trusted === false ? t("dev.trustedOn") : t("dev.trustedOff")), style: {
-                                    padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
-                                    background: d.trusted === false ? "rgba(255,255,255,0.08)" : "rgba(76,195,138,0.16)",
-                                    color: d.trusted === false ? COLORS.sub : COLORS.ok,
-                                }, children: d.trusted === false ? t("dev.trust") : t("dev.untrust") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "repair", t("dev.repairing")), onActivate: () => onAction(d.mac, "repair", t("dev.repairing")), style: {
-                                    padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
-                                    background: "rgba(76,154,255,0.16)", color: COLORS.accent,
-                                }, children: t("dev.repair") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => onAction(d.mac, "remove", t("dev.removed")), onActivate: () => onAction(d.mac, "remove", t("dev.removed")), style: {
-                                    padding: "7px 14px", borderRadius: 18, fontSize: 13, cursor: "pointer",
-                                    background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm,
-                                }, children: t("common.remove") })] }, d.mac));
-                }) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }));
-}
-/** 设备显示名：无名设备用本地化的「未知设备 · XX:XX」而不是后端的裸 MAC 后缀。 */
-function devLabel(d) {
-    const disp = d.display || d.name || d.mac;
-    if (d.has_real_name === false) {
-        const tail = String(d.mac || "").slice(-5);
-        return t("dev.unknownLabel", { mac: tail });
-    }
-    return disp;
+// 已配对设备的一行
+// ---------------------------------------------------------------------------
+function PairedRow({ device, connected, busy, onAct, }) {
+    const d = device;
+    const label = devLabel(d);
+    return (SP_JSX.jsxs("div", { style: {
+            display: "flex", alignItems: "center", gap: SPACE.lg,
+            padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+            borderRadius: RADIUS.lg, background: COLORS.surface,
+            border: `1px solid ${connected ? TONES.ok.border : COLORS.border}`,
+        }, children: [SP_JSX.jsx(Avatar, { connected: connected, icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx(EllipsisText, { size: FONT.bodyLg, children: label }), SP_JSX.jsxs("div", { style: {
+                            display: "flex", alignItems: "center", gap: SPACE.sm,
+                            fontSize: FONT.small, color: COLORS.dim, marginTop: 2, flexWrap: "wrap",
+                        }, children: [SP_JSX.jsx("span", { children: d.mac }), connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.trusted === false && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.untrusted") }), d.blocked && SP_JSX.jsx(Pill, { tone: "warn", children: t("dev.blocked") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: COLORS.warn }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(Btn, { variant: connected ? "ghost" : "primary", disabled: busy, onClick: () => onAct(d.mac, connected ? "disconnect" : "connect", connected ? t("dev.disconnected") : t("dev.connectedToast", { name: label })), children: busy ? "…" : connected ? t("qam.disconnect") : t("dev.connect") }), SP_JSX.jsx(Btn, { small: true, variant: d.trusted === false ? "ghost" : "ok", disabled: busy, title: t("dev.trust"), onClick: () => onAct(d.mac, d.trusted === false ? "trust" : "untrust", d.trusted === false ? t("dev.trustedOn") : t("dev.trustedOff")), children: d.trusted === false ? t("dev.trust") : t("dev.untrust") }), SP_JSX.jsx(Btn, { small: true, variant: "ghost", disabled: busy, onClick: () => onAct(d.mac, "repair", t("dev.repairing")), children: t("dev.repair") }), SP_JSX.jsx(Btn, { small: true, variant: "danger", disabled: busy, onClick: () => onAct(d.mac, "remove", t("dev.removed")), children: t("common.remove") })] }));
 }
 // ---------------------------------------------------------------------------
-// 扫描面板：流式扫描 + 可中途停止 + 信号强度 + 无名称设备开关
+// 扫描面板：流式出结果（边扫边显示）
 // ---------------------------------------------------------------------------
-function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
+function ScanPanel({ alias, discoverable, onPaired, showUnnamed, busyMac, setBusyMac, }) {
     const [scanning, setScanning] = SP_REACT.useState(false);
     const [devices, setDevices] = SP_REACT.useState([]);
     const [scanned, setScanned] = SP_REACT.useState(false);
-    const [busyMac, setBusyMac] = SP_REACT.useState(null);
     const [elapsed, setElapsed] = SP_REACT.useState(0);
     const pollRef = SP_REACT.useRef(null);
     const tickRef = SP_REACT.useRef(null);
+    const autoRef = SP_REACT.useRef(null);
     // 扫描时每 2 秒拉一次结果，边扫边出
     const startScan = async () => {
         if (scanning)
@@ -1363,24 +1472,20 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
         setElapsed(0);
         try {
             await api.scanStart(20);
-            // 计时器
             const started = Date.now();
             tickRef.current = setInterval(() => {
                 setElapsed(Math.floor((Date.now() - started) / 1000));
             }, 500);
-            // 轮询器
             pollRef.current = setInterval(async () => {
                 try {
                     const r = await api.scanList();
                     setDevices(r.devices || []);
                 }
-                catch { /* ignore */ }
+                catch { /* 轮询失败不打断扫描 */ }
             }, 2000);
-            // 首次立刻拉一次
             const r0 = await api.scanList();
             setDevices(r0.devices || []);
-            // 20 秒后自动结束
-            setTimeout(() => finishScan(), 20500);
+            autoRef.current = setTimeout(() => finishScan(), 20500);
         }
         catch (e) {
             toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
@@ -1396,6 +1501,10 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
             clearInterval(tickRef.current);
             tickRef.current = null;
         }
+        if (autoRef.current) {
+            clearTimeout(autoRef.current);
+            autoRef.current = null;
+        }
         try {
             await api.scanStop();
         }
@@ -1408,20 +1517,21 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
         setScanning(false);
         setScanned(true);
     };
-    // 卸载时清理定时器
+    // 卸载时清理所有定时器（含之前漏掉的 autoRef）
     SP_REACT.useEffect(() => () => {
         if (pollRef.current)
             clearInterval(pollRef.current);
         if (tickRef.current)
             clearInterval(tickRef.current);
+        if (autoRef.current)
+            clearTimeout(autoRef.current);
     }, []);
-    const pair = async (mac, name, paired) => {
+    const pair = async (mac, name, alreadyPaired) => {
         if (busyMac)
             return;
         setBusyMac(mac);
         try {
-            if (paired) {
-                // 已配对过的设备：直接连接，不用重新配对
+            if (alreadyPaired) {
                 await api.deviceAction(mac, "connect");
                 toaster.toast({ title: t("dev.connectedToast", { name }), body: "" });
             }
@@ -1434,7 +1544,7 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
         }
         catch (e) {
             toaster.toast({
-                title: paired ? t("dev.connectFailed") : t("dev.pairFailed"),
+                title: alreadyPaired ? t("dev.connectFailed") : t("dev.pairFailed"),
                 body: errMsg(e),
             });
         }
@@ -1444,43 +1554,41 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed }) {
     };
     const shown = showUnnamed ? devices : devices.filter((d) => d.has_real_name !== false);
     const hiddenCount = devices.length - shown.length;
-    return (SP_JSX.jsxs("div", { style: { marginBottom: 8 }, children: [SP_JSX.jsx(SectionTitle, { children: t("dev.search") }), SP_JSX.jsx(Hint, { children: discoverable ? t("dev.searchHint") : t("dev.searchHintWarn") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, alignItems: "center" }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: scanning ? finishScan : startScan, onActivate: scanning ? finishScan : startScan, style: {
-                            display: "inline-flex", alignItems: "center", gap: 8,
-                            padding: "9px 18px", borderRadius: 18, cursor: "pointer",
-                            background: scanning ? "rgba(236,65,65,0.16)" : COLORS.accent,
-                            color: scanning ? COLORS.accentWarm : "#fff", fontSize: 13.5,
-                        }, children: scanning
-                            ? `${t("dev.stopScan")} · ${elapsed}s`
-                            : t("dev.search") }), scanning && (SP_JSX.jsx("span", { style: { fontSize: 12, color: COLORS.dim }, children: t("dev.foundCount", { n: devices.length }) }))] }), !showUnnamed && hiddenCount > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenCount", { n: hiddenCount }) })), shown.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 12 }, children: shown.map((d) => {
+    return (SP_JSX.jsxs("div", { style: { marginBottom: SPACE.md }, children: [SP_JSX.jsx(SectionTitle, { children: t("dev.search") }), SP_JSX.jsx(Hint, { children: discoverable ? t("dev.searchHint") : t("dev.searchHintWarn") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: {
+                    display: "flex", gap: SPACE.md, marginTop: SPACE.md, alignItems: "center",
+                }, children: [SP_JSX.jsx(Btn, { variant: scanning ? "danger" : "primary", onClick: scanning ? finishScan : startScan, children: scanning ? `${t("dev.stopScan")} · ${elapsed}s` : t("dev.search") }), scanning && (SP_JSX.jsx("span", { style: { fontSize: FONT.small, color: COLORS.dim }, children: t("dev.foundCount", { n: devices.length }) }))] }), !showUnnamed && hiddenCount > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenCount", { n: hiddenCount }) })), shown.length > 0 && (SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: SPACE.lg }, children: shown.map((d) => {
                     const busy = busyMac === d.mac;
-                    const isPhone = (d.icon || "").includes("phone");
-                    const isComputer = (d.icon || "").includes("computer");
-                    // 信号强度条（RSSI 通常 -100..-30，越高越好）
-                    const rssi = typeof d.rssi === "number" ? d.rssi : null;
-                    const bars = rssi === null ? 0 : Math.max(1, Math.min(4, Math.round((rssi + 100) / 17.5)));
+                    const already = !!d.paired;
                     return (SP_JSX.jsxs("div", { style: {
-                            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
-                            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
-                        }, children: [SP_JSX.jsx("div", { style: {
-                                    width: 40, height: 40, borderRadius: 20, flexShrink: 0,
-                                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
-                                    background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-                                }, children: isPhone ? "📱" : isComputer ? "💻" : "🔊" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 15, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: devLabel(d) }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.dim, marginTop: 2, flexWrap: "wrap" }, children: [SP_JSX.jsx("span", { children: d.mac }), rssi !== null && (SP_JSX.jsxs("span", { style: { display: "inline-flex", alignItems: "flex-end", gap: 1 }, children: [[1, 2, 3, 4].map((b) => (SP_JSX.jsx("span", { style: {
-                                                            width: 3, height: 3 + b * 2, borderRadius: 1,
-                                                            background: b <= bars ? COLORS.ok : "rgba(255,255,255,0.15)",
-                                                        } }, b))), SP_JSX.jsxs("span", { style: { marginLeft: 3 }, children: [rssi, " dBm"] })] })), d.paired && SP_JSX.jsx(Pill, { tone: "accent", children: t("dev.pairedTag") }), d.connected && SP_JSX.jsx(Pill, { tone: "ok", children: t("dev.connected") }), d.has_real_name === false && (SP_JSX.jsxs("span", { style: { color: "#e0a800" }, children: ["\u00B7 ", t("dev.noName")] }))] })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => pair(d.mac, devLabel(d), !!d.paired), onActivate: () => pair(d.mac, devLabel(d), !!d.paired), style: {
-                                    padding: "7px 18px", borderRadius: 18, fontSize: 13, flexShrink: 0,
-                                    cursor: busy ? "default" : "pointer",
-                                    background: busy ? "rgba(255,255,255,0.08)" : COLORS.accent,
-                                    color: busy ? COLORS.sub : "#fff",
-                                }, children: busy
-                                    ? (d.paired ? t("dev.connecting") : t("dev.pairing"))
-                                    : (d.paired ? t("dev.connect") : t("dev.pair")) })] }, d.mac));
-                }) })), scanned && shown.length === 0 && (SP_JSX.jsx(Hint, { children: devices.length > 0 && !showUnnamed
-                    ? t("dev.allHidden", { n: devices.length })
-                    : t("dev.noneFound") }))] }));
+                            display: "flex", alignItems: "center", gap: SPACE.lg,
+                            padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                            borderRadius: RADIUS.lg, background: COLORS.surface,
+                            border: `1px solid ${COLORS.border}`,
+                        }, children: [SP_JSX.jsx(Avatar, { icon: d.icon }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx(EllipsisText, { size: FONT.bodyLg, children: devLabel(d) }), SP_JSX.jsxs("div", { style: {
+                                            display: "flex", alignItems: "center", gap: SPACE.sm,
+                                            fontSize: FONT.small, color: COLORS.dim, marginTop: 2,
+                                        }, children: [SP_JSX.jsx("span", { children: d.mac }), typeof d.rssi === "number" && SP_JSX.jsx(RssiBars, { rssi: d.rssi })] })] }), SP_JSX.jsx(Btn, { variant: already ? "ghost" : "primary", disabled: busy, onClick: () => pair(d.mac, devLabel(d), already), children: busy ? t("dev.pairing") : already ? t("dev.connect") : t("dev.pair") })] }, d.mac));
+                }) })), scanned && shown.length === 0 && (SP_JSX.jsx(Hint, { children: devices.length > 0 ? t("dev.allHidden", { n: devices.length }) : t("dev.noneFound") }))] }));
 }
-// ---------------------------------------------------------------------------
+/** 信号强度：4 格，越强越亮。 */
+function RssiBars({ rssi }) {
+    // -40 极强，-90 极弱
+    const level = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -78 ? 2 : 1;
+    return (SP_JSX.jsx("span", { style: { display: "inline-flex", alignItems: "flex-end", gap: 1.5 }, title: `${rssi} dBm`, children: [1, 2, 3, 4].map((n) => (SP_JSX.jsx("span", { style: {
+                width: 2.5, height: 3 + n * 2.5, borderRadius: 1,
+                background: n <= level ? COLORS.ok : COLORS.surfaceActive,
+            } }, n))) }));
+}
+/** 设备显示名：无名设备用本地化的「未知设备 · XX:XX」而不是后端的裸 MAC 后缀。 */
+function devLabel(d) {
+    const disp = d.display || d.name || d.mac;
+    if (d.has_real_name === false) {
+        const tail = String(d.mac || "").slice(-5);
+        return t("dev.unknownLabel", { mac: tail });
+    }
+    return disp;
+}
+
 function SettingsTab({ state, refresh }) {
     const [alias, setAlias] = SP_REACT.useState(state.adapter?.alias || "");
     const [busy, setBusy] = SP_REACT.useState(false);
@@ -1748,20 +1856,7 @@ function SettingsTab({ state, refresh }) {
                     ? t("set.resumeDescOn", { backend: state.power.backend })
                     : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
 }
-function ToggleRow({ label, desc, checked, onChange }) {
-    return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => onChange(!checked), onActivate: () => onChange(!checked), style: {
-            display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
-            borderRadius: 11, background: "rgba(255,255,255,0.045)", border: `1px solid ${COLORS.border}`,
-            cursor: "pointer",
-        }, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14.5, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 3, lineHeight: 1.5 }, children: desc })] }), SP_JSX.jsx("div", { style: {
-                    width: 42, height: 24, borderRadius: 12, flexShrink: 0, position: "relative",
-                    background: checked ? COLORS.accent : "rgba(255,255,255,0.14)", transition: "background .15s",
-                }, children: SP_JSX.jsx("div", { style: {
-                        position: "absolute", top: 3, left: checked ? 21 : 3, width: 18, height: 18, borderRadius: 9,
-                        background: "#fff", transition: "left .15s",
-                    } }) })] }));
-}
-// ---------------------------------------------------------------------------
+
 function EqTab({ state, refresh }) {
     const [busy, setBusy] = SP_REACT.useState(null);
     const [importText, setImportText] = SP_REACT.useState("");
@@ -1846,7 +1941,7 @@ function EqTab({ state, refresh }) {
                             opacity: busy === "import" ? 0.5 : 1,
                         }, children: busy === "import" ? t("eq.importing") : t("eq.applyImport") })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
 }
-// ---------------------------------------------------------------------------
+
 function DiagTab() {
     const [data, setData] = SP_REACT.useState(null);
     const [log, setLog] = SP_REACT.useState(null);
@@ -1872,39 +1967,105 @@ function DiagTab() {
             toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
     };
+    const genReport = async () => {
+        try {
+            const r = await api.report();
+            setReport(r.text);
+            toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
+    const copyReport = async () => {
+        try {
+            const text = report || (await api.report()).text;
+            await navigator.clipboard.writeText(text);
+            toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
     SP_REACT.useEffect(() => { load(); }, []);
     const box = {
-        marginTop: 10, padding: 12, borderRadius: 9, background: "rgba(0,0,0,0.35)",
-        fontSize: 11.5, color: COLORS.sub, fontFamily: "monospace", whiteSpace: "pre-wrap",
-        maxHeight: 340, overflowY: "auto", lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
+        marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
+        background: "rgba(0,0,0,0.35)",
+        fontSize: FONT.caption, color: COLORS.sub, fontFamily: "monospace",
+        whiteSpace: "pre-wrap", maxHeight: 340, overflowY: "auto",
+        lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16 }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: load, onActivate: load, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: loading ? t("common.reading") : t("common.retry") }), SP_JSX.jsx(DFL.Focusable, { onClick: loadLog, onActivate: loadLog, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: t("diag.viewLog") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
-                            try {
-                                const r = await api.report();
-                                setReport(r.text);
-                                try {
-                                    await navigator.clipboard.writeText(r.text);
-                                    toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
-                                }
-                                catch {
-                                    toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
-                                }
-                            }
-                            catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-                            }
-                        }, onActivate: async () => {
-                            try {
-                                const r = await api.report();
-                                setReport(r.text);
-                            }
-                            catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(76,154,255,0.18)", color: COLORS.accent, fontSize: 13, cursor: "pointer" }, children: t("diag.copy") })] }), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.report") }), SP_JSX.jsx("div", { style: box, children: report })] })), data && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.checks") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (data.checks || []).map((c, i) => (SP_JSX.jsxs("div", { style: {
-                                display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6,
-                                borderRadius: 8, fontSize: 13,
-                                background: c.ok ? "rgba(76,195,138,0.07)" : "rgba(236,65,65,0.10)",
-                                border: `1px solid ${c.ok ? "rgba(76,195,138,0.2)" : "rgba(236,65,65,0.3)"}`,
-                            }, children: [SP_JSX.jsx("span", { style: { color: c.ok ? COLORS.ok : COLORS.accentWarm, flexShrink: 0 }, children: c.ok ? "✓" : "✕" }), SP_JSX.jsx("span", { style: { flex: 1, color: COLORS.text }, children: t(c.key) }), c.detail && SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: c.detail })] }, i))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.modules") }), SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: Object.entries(data.modules || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k, ".py"] }, k))) }), SP_JSX.jsx(SectionTitle, { children: t("diag.tools") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [Object.entries(data.tools || {}).map(([k, v]) => (SP_JSX.jsxs("div", { children: [v ? "✅" : "❌", " ", k] }, k))), SP_JSX.jsxs("div", { children: [data.agent ? "✅" : "❌", " ", t("diag.agent")] })] }), SP_JSX.jsx(SectionTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw || t("common.empty") }), SP_JSX.jsx(SectionTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status || t("common.empty") })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { right: SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim }, children: log.path }), children: t("diag.pluginLog") }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, flexWrap: "wrap" }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: load, disabled: loading, children: loading ? t("common.reading") : t("common.retry") }), SP_JSX.jsx(Btn, { variant: "primary", onClick: genReport, children: t("diag.report") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: copyReport, children: t("diag.copy") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: loadLog, children: t("diag.viewLog") })] }), data?.checks?.length > 0 && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.checks") }), SP_JSX.jsx(Stack, { gap: SPACE.sm, children: data.checks.map((c, i) => (SP_JSX.jsxs("div", { style: {
+                                display: "flex", alignItems: "center", gap: SPACE.md,
+                                padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+                                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                            }, children: [SP_JSX.jsx(Pill, { tone: c.ok ? "ok" : "warn", children: c.ok ? "✓" : "✗" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.body, color: COLORS.text }, children: t(c.key) }), c.detail && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 1 }, children: c.detail }))] })] }, i))) })] })), data?.modules && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.modules") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.modules).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.tools && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.tools") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.tools).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.agent !== undefined && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.agent") }), SP_JSX.jsx(Pill, { tone: data.agent ? "ok" : "warn", children: data.agent ? t("set.agentReady") : t("set.agentDown") })] })), data?.adapter_raw && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw })] })), data?.wp_status && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status })] })), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.report") }), SP_JSX.jsx("div", { style: box, children: report })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.pluginLog") }), SP_JSX.jsx(Hint, { children: log.path }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
+}
+
+const TABS = [
+    ["devices", "tab.devices"],
+    ["settings", "tab.settings"],
+    ["eq", "tab.eq"],
+    ["diag", "tab.diag"],
+];
+function BtSpeakerPage() {
+    const { state, error, refresh } = useSpeaker();
+    const [tab, setTab] = SP_REACT.useState("devices");
+    const ad = state?.adapter;
+    return (
+    // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
+    // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
+    // 全屏路由页如果直接用 inset:0 会被两头遮住。
+    // 用 padding 而非 margin，保证背景色仍然铺满整屏。
+    SP_JSX.jsx("div", { style: {
+            position: "absolute", inset: 0, background: COLORS.bg,
+            paddingTop: "calc(env(safe-area-inset-top, 0px) + 58px)",
+            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 62px)",
+            paddingLeft: "calc(env(safe-area-inset-left, 0px) + 34px)",
+            paddingRight: "calc(env(safe-area-inset-right, 0px) + 34px)",
+            display: "flex", flexDirection: "column",
+            boxSizing: "border-box",
+        }, children: SP_JSX.jsxs("div", { className: "bt-scroll", style: {
+                flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
+                display: "flex", flexDirection: "column",
+                paddingBottom: SPACE.xl,
+            }, children: [SP_JSX.jsx(Header, { alias: ad?.alias, address: ad?.address, powered: !!ad?.powered, discoverable: !!ad?.discoverable, a2dpSink: !!ad?.a2dp_sink }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(TabBar, { tab: tab, onChange: setTab }), !state ? SP_JSX.jsx(Loading, { text: t("page.readingAdapter") }) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: state.paired || [], connectedMacs: new Set((state.connected || []).map((d) => d.mac)), discoverable: !!ad?.discoverable, alias: ad?.alias || "", onRefresh: refresh })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "eq" && SP_JSX.jsx(EqTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }) }));
+}
+// ---------------------------------------------------------------------------
+// 头部：标题 + 副标题 + 状态徽章
+// ---------------------------------------------------------------------------
+function Header({ alias, address, powered, discoverable, a2dpSink, }) {
+    return (SP_JSX.jsxs("div", { style: {
+            display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+            gap: SPACE.xl, marginBottom: SPACE.md,
+        }, children: [SP_JSX.jsxs("div", { style: { minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.page, fontWeight: 700, color: COLORS.text }, children: t("page.title") }), SP_JSX.jsx("div", { style: {
+                            fontSize: FONT.body, color: COLORS.sub, marginTop: 3,
+                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }, children: alias ? `${alias} · ${address || t("common.unknown")}` : t("page.readingAdapter") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: {
+                    display: "flex", gap: SPACE.sm, flexWrap: "wrap",
+                    justifyContent: "flex-end", flexShrink: 0, maxWidth: "45%",
+                }, children: [SP_JSX.jsx(Pill, { tone: powered ? "ok" : "warn", children: powered ? t("qam.btOn") : t("qam.btOff") }), SP_JSX.jsx(Pill, { tone: discoverable ? "accent" : "neutral", children: discoverable ? t("qam.discoverable") : t("qam.notVisible") }), SP_JSX.jsx(Pill, { tone: a2dpSink ? "ok" : "warn", children: a2dpSink ? t("page.a2dpSink") : t("page.noSink") })] })] }));
+}
+// ---------------------------------------------------------------------------
+// Tab 切换
+// ---------------------------------------------------------------------------
+function TabBar({ tab, onChange }) {
+    return (SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: {
+            display: "flex", gap: SPACE.sm, margin: `${SPACE.lg}px 0 ${SPACE.xs}px`,
+            borderBottom: `1px solid ${COLORS.border}`, paddingBottom: SPACE.xs,
+        }, children: TABS.map(([k, key]) => {
+            const active = tab === k;
+            return (SP_JSX.jsx(DFL.Focusable, { onActivate: () => onChange(k), onClick: () => onChange(k), style: {
+                    padding: `${SPACE.md}px ${SPACE.xl}px`,
+                    borderRadius: RADIUS.sm,
+                    cursor: "pointer",
+                    fontSize: FONT.bodyLg,
+                    fontWeight: active ? 600 : 400,
+                    background: active ? COLORS.accent : "transparent",
+                    color: active ? "#fff" : COLORS.sub,
+                    transition: "background 0.12s, color 0.12s",
+                }, children: t(key) }, k));
+        }) }));
 }
 
 /**
@@ -2053,8 +2214,11 @@ function useUIComposition(composition) {
             warned = true;
             // 只警告一次，不刷屏。用 console.warn 而不是 error ——
             // 这是「旧版 loader 的正常降级」，不是错误。
-            console.warn("[bt-speaker] Steam UI composition hook 不可用（loader 版本较旧？），" +
-                "息屏遮罩将无法盖住顶栏，但息屏功能本身正常。");
+            //
+            // ⚠️ 日志用英文：它是给开发者看的，不是 UI 文案。
+            // 中文写在这里会同时污染「硬编码中文」检查。
+            console.warn("[bt-speaker] Steam UI composition hook unavailable (older loader?). " +
+                "The dim overlay cannot cover the top bar, but screen-off still works.");
         }
         return;
     }
@@ -2064,7 +2228,7 @@ function useUIComposition(composition) {
     catch (e) {
         if (!warned) {
             warned = true;
-            console.warn("[bt-speaker] 调用 UI composition 失败，已降级", e);
+            console.warn("[bt-speaker] UI composition call failed, degraded gracefully", e);
         }
     }
 }
@@ -2195,8 +2359,92 @@ function DimOverlay() {
         }, children: SP_JSX.jsx("span", { style: { opacity: 0.001, userSelect: "none" }, children: "\u00B7" }) }));
 }
 
+/**
+ * 全局样式注入：keyframes 动画 + 滚动条美化。
+ *
+ * 为什么要注入 `<style>`？
+ * ----------------------
+ * React 内联 style 不支持 `@keyframes` 和 `::-webkit-scrollbar`。
+ * 而这两样都是「全屏页看起来精致」的必要条件：
+ *
+ * - `btPulse`：状态点的呼吸动画（「正在协商」那个小圆点）
+ * - 滚动条：默认的浅色滚动条在深色界面上非常刺眼
+ *
+ * 只注入一次（用 data 属性标记），重复挂载不会堆积。
+ *
+ * ⚠️ 为什么不用 CSS 文件？
+ * Decky 的 rollup 配置对 .css 的处理取决于 loader 版本，
+ * 而 `<style>` 注入在所有版本上都可靠。全屏页的样式量很小，值得这个取舍。
+ */
+const STYLE_ID = "bt-speaker-global-style";
+const CSS = `
+@keyframes btPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.82); }
+}
+@keyframes btSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* 深色滚动条：默认的浅色条在深色界面上太刺眼 */
+.bt-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.bt-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.bt-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+.bt-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 尊重系统的「减少动画」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .bt-no-motion, .bt-no-motion * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+`;
+/** 注入全局样式（幂等）。应在插件加载时调用一次。 */
+function injectGlobalStyle() {
+    try {
+        if (typeof document === "undefined")
+            return;
+        if (document.getElementById(STYLE_ID))
+            return;
+        const el = document.createElement("style");
+        el.id = STYLE_ID;
+        el.textContent = CSS;
+        document.head.appendChild(el);
+    }
+    catch {
+        /* 拿不到 document（非浏览器环境）就静默跳过 */
+    }
+}
+/** 移除全局样式（插件卸载时调用，避免残留）。 */
+function removeGlobalStyle() {
+    try {
+        if (typeof document === "undefined")
+            return;
+        const el = document.getElementById(STYLE_ID);
+        if (el)
+            el.remove();
+    }
+    catch {
+        /* ignore */
+    }
+}
+
 const OVERLAY_KEY = "bt-speaker-dim-overlay";
 var index = definePlugin(() => {
+    // 全局样式（呼吸动画 + 深色滚动条）。幂等，重复加载不会堆叠。
+    injectGlobalStyle();
     try {
         routerHook.removeRoute(ROUTE);
     }
@@ -2235,6 +2483,7 @@ var index = definePlugin(() => {
                 routerHook.removeGlobalComponent(OVERLAY_KEY);
             }
             catch { /* ignore */ }
+            removeGlobalStyle();
             setWakeHandler(null);
             stopPolling();
         },

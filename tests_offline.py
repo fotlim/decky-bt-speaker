@@ -1179,13 +1179,136 @@ Card #53
     check("只有内置设备时不误判", nodes.find_bt_input(only_builtin) is None)
 
 
+def test_dimsession():
+    print("息屏会话（顺序约束不能破坏）")
+    import dimsession
+
+    # ---- 用假对象验证顺序，不依赖真机 ----
+    calls = []
+
+    class FakeDimmer:
+        def __init__(self):
+            self.dimmed = False
+            self._saved = None
+
+        async def dim(self):
+            calls.append("dim")
+            self.dimmed = True
+            return {"ok": True, "backlight_off": True}
+
+        async def restore(self, reason=""):
+            calls.append("restore")
+            self.dimmed = False
+            return {"ok": True}
+
+        def elapsed(self):
+            return 0.0
+
+        def timed_out(self):
+            return False
+
+        def status(self):
+            return {"available": True, "dimmed": self.dimmed}
+
+    class FakeInhibitor:
+        def __init__(self):
+            self._held = False
+
+        async def hold(self):
+            calls.append("hold")
+            self._held = True
+            return {"ok": True, "what": "idle:sleep"}
+
+        async def release(self, reason=""):
+            calls.append("release")
+            self._held = False
+            return {"ok": True, "was_held": True}
+
+        def alive(self):
+            return self._held
+
+        def available(self):
+            return True
+
+        def status(self):
+            return {"held": self._held}
+
+    class FakeBz:
+        async def list_devices(self, which):
+            return []
+
+        async def info(self, mac):
+            return {"connected": True}
+
+        async def device_action(self, mac, action):
+            return True
+
+    # ---- enter(): 必须先 hold 再 dim ----
+    calls.clear()
+    d = FakeDimmer()
+    i = FakeInhibitor()
+    sess = dimsession.DimSession(d, i, FakeBz(), {}, lambda *_: None)
+    r = asyncio.run(sess.enter())
+    check("enter 成功", r.get("ok") is True, str(r))
+    check("enter 先 hold 再 dim", calls == ["hold", "dim"], str(calls))
+    check("enter 后处于息屏态", d.dimmed)
+    check("enter 后持有抑制锁", i.alive())
+    check("enter 结果带 inhibit 字段", "inhibit" in r)
+
+    # ---- exit(): 必须先 restore 再 release ----
+    calls.clear()
+    asyncio.run(sess.exit("测试"))
+    check("exit 先 restore 再 release", calls == ["restore", "release"], str(calls))
+    check("exit 后不再息屏", not d.dimmed)
+    check("exit 后不再持锁", not i.alive())
+
+    # ---- 幂等：未息屏时 exit 不应崩 ----
+    calls.clear()
+    r2 = asyncio.run(sess.exit("再退一次"))
+    check("重复 exit 不崩", r2.get("ok") is True)
+    # 未息屏时不该调用 restore；但 release 是幂等的，调用也安全
+    check("重复 exit 不重复 restore", "restore" not in calls, str(calls))
+
+    # ---- 抑制锁拿不到时，息屏照做但如实汇报 ----
+    class FailInhibitor(FakeInhibitor):
+        async def hold(self):
+            calls.append("hold-failed")
+            return {"ok": False, "what": "", "error": "no permission"}
+
+    calls.clear()
+    d2 = FakeDimmer()
+    sess2 = dimsession.DimSession(d2, FailInhibitor(), FakeBz(), {}, lambda *_: None)
+    r3 = asyncio.run(sess2.enter())
+    check("拿锁失败仍息屏", r3.get("ok") is True and d2.dimmed, str(r3))
+    check("拿锁失败如实汇报", r3["inhibit"]["ok"] is False, str(r3.get("inhibit")))
+    check("拿锁失败带 error", bool(r3["inhibit"].get("error")))
+
+    # ---- status() 不崩，且含关键字段 ----
+    st = sess2.status()
+    for k in ("available", "dimmed", "elapsed", "max_seconds",
+              "inhibit_held", "inhibit_available"):
+        check("status 有 %s" % k, k in st)
+
+    # ---- shutdown(): 卸载时也要清理干净 ----
+    calls.clear()
+    asyncio.run(sess2.shutdown())
+    check("shutdown 会 restore", "restore" in calls or not d2.dimmed, str(calls))
+    check("shutdown 后不再息屏", not d2.dimmed)
+
+    # ---- 无 dimmer 时不崩 ----
+    sess3 = dimsession.DimSession(None, None, FakeBz(), {}, lambda *_: None)
+    r4 = asyncio.run(sess3.enter())
+    check("无 dimmer 时 enter 返回失败", r4.get("ok") is False, str(r4))
+    check("无 dimmer 时 status 为 None", sess3.status() is None)
+
+
 if __name__ == "__main__":
     for fn in (test_parse_kv, test_mac, test_devices, test_info, test_volume,
                test_sink, test_adapter_flags, test_edge, test_wp_config,
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
                test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
-               test_settings_validation, test_power_parse, test_inhibit, test_a2dp):
+               test_settings_validation, test_power_parse, test_inhibit, test_a2dp, test_dimsession):
         fn()
     print()
     if FAILED:

@@ -160,9 +160,12 @@ export function useUIComposition(composition: UIComposition): void {
       warned = true;
       // 只警告一次，不刷屏。用 console.warn 而不是 error ——
       // 这是「旧版 loader 的正常降级」，不是错误。
+      //
+      // ⚠️ 日志用英文：它是给开发者看的，不是 UI 文案。
+      // 中文写在这里会同时污染「硬编码中文」检查。
       console.warn(
-        "[bt-speaker] Steam UI composition hook 不可用（loader 版本较旧？），" +
-        "息屏遮罩将无法盖住顶栏，但息屏功能本身正常。",
+        "[bt-speaker] Steam UI composition hook unavailable (older loader?). " +
+        "The dim overlay cannot cover the top bar, but screen-off still works.",
       );
     }
     return;
@@ -172,7 +175,7 @@ export function useUIComposition(composition: UIComposition): void {
   } catch (e) {
     if (!warned) {
       warned = true;
-      console.warn("[bt-speaker] 调用 UI composition 失败，已降级", e);
+      console.warn("[bt-speaker] UI composition call failed, degraded gracefully", e);
     }
   }
 }

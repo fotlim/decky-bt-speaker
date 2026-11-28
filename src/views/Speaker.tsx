@@ -6,7 +6,7 @@ import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
 import { api } from "../backend";
 import { useSpeaker, setPanelVisible } from "../store";
-import { COLORS, ROUTE } from "../route";
+import { COLORS, ROUTE, RADIUS, SPACE, FONT } from "../theme";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
 import { subscribeDim, setDimmed as setDimState } from "../dimState";
@@ -19,10 +19,10 @@ function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
       onClick={onClick}
       onActivate={onClick}
       style={{
-        flex: 1, minWidth: 0, padding: "9px 0", borderRadius: 9, cursor: "pointer",
+        flex: 1, minWidth: 0, padding: "9px 0", borderRadius: RADIUS.sm, cursor: "pointer",
         display: "flex", alignItems: "center", justifyContent: "center",
         background: "rgba(255,255,255,0.07)", border: `1px solid ${COLORS.border}`,
-        fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap",
+        fontSize: 12, color: COLORS.text, whiteSpace: "nowrap",
       }}
     >
       {label}
@@ -33,14 +33,6 @@ function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
 export function Speaker() {
   const { state, error } = useSpeaker();
   const [busy, setBusy] = useState(false);
-  // 本地音量值：用户拖动后一直保留，直到「后端确认读到我们设的值」才交还
-  const [vol, setVol] = useState<number | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const dragTimer = useRef<any>(null);
-  const settleTimer = useRef<any>(null);
-  // 外部音源音量：同样的确认式交还
-  const [srcVol, setSrcVol] = useState<number | null>(null);
-  const srcTimer = useRef<any>(null);
 
   // QAM 面板挂载即视为可见；卸载时通知 store 降频
   useEffect(() => {
@@ -111,53 +103,8 @@ export function Speaker() {
     try { await api.undimScreen(); } catch { /* ignore */ }
   };
 
-  const backendVol = state ? Math.round(state.volume.volume * 100) : 0;
-
-  // ⚠️ 同步策略（真机反馈「音量调节没同步」的修复核心）
-  // 之前是「松手后固定 3 秒交还」，但空闲时轮询间隔是 10 秒，
-  // 3 秒时后端读到的还是旧值 -> 滑杆立刻跳回去。
-  //
-  // 现在改为「**确认式交还**」：只有当后端读到的值和我们设的值足够接近
-  // （±2% 容差）时才交还控制权；否则继续用本地值，并给一个 15 秒上限兜底
-  // （防止后端写入失败时滑杆永远卡在本地值）。
-  useEffect(() => {
-    if (vol === null || dragging) return;
-    const diff = Math.abs(backendVol - vol);
-    if (diff <= 2) {
-      // 后端已确认 -> 交还控制权
-      setVol(null);
-      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null; }
-    }
-  }, [backendVol, vol, dragging]);
-
-  // 兜底：15 秒还没确认就强制交还，避免永远卡住
-  useEffect(() => {
-    if (vol === null || dragging) return;
-    if (settleTimer.current) clearTimeout(settleTimer.current);
-    settleTimer.current = setTimeout(() => {
-      setVol(null);
-      settleTimer.current = null;
-    }, 15000);
-    return () => {
-      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null; }
-    };
-  }, [vol, dragging]);
-
-  // 外部源音量：后端读到的值和我们设的接近时才交还
-  useEffect(() => {
-    if (srcVol === null) return;
-    const backendSrc = Math.round((state?.live?.volume || 0) * 100);
-    if (Math.abs(backendSrc - srcVol) <= 2) {
-      setSrcVol(null);
-      if (srcTimer.current) { clearTimeout(srcTimer.current); srcTimer.current = null; }
-    }
-  }, [state?.live?.volume, srcVol]);
-
   const ad = state?.adapter;
   const connected = state?.connected || [];
-  const showVol = (dragging || vol !== null) ? (vol ?? backendVol) : backendVol;
-  // 后端读取失败时不能显示成 0%（会误导），单独标记
-  const volFailed = !!state && state.volume.ok === false;
 
   const act = async (fn: () => Promise<any>, okMsg?: string) => {
     if (busy) return;
@@ -174,17 +121,6 @@ export function Speaker() {
 
   const toggleDiscoverable = async (on: boolean) => {
     await act(() => api.setDiscoverable(on), on ? t("qam.discoverable") : t("qam.notVisible"));
-  };
-
-  const changeVolume = (v: number) => {
-    setVol(v);
-    setDragging(true);
-    // 每次拖动都重置松手定时器
-    if (dragTimer.current) clearTimeout(dragTimer.current);
-    dragTimer.current = setTimeout(() => {
-      setDragging(false);
-    }, 600);
-    api.setVolume(v / 100).catch(() => {});
   };
 
   const toggleMute = () => {
@@ -234,7 +170,7 @@ export function Speaker() {
           {/* rfkill 阻挡是最常见的原因，单独提示 */}
           {state?.rfkill?.found && (state.rfkill.soft || state.rfkill.hard) && (
             <div style={{
-              margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 11.5, lineHeight: 1.6,
+              margin: "6px 0", padding: "9px 11px", borderRadius: 8, fontSize: 12, lineHeight: 1.6,
               background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
               color: "#ffb3b3",
             }}>
@@ -284,7 +220,7 @@ export function Speaker() {
               <Focusable
                 onClick={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
                 onActivate={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
-                style={{ fontSize: 11.5, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }}
+                style={{ fontSize: 12, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }}
               >{t("qam.disconnect")}</Focusable>
             </div>
           ))}
@@ -297,7 +233,7 @@ export function Speaker() {
           就以为坏了。 */}
       {connected.length > 0 && state?.a2dp && !state.a2dp.ready && (
         <div style={{
-          margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 11.5,
+          margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 12,
           lineHeight: 1.6, background: "rgba(76,154,255,0.10)",
           border: "1px solid rgba(76,154,255,0.28)", color: "#a8c8ff",
         }}>
@@ -337,7 +273,7 @@ export function Speaker() {
             style={{
               marginTop: 7, padding: "7px 11px", borderRadius: 7, cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(76,154,255,0.18)", fontSize: 11.5, color: "#fff",
+              background: "rgba(76,154,255,0.18)", fontSize: 12, color: "#fff",
             }}
           >
             {t("qam.a2dpForce")}
@@ -357,7 +293,7 @@ export function Speaker() {
               opacity: state.track?.status === "playing" ? 1 : 0.4,
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div style={{ fontSize: 12, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {state.track?.title || t("qam.playing", { name: state.live.name })}
               </div>
               {state.track?.artist && (
@@ -369,7 +305,7 @@ export function Speaker() {
             <Pill tone="accent">{state.track?.status_label || t("qam.externalSource")}</Pill>
           </div>
           {state.track && state.track.duration_ms > 0 && (
-            <div style={{ fontSize: 10.5, color: COLORS.dim, marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: COLORS.dim, marginBottom: 4 }}>
               {state.track.position} / {state.track.duration}
             </div>
           )}
@@ -417,7 +353,7 @@ export function Speaker() {
 
       {/* 声音小：直接设绝对音量，不依赖读取当前值 */}
       <div style={{ marginTop: 8 }}>
-        <div style={{ fontSize: 11.5, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }}>
+        <div style={{ fontSize: 12, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }}>
           {t("qam.boostHint")}
         </div>
         <Focusable flow-children="row" style={{ display: "flex", gap: 8 }}>
@@ -429,7 +365,7 @@ export function Speaker() {
       </div>
 
       {connected.length === 0 && ad?.discoverable && (
-        <div style={{ fontSize: 11.5, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }}>
           {t("qam.hintFind", { alias: ad.alias })}
         </div>
       )}
@@ -443,10 +379,10 @@ export function Speaker() {
             onClick={enterDim}
             onActivate={enterDim}
             style={{
-              marginTop: 8, padding: "10px 12px", borderRadius: 9, cursor: "pointer",
+              marginTop: 8, padding: "10px 12px", borderRadius: RADIUS.sm, cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
-              fontSize: 12.5, color: COLORS.text,
+              fontSize: 12, color: COLORS.text,
             }}
           >
             <FaMoon size={11} /> {t("qam.dimScreen")}
@@ -477,7 +413,7 @@ export function Speaker() {
           而不是代码没修好。 */}
       {versionLabel() && (
         <div style={{
-          fontSize: 10, color: COLORS.dim, textAlign: "center",
+          fontSize: 11, color: COLORS.dim, textAlign: "center",
           marginTop: 6, letterSpacing: 0.3, userSelect: "text",
         }}>
           {versionLabel()}

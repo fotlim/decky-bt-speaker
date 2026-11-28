@@ -42,6 +42,7 @@ INCLUDE_FILES = [
     "screen.py",
     "inhibit.py",
     "a2dp.py",
+    "dimsession.py",
     "power.py",
     "nodes.py",
     "focus.py",
