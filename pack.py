@@ -99,7 +99,7 @@ def main():
     # 自检 2：目录里所有 .py（除测试/打包脚本）都必须进包，防止新增模块漏打
     packaged = set(n.split("/", 1)[1] for n in names if n.count("/") >= 1)
     skip = {"pack.py", "tests_offline.py", "tests_i18n.py", "tests_bundle.py",
-            "tests_api.py", "tests_rpc.py", "_decky_stub.py"}
+            "tests_api.py", "tests_rpc.py", "tests_perf.py", "_decky_stub.py"}
     missing_modules = []
     for fn in os.listdir(ROOT):
         if fn.endswith(".py") and fn not in skip and fn not in packaged:

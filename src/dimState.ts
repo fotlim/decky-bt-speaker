@@ -16,10 +16,6 @@ type Listener = (dimmed: boolean) => void;
 let _dimmed = false;
 const _listeners = new Set<Listener>();
 
-export function isDimmed(): boolean {
-  return _dimmed;
-}
-
 export function setDimmed(v: boolean) {
   if (_dimmed === v) return;
   _dimmed = v;

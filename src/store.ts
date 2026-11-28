@@ -26,8 +26,17 @@ import type { SpeakerStatus } from "./types";
  * （零额外常驻进程，实现简单，实测开销可接受）。
  */
 
-const FAST_MS = 4000;      // 有外部音源在播
-const IDLE_MS = 10000;     // 已连接但没有音源
+// 间隔的取舍
+// ----------
+// 每次 `status()` 要 fork 十几个外部进程（bluetoothctl / wpctl / pactl /
+// pw-dump / busctl…），在 Deck 上不便宜。但「有外部音源在播」时，
+// 状态确实在变（曲目、位置、协商进度），间隔太大会显得卡。
+//
+// v3.3.0 把后端重复命令合并、给静态数据加缓存之后，单次开销明显下降，
+// 于是播放档位可以从 4 秒提到 2 秒 —— 进度条另有前端插值兜底
+// （见 progress.ts），所以即使这里保守一点也不会「一跳一跳」。
+const FAST_MS = 2000;      // 有外部音源在播：要跟播放状态
+const IDLE_MS = 8000;      // 已连接但没有音源
 const HIDDEN_MS = 30000;   // 界面不可见
 
 let _state: SpeakerStatus | null = null;
@@ -37,6 +46,8 @@ let _subs = new Set<() => void>();
 let _timer: any = null;
 let _inflight: Promise<void> | null = null;
 let _visible = false;
+/** 请求「尽快再刷一次」时置位：等当前 in-flight 结束立刻补跑，而不是并行再起一个。 */
+let _wantRefresh = false;
 
 function emit() { _subs.forEach((f) => f()); }
 
@@ -44,12 +55,19 @@ function emit() { _subs.forEach((f) => f()); }
 function nextInterval(): number {
   if (!_visible) return HIDDEN_MS;
   if (_state?.live) return FAST_MS;      // 有人在放歌，需要跟进度
-  if (_state?.connected?.length) return IDLE_MS;
-  return IDLE_MS;
+  return IDLE_MS;                        // 空闲 / 已连接未播放
 }
 
 async function refresh(force = false): Promise<void> {
-  if (_inflight && !force) return _inflight;
+  // 已经有请求在跑：
+  //   - 普通调用直接复用它（去重）
+  //   - force 调用**不再并行起第二个**，而是记下「跑完再补一次」
+  //     —— 并行起多个 status() 只会让后端多 fork 几倍的命令，
+  //        而且先完成的那个会提前把 _inflight 置空，第三个调用又能再起一个。
+  if (_inflight) {
+    if (force) _wantRefresh = true;
+    return _inflight;
+  }
   _inflight = (async () => {
     try {
       const r = await api.status();
@@ -61,7 +79,13 @@ async function refresh(force = false): Promise<void> {
       _loading = false;
       _inflight = null;
       emit();
-      reschedule();
+      // 期间有人要求强制刷新 -> 立刻补一次（下一轮仍走同一去重逻辑）
+      if (_wantRefresh) {
+        _wantRefresh = false;
+        refresh(true);
+      } else {
+        reschedule();
+      }
     }
   })();
   return _inflight;
@@ -74,12 +98,32 @@ function reschedule() {
   _timer = setTimeout(() => { refresh(); }, nextInterval());
 }
 
-function setVisible(v: boolean) {
-  if (_visible === v) return;
-  _visible = v;
-  // 刚变可见立刻刷新一次，避免看到过期数据
-  if (v) refresh(true);
-  else reschedule();
+/**
+ * 可见性用**引用计数**而不是单个布尔。
+ *
+ * ⚠️ 真机 bug：QAM 面板（`Speaker`）和全屏页（`BtSpeakerPage`）共用这个单例。
+ * 早期用单一 `_visible` 标志，QAM 卸载时无条件 `setPanelVisible(false)`，
+ * 会把**仍在前台**的全屏页一起降频到 30 秒 —— 表现为全屏页里播放进度
+ * 半天不动、A2DP 状态看着卡死。
+ *
+ * 现在改成计数：谁挂载谁 +1、卸载 -1，只有计数归零才算「不可见」。
+ */
+let _visibleCount = 0;
+
+function acquireVisible() {
+  _visibleCount += 1;
+  if (_visibleCount === 1) {
+    _visible = true;
+    refresh(true);          // 刚变可见立刻刷新，避免看到过期数据
+  }
+}
+
+function releaseVisible() {
+  _visibleCount = Math.max(0, _visibleCount - 1);
+  if (_visibleCount === 0) {
+    _visible = false;
+    reschedule();
+  }
 }
 
 export function startPolling() {
@@ -95,16 +139,22 @@ export function useSpeaker(): { state: SpeakerStatus | null; error: string | nul
   useEffect(() => {
     const f = () => force((n) => n + 1);
     _subs.add(f);
+    acquireVisible();          // 挂载即算可见（计数 +1）
     startPolling();
 
-    // 页面可见性：切到别的界面时降频
-    const onVis = () => setVisible(!document.hidden);
+    // 浏览器层面的页面可见性：整个窗口切走时降频。
+    // 注意这只影响「窗口」维度，与面板自身的挂载/卸载是两回事，
+    // 所以这里不能直接改 _visible，只在窗口隐藏时额外降频。
+    const onVis = () => {
+      if (document.hidden) reschedule();
+      else refresh(true);
+    };
     document.addEventListener("visibilitychange", onVis);
-    setVisible(!document.hidden);
 
     return () => {
       _subs.delete(f);
       document.removeEventListener("visibilitychange", onVis);
+      releaseVisible();        // 计数 -1，归零才真正降频
       // 最后一个订阅者离开时停掉定时器（下次挂载会重新起）
       if (_subs.size === 0) {
         _visible = false;
@@ -115,7 +165,8 @@ export function useSpeaker(): { state: SpeakerStatus | null; error: string | nul
   return { state: _state, error: _error, loading: _loading, refresh: () => { refresh(true); } };
 }
 
-export function notifyStateChanged() { emit(); }
-
 /** 供 QAM 面板显式标记可见性（QAM 收起时 document.hidden 不一定变）。 */
-export function setPanelVisible(v: boolean) { setVisible(v); }
+export function setPanelVisible(v: boolean) {
+  if (v) acquireVisible();
+  else releaseVisible();
+}

@@ -41,7 +41,7 @@ import asyncio
 import re
 import time
 
-from btutil import normalize_mac, run_cmd, which
+from btutil import normalize_mac, run_cached, run_cmd, which
 
 # 轮询间隔（秒）。太密会不停 fork `pactl`，太疏则感知不到「刚好就绪」。
 POLL_INTERVAL = 0.4
@@ -197,11 +197,15 @@ def best_sink_profile(card):
 
 
 async def read_cards():
-    """跑 `pactl list cards` 并解析。失败返回空列表（不抛异常）。"""
+    """跑 `pactl list cards` 并解析。失败返回空列表（不抛异常）。
+
+    ⚠️ 走 `run_cached`：同一次 `status()` 里 `focus.get_active_profile()`
+    也会跑一模一样的命令。共享 1.5 秒缓存，把两个进程压成一个。
+    """
     if not which("pactl"):
         return []
     try:
-        rc, out = await run_cmd(["pactl", "list", "cards"], timeout=10.0)
+        rc, out = await run_cached(["pactl", "list", "cards"], ttl=1.5, timeout=10.0)
     except Exception:  # noqa: BLE001
         return []
     if rc != 0:
@@ -296,11 +300,17 @@ def _has_bluez_input(states, mac=None):
 
 
 async def read_node_states():
-    """用 `pw-dump` 读节点状态。没有 pw-dump / 失败时返回 None。"""
+    """用 `pw-dump` 读节点状态。没有 pw-dump / 失败时返回 None。
+
+    ⚠️ 走共享缓存：`silence.read_node_states()` 读的是**同一个** `pw-dump`，
+    静音守卫和 A2DP 就绪判断在同一次轮询里会各读一遍。
+    `pw-dump` 输出很大（几十 KB JSON），fork 一次比普通命令贵得多，
+    这里缓存 1.5 秒能把重复调用合并掉。
+    """
     if not which("pw-dump"):
         return None
     try:
-        rc, out = await run_cmd(["pw-dump"], timeout=10.0)
+        rc, out = await run_cached(["pw-dump"], ttl=1.5, timeout=10.0)
     except Exception:  # noqa: BLE001
         return None
     if rc != 0 or not out:

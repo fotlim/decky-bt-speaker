@@ -671,27 +671,23 @@ class Plugin:
     # ------------------------------------------------------------------
     # RPC：状态
     # ------------------------------------------------------------------
-    @_safe
-    async def status(self):
-        """面板主状态：适配器 + 音量 + 已配对/已连接设备 + 版本。"""
-        adapter = None
-        err = None
+    async def _read_adapter(self):
+        """读适配器状态，返回 (adapter, err)。供 `status()` 并发调用。"""
         try:
-            adapter = await self.bz.show()
+            return await self.bz.show(), None
         except Exception as e:  # noqa: BLE001
-            err = str(e)
+            return None, str(e)
 
-        # rfkill 状态：蓝牙打不开时最可能的原因
-        rf = {"soft": False, "hard": False, "found": False}
-        if adapter is not None and not adapter.get("powered"):
-            try:
-                rf = await self.bz.rfkill_status()
-            except Exception:
-                pass
+    async def _read_volume_and_live(self):
+        """读音量 / 默认 sink / 外部音源，返回 (vol, sink, live, status_text)。
 
+        供 `status()` 并发调用。这四项来自同一次 `wpctl status`，
+        所以必须放在同一个任务里 —— 拆开反而会让共享缓存命中不了。
+        """
         vol = {"volume": 0.0, "muted": False}
         sink = ""
         live = None
+        status_text = ""
         try:
             vol = await self.wp.get_volume()
             status_text = await self.wp.status_text()
@@ -711,22 +707,27 @@ class Plugin:
                         "volume": detail["volume"],
                         "muted": detail["muted"],
                     }
-                    # 自动增益：外部源偏轻就拉满
+                    # 自动增益：外部源偏轻就拉满（默认关闭，一次性）
                     await self._apply_auto_gain(src["id"], detail["volume"])
                     # 音量归一化：观察是否发生大幅跳变
                     if self.norm is not None:
                         live["norm"] = self.norm.observe(detail["volume"])
         except Exception as e:  # noqa: BLE001
             self._log("读取音量失败：%s" % e)
+        return vol, sink, live, status_text
 
+    async def _read_devices(self):
+        """读已连接 / 已配对设备，返回 (connected, paired)。供 `status()` 并发调用。"""
         connected, paired = [], []
         try:
             connected = await self.bz.list_devices("Connected")
             paired = await self.bz.list_devices("Paired")
         except Exception as e:  # noqa: BLE001
             self._log("读取设备列表失败：%s" % e)
+        return connected, paired
 
-        # 编码器与 profile（用来判断「现在是 SBC 还是 AAC」）
+    async def _read_codec(self):
+        """读当前编码器 profile。供 `status()` 并发调用。"""
         codec = {"profile": "", "codec": "", "role": ""}
         if self.foc is not None:
             try:
@@ -735,6 +736,48 @@ class Plugin:
                     codec = dict(focus.summarize_profile(prof), profile=prof)
             except Exception as e:  # noqa: BLE001
                 self._log("读取编码器失败：%s" % e)
+        return codec
+
+    @_safe
+    async def status(self):
+        """面板主状态：适配器 + 音量 + 已配对/已连接设备 + 版本。
+
+        ⚠️ 性能（v3.3.0 重构）
+        ---------------------
+        这个 RPC 是轮询的主力，播歌时每 2 秒跑一次，所以它的开销直接
+        决定插件对系统的压力。做三件事压成本：
+
+        1. **能并行的都并行**。原来是一串 `await`，总耗时 = 各命令之和；
+           现在用 `gather` 把互不依赖的组（适配器 / 音量 / 设备列表 /
+           编码器 / A2DP）同时发出去，总耗时 ≈ 最慢的那一个。
+        2. **重复命令合并**。`pactl list cards` 和 `wpctl status` 原来
+           各被读两遍（a2dp + focus / 音量 + sinks），现在走
+           `btutil.run_cached` 的共享短缓存，只剩一次。
+        3. **静态数据缓存**。版本号一辈子不变，却每次轮询都查 3 个进程；
+           现在 `bt.versions()` 只查一次。
+        """
+        # 分组并发：这几组之间没有数据依赖，全部同时发出。
+        #
+        # 注意 `bz.show()` 内部自带 2 秒缓存，和后面的设备列表共用
+        # 同一次 `bluetoothctl` 连接，所以并行不会额外增加进程数。
+        adapter_task = asyncio.ensure_future(self._read_adapter())
+        volume_task = asyncio.ensure_future(self._read_volume_and_live())
+        devices_task = asyncio.ensure_future(self._read_devices())
+        codec_task = asyncio.ensure_future(self._read_codec())
+
+        adapter, err = await adapter_task
+        vol, sink, live, status_text = await volume_task
+        connected, paired = await devices_task
+        codec = await codec_task
+
+        # rfkill 状态：蓝牙打不开时最可能的原因。
+        # 依赖 adapter，所以放在并发之后（且只在没上电时才查）。
+        rf = {"soft": False, "hard": False, "found": False}
+        if adapter is not None and not adapter.get("powered"):
+            try:
+                rf = await self.bz.rfkill_status()
+            except Exception:
+                pass
 
         # A2DP 接收端是否真的就绪。
         #

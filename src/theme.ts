@@ -137,41 +137,6 @@ export const CARD_STYLE = {
   border: `1px solid ${COLORS.border}`,
 } as const;
 
-/** 胶囊按钮的基础样式（不含颜色，颜色按语义叠加） */
-export const PILL_BTN_BASE = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: SPACE.sm,
-  padding: `${SPACE.md}px ${SPACE.xl}px`,
-  borderRadius: RADIUS.md,
-  fontSize: FONT.body,
-  cursor: "pointer",
-  whiteSpace: "nowrap",
-  flexShrink: 0,
-} as const;
-
-/** 次要/幽灵按钮（不抢视觉焦点） */
-export const GHOST_BTN_STYLE = {
-  ...PILL_BTN_BASE,
-  background: COLORS.surfaceHover,
-  color: COLORS.text,
-} as const;
-
-/** 主按钮 */
-export const PRIMARY_BTN_STYLE = {
-  ...PILL_BTN_BASE,
-  background: COLORS.accent,
-  color: "#fff",
-} as const;
-
-/** 危险按钮 */
-export const DANGER_BTN_STYLE = {
-  ...PILL_BTN_BASE,
-  background: TONES.warn.bg,
-  color: TONES.warn.fg,
-} as const;
-
 /** 文字截断（设备名等长文本） */
 export const ELLIPSIS = {
   whiteSpace: "nowrap",

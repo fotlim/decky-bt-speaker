@@ -33,8 +33,26 @@ Object:    /org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX/player#
 """
 
 import re
+import time
 
 from bt import BtError, is_mac, run_cmd, strip_ansi, which
+
+# `busctl tree org.bluez` 的结果缓存。
+#
+# 为什么要缓存：`status()` 播歌时每 4 秒跑一次，每次都列一遍整棵对象树。
+# 但 player 路径只会在「设备连接/断开」时变化，播放过程中是稳定的。
+# 缓存 8 秒足以覆盖一次轮询周期，又能在设备变化后及时跟上。
+#
+# 用模块级变量而不是实例属性：`Metadata` 在 Plugin 里是单例，
+# 但模块级更简单，且测试里可以直接 reset。
+_TREE_TTL = 8.0
+_tree_cache = (0.0, [])   # (时间戳, 路径列表)
+
+
+def reset_cache():
+    """清空模块级缓存（测试用）。"""
+    global _tree_cache
+    _tree_cache = (0.0, [])
 
 # 播放状态的友好文案
 STATUS_LABELS = {
@@ -250,6 +268,39 @@ class Metadata:
             return None
         return strip_ansi(out).strip()
 
+    async def _get_many(self, path, props):
+        """一次 `busctl get-property` 读多个属性，返回 {属性名: 原始输出}。
+
+        为什么要合并？
+        ------------
+        `Track` / `Status` / `Position` 原本是**三条**独立的 busctl 调用
+        （fork 三个进程）。而 `busctl get-property` 原生支持一次读多个属性，
+        输出按顺序**每行一个**（见 man busctl：Multiple properties may be
+        specified at once, in which case their values will be shown one
+        after the other, separated by newlines）。
+
+        播歌时 `status()` 每 4 秒跑一次，合并后这里从 3 个进程降到 1 个。
+
+        ⚠️ 解析必须**按行**对应，不能按「连续几行」猜 —— `Track` 是 `a{sv}`，
+        普通 terse 模式下也是单行，所以每个属性正好一行。
+        万一某个属性值本身含换行（理论上 terse 模式不会），行数就对不上，
+        此时按「行数不匹配」整体放弃，退回逐个读，保证不会解析错位。
+        """
+        if not props:
+            return {}
+        argv = ["busctl", "get-property", "org.bluez", path,
+                "org.bluez.MediaPlayer1"] + list(props)
+        rc, out = await run_cmd(argv, timeout=8.0)
+        if rc != 0:
+            return {}
+        lines = [ln for ln in strip_ansi(out).splitlines() if ln.strip()]
+        if len(lines) != len(props):
+            # 行数对不上：宁可多 fork 几次，也不能把 Status 当成 Position
+            self._log("busctl 多属性输出行数不匹配（%d 行 / %d 属性），退回逐个读取"
+                      % (len(lines), len(props)))
+            return {}
+        return dict(zip(props, [ln.strip() for ln in lines]))
+
     async def _list_players(self):
         """列出系统里真实存在的 MediaPlayer1 对象路径。
 
@@ -261,7 +312,16 @@ class Metadata:
 
         早期直接拼 `/org/bluez/hci0/dev_XX/player0`，对不上就永远读不到
         元数据，表现为「对端设备未提供曲目信息」—— 而实际上对端提供了。
+
+        性能：结果缓存 `_TREE_TTL` 秒。player 路径只在设备连/断时变，
+        播放过程中稳定；而 `status()` 播歌时每 4 秒调一次这里，
+        不缓存就是每 4 秒白 fork 一个 `busctl tree`。
         """
+        global _tree_cache
+        now = time.monotonic()
+        ts, cached = _tree_cache
+        if cached and (now - ts) < _TREE_TTL:
+            return cached
         if not which("busctl"):
             return []
         try:
@@ -270,7 +330,9 @@ class Metadata:
             return []
         if rc != 0:
             return []
-        return parse_player_paths(strip_ansi(out))
+        paths = parse_player_paths(strip_ansi(out))
+        _tree_cache = (now, paths)
+        return paths
 
     async def read(self, mac):
         """读取某设备的曲目信息。
@@ -290,22 +352,43 @@ class Metadata:
         if not paths:
             paths = [player_path(mac, self.adapter, i) for i in range(4)]
 
-        # 3. 逐个试，第一个能读到 Track 的就算
-        for path in paths:
-            track_raw = await self._get(path, "Track")
-            if track_raw is not None:
+        # 3. 逐个试，第一个能读到 Track 的就算。
+        #    找到后顺手把 Status / Position 一起读掉（一次 busctl 读三个属性），
+        #    避免「找到路径」和「读其余属性」之间再多两次 fork。
+        props = None
+        path = ""
+        for cand in paths:
+            got = await self._get_many(cand, ("Track", "Status", "Position"))
+            if got.get("Track"):
+                props, path = got, cand
                 break
-        else:
+
+        if props is None:
+            # 多属性合并失败（行数不匹配 / 老版本 busctl），退回逐个读
+            for cand in paths:
+                track_raw = await self._get(cand, "Track")
+                if track_raw is not None:
+                    props = {"Track": track_raw}
+                    path = cand
+                    break
+
+        if props is None:
             # 所有路径都读不到 = 该设备不支持 AVRCP 或还没开始播放
             self._log("未找到 %s 的 MediaPlayer 对象（对端可能不支持 AVRCP 元数据）" % mac)
             return None
 
+        track_raw = props.get("Track")
         track = parse_track(track_raw)
         if track is None:
             return None
 
-        status_raw = await self._get(path, "Status")
-        pos_raw = await self._get(path, "Position")
+        # Status / Position 若在合并读取里没拿到，再单独补读
+        status_raw = props.get("Status")
+        pos_raw = props.get("Position")
+        if status_raw is None:
+            status_raw = await self._get(path, "Status")
+        if pos_raw is None:
+            pos_raw = await self._get(path, "Position")
 
         # ⚠️ 必须用 parse_busctl_string 而不是 strip('"') ——
         # busctl 返回的是 `s "playing"`，只 strip 引号会留下类型前缀 `s `，

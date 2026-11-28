@@ -3,8 +3,7 @@
  *
  * 样式全部走 `theme.ts` 的 token，不再写字面量。
  */
-
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Focusable } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../../backend";
@@ -14,14 +13,13 @@ import {
   Btn, Pill, Hint, SectionTitle, Card, Stack, errMsg,
 } from "../../components";
 import { t } from "../../i18n";
-
 export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
+  const importRef = useRef<HTMLTextAreaElement | null>(null);
   const presets: EqPreset[] = state.eq?.presets || [];
   const current = state.eq?.preset || "flat";
-
   const apply = async (key: string) => {
     if (busy) return;
     setBusy(key);
@@ -35,7 +33,6 @@ export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () =>
       setBusy(null);
     }
   };
-
   const doImport = async () => {
     if (!importText.trim()) return;
     setBusy("import");
@@ -54,7 +51,6 @@ export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () =>
       setBusy(null);
     }
   };
-
   const removeEq = async () => {
     try {
       await api.removeEq();
@@ -64,7 +60,6 @@ export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () =>
       toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
     }
   };
-
   return (
     <div style={{ marginTop: SPACE.xl, maxWidth: 760 }}>
       <SectionTitle>{t("eq.presets")}</SectionTitle>
@@ -107,18 +102,27 @@ export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () =>
 
       {showImport && (
         <div style={{ marginTop: SPACE.lg }}>
-          <textarea
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            placeholder={"Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000"}
-            style={{
-              marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
-              width: "100%", minHeight: 120, boxSizing: "border-box",
-              fontSize: FONT.small, color: COLORS.text, fontFamily: "monospace",
-              background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
-              outline: "none", resize: "vertical",
+          {/* ⚠️ 必须包 Focusable：裸 `<textarea>` 在手柄焦点树里选不中，
+              AutoEQ 粘贴导入这个功能在游戏模式下等于不存在。 */}
+          <Focusable
+            onActivate={() => {
+              try { importRef.current?.focus(); } catch { /* 忽略 */ }
             }}
-          />
+          >
+            <textarea
+              ref={importRef}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={"Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000"}
+              style={{
+                marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
+                width: "100%", minHeight: 120, boxSizing: "border-box",
+                fontSize: FONT.small, color: COLORS.text, fontFamily: "monospace",
+                background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
+                outline: "none", resize: "vertical",
+              }}
+            />
+          </Focusable>
           <div style={{ marginTop: SPACE.md }}>
             <Btn variant="primary" onClick={doImport} disabled={busy === "import"}>
               {busy === "import" ? t("eq.importing") : t("eq.applyImport")}
@@ -136,7 +140,6 @@ export function EqTab({ state, refresh }: { state: SpeakerStatus; refresh: () =>
     </div>
   );
 }
-
 // ---------------------------------------------------------------------------
 // 单个预设行（单选风格）
 // ---------------------------------------------------------------------------
@@ -145,7 +148,6 @@ function PresetRow({ preset, active, busy, onPick }: {
 }) {
   return (
     <Focusable
-      onClick={onPick}
       onActivate={onPick}
       style={{
         display: "flex", alignItems: "center", gap: SPACE.lg,

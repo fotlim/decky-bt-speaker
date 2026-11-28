@@ -15,12 +15,15 @@ import {
   Btn, Pill, Hint, SectionTitle, GroupTitle, Stack, errMsg,
 } from "../../components";
 import { t } from "../../i18n";
+import { compositionDiagnostics } from "../../uiComposition";
 
 export function DiagTab() {
   const [data, setData] = useState<any>(null);
   const [log, setLog] = useState<{ path: string; text: string } | null>(null);
   const [report, setReport] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  /** 合成层能力探测是纯前端、同步的，算一次就够（后端不知道 loader 版本）。 */
+  const [composition] = useState(() => compositionDiagnostics());
 
   const load = async () => {
     setLoading(true);
@@ -86,8 +89,8 @@ export function DiagTab() {
         <>
           <SectionTitle>{t("diag.checks")}</SectionTitle>
           <Stack gap={SPACE.sm}>
-            {(data.checks as CheckItem[]).map((c, i) => (
-              <div key={i} style={{
+            {(data.checks as CheckItem[]).map((c) => (
+              <div key={c.key} style={{
                 display: "flex", alignItems: "center", gap: SPACE.md,
                 padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
                 background: COLORS.surface, border: `1px solid ${COLORS.border}`,
@@ -137,6 +140,19 @@ export function DiagTab() {
           </Pill>
         </>
       )}
+
+      {/* 合成层能力：旧版 loader 上遮罩压不住 Steam 顶栏，
+          用户会看到「息屏后顶栏还在」。这里把真实能力列出来，
+          免得用户以为是插件 bug 而无从判断。 */}
+      <GroupTitle>{t("diag.composition")}</GroupTitle>
+      <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap" }}>
+        <Pill tone={composition.available ? "ok" : "warn"}>
+          {composition.available ? t("diag.compOk") : t("diag.compMissing")}
+        </Pill>
+        {(["findVar", "findModuleExport", "findModuleChild"] as const).map((k) => (
+          <Pill key={k} tone={composition[k] ? "ok" : "neutral"}>{k}</Pill>
+        ))}
+      </Focusable>
 
       {data?.adapter_raw && (
         <>

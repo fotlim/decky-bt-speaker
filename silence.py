@@ -25,7 +25,7 @@
 import re
 import time
 
-from bt import BtError, run_cmd, which
+from bt import BtError, run_cached, run_cmd, which
 
 # 判定为「静音」的节点状态（PipeWire 的 node.state）
 IDLE_STATES = {"idle", "suspended", "error"}
@@ -122,11 +122,16 @@ def parse_node_states(pw_dump_json):
 
 
 async def read_node_states():
-    """跑 `pw-dump` 拿节点状态。没有 pw-dump 就返回 None（调用方降级）。"""
+    """跑 `pw-dump` 拿节点状态。没有 pw-dump 就返回 None（调用方降级）。
+
+    ⚠️ 走共享缓存：`a2dp.read_node_states()` 读的是**同一个** `pw-dump`。
+    `pw-dump` 的输出是几十 KB 的 JSON，fork 一次比普通命令贵得多，
+    而这两个调用点在同一次轮询里几乎总会同时发生。
+    """
     if not which("pw-dump"):
         return None
     try:
-        rc, out = await run_cmd(["pw-dump"], timeout=8.0)
+        rc, out = await run_cached(["pw-dump"], ttl=1.5, timeout=8.0)
     except BtError:
         return None
     if rc != 0:

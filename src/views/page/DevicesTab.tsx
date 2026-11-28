@@ -25,6 +25,14 @@ type DevAction =
   | "connect" | "disconnect" | "remove" | "repair"
   | "trust" | "untrust" | "block" | "unblock";
 
+/**
+ * 「显示没有名称的设备」的偏好。
+ *
+ * 存在模块级而不是组件内：切 tab 会让组件卸载重建，`useState` 会丢，
+ * 用户每次回来都得重新关一遍。
+ */
+let _showUnnamed = true;
+
 export function DevicesTab({
   paired, connectedMacs, discoverable, alias, onRefresh,
 }: {
@@ -34,8 +42,15 @@ export function DevicesTab({
   alias: string;
   onRefresh: () => void;
 }) {
-  const [showUnnamed, setShowUnnamed] = useState(true);
+  // ⚠️ 偏好存在模块级而不是组件内：切 tab 会让组件卸载重建，
+  //    useState 的值会丢，「显示无名设备」的选择每次都回到默认值。
+  const [showUnnamed, setShowUnnamed] = useState(_showUnnamed);
   const [busyMac, setBusyMac] = useState<string | null>(null);
+
+  const updateShowUnnamed = (v: boolean) => {
+    _showUnnamed = v;
+    setShowUnnamed(v);
+  };
 
   const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
   const hiddenPaired = paired.length - shownPaired.length;
@@ -75,7 +90,7 @@ export function DevicesTab({
           label={t("dev.showUnnamed")}
           desc={t("dev.showUnnamedDesc")}
           checked={showUnnamed}
-          onChange={setShowUnnamed}
+          onChange={updateShowUnnamed}
         />
       </div>
 
@@ -218,7 +233,7 @@ function ScanPanel({
       const started = Date.now();
       tickRef.current = setInterval(() => {
         setElapsed(Math.floor((Date.now() - started) / 1000));
-      }, 500);
+      }, 1000);
       pollRef.current = setInterval(async () => {
         try {
           const r = await api.scanList();
@@ -247,11 +262,21 @@ function ScanPanel({
     setScanned(true);
   };
 
-  // 卸载时清理所有定时器（含之前漏掉的 autoRef）
+  // 卸载时清理所有定时器，并**主动停止后端扫描**。
+  //
+  // ⚠️ 早期只清了定时器，没调 `scanStop()` —— 切走 tab 后后端仍在扫描，
+  //    白白占着蓝牙射频直到 20 秒超时。Deck 是电池设备，这种浪费要避免。
+  // 用 ref 记住「当前是否在扫」，因为清理函数拿不到最新的 state。
+  const scanningRef = useRef(false);
+  scanningRef.current = scanning;
   useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    if (tickRef.current) clearInterval(tickRef.current);
-    if (autoRef.current) clearTimeout(autoRef.current);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    if (autoRef.current) { clearTimeout(autoRef.current); autoRef.current = null; }
+    if (scanningRef.current) {
+      // 卸载路径无法 await，失败也只能静默（后端 20 秒后会自己停）
+      api.scanStop().catch(() => { /* 忽略 */ });
+    }
   }, []);
 
   const pair = async (mac: string, name: string, alreadyPaired: boolean) => {

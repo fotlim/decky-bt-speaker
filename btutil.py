@@ -301,6 +301,70 @@ def _parse_uuids(info_text):
     return out
 
 
+# ---------------------------------------------------------------------------
+# 共享命令输出缓存
+# ---------------------------------------------------------------------------
+#
+# 为什么要做这个？
+# --------------
+# `pactl list cards` 的输出在**同一次** `status()` 里被两个模块各读了一遍：
+#   - `focus.get_active_profile()`  —— 为了知道当前是 SBC 还是 AAC
+#   - `a2dp.read_cards()`           —— 为了判断 A2DP Sink 就绪没
+# 两条命令一模一样，纯属白烧一个进程。播歌时每 4 秒一次轮询，
+# 就是每 4 秒多 fork 一次。
+#
+# 这里给「只读、幂等、结果几乎不变」的命令加一个极短 TTL 的共享缓存。
+# TTL 故意设得很小（默认 1.5 秒）：只够覆盖同一次 RPC 内的重复调用，
+# 不会让用户看到明显过期的数据。
+#
+# ⚠️ 只缓存**读**命令。任何写操作（set-card-profile 等）都不能走这里。
+
+_CMD_CACHE = {}
+# 缓存条目上限，防止 key 无限增长（key 里可能含 MAC，设备多了会涨）
+_CMD_CACHE_MAX = 32
+
+
+def cache_get(key, ttl):
+    """取命令输出缓存；未命中或过期返回 None。"""
+    hit = _CMD_CACHE.get(key)
+    if hit is None:
+        return None
+    ts, val = hit
+    import time as _t
+    if (_t.monotonic() - ts) >= ttl:
+        return None
+    return val
+
+
+def cache_put(key, val):
+    """写命令输出缓存。超过上限时丢掉最早的一半（简单 LRU 近似）。"""
+    import time as _t
+    if len(_CMD_CACHE) >= _CMD_CACHE_MAX:
+        for k in list(_CMD_CACHE.keys())[: _CMD_CACHE_MAX // 2]:
+            _CMD_CACHE.pop(k, None)
+    _CMD_CACHE[key] = (_t.monotonic(), val)
+
+
+def cache_clear():
+    """清空命令缓存（测试 / 写操作后主动失效用）。"""
+    _CMD_CACHE.clear()
+
+
+async def run_cached(argv, ttl=1.5, timeout=8.0):
+    """执行只读命令，`ttl` 秒内重复调用直接返回上次结果。
+
+    返回 (returncode, 输出)。命令找不到时抛 BtError（与 run_cmd 一致）。
+    """
+    key = "\x00".join(argv)
+    hit = cache_get(key, ttl)
+    if hit is not None:
+        return hit
+    rc, out = await run_cmd(argv, timeout=timeout)
+    if rc == 0:
+        cache_put(key, (rc, out))
+    return rc, out
+
+
 def friendly_device_name(name, alias, icon, klass, mac):
     """给设备拼一个可读名称。
 

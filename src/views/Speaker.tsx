@@ -5,18 +5,17 @@ import {
 import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
 import { api } from "../backend";
-import { useSpeaker, setPanelVisible } from "../store";
+import { useSpeaker } from "../store";
 import { COLORS, ROUTE, RADIUS, SPACE, FONT, TONES } from "../theme";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
 import { setDimmed as setDimState } from "../dimState";
 import { versionLabel } from "../version";
-
+import { useSmoothPosition, fmtMs } from "../progress";
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
   return (
     <Focusable
-      onClick={onClick}
       onActivate={onClick}
       style={{
         flex: 1, minWidth: 0, padding: "9px 0", borderRadius: RADIUS.sm, cursor: "pointer",
@@ -29,17 +28,12 @@ function VolBtn({ onClick, label }: { onClick: () => void; label: string }) {
     </Focusable>
   );
 }
-
 export function Speaker() {
   const { state, error } = useSpeaker();
   const [busy, setBusy] = useState(false);
-
-  // QAM 面板挂载即视为可见；卸载时通知 store 降频
-  useEffect(() => {
-    setPanelVisible(true);
-    return () => setPanelVisible(false);
-  }, []);
-
+  // ⚠️ 可见性由 `useSpeaker()` 内部统一管理（引用计数），
+  //    这里**不要**再调 setPanelVisible —— 那会让计数减两次，
+  //    导致全屏页还开着却被判为「不可见」而降频到 30 秒。
   // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
   //
   // ⚠️ 遮罩不在这里渲染。它挂成**全局组件**（见 index.tsx），
@@ -51,12 +45,31 @@ export function Speaker() {
   // 面板本身不因息屏而改变（息屏时 QAM 已被 CloseSideMenus 收起）。
   // 早期这里留了一个只写不读的 useState，是死代码。
   const dimTimer = useRef<any>(null);
-
+  /**
+   * 卸载时「是否已经处于息屏状态」。
+   *
+   * ⚠️ 为什么需要它（真机隐患，必须修）
+   * ---------------------------------
+   * 早期卸载清理只做了 `clearTimeout(dimTimer)`，**从不调 `undimScreen()`**。
+   * 而 `enterDim()` 第一步是 `Navigation.CloseSideMenus()` —— 它会让 QAM
+   * 面板立刻卸载。于是「点息屏」这个动作本身就把唯一的兜底（`max_seconds`
+   * 定时器）连同组件一起清掉了。一旦遮罩唤醒链路失效（手柄事件没接上、
+   * 合成层没挂上），屏幕就永久黑着，用户只能长按电源键硬重启。
+   *
+   * 正确语义：**只要背光是被我们关掉的，组件离开时就必须还回去。**
+   * 用 ref 而不是 state，因为清理函数要读最新值且不触发重渲染。
+   */
+  const dimmedRef = useRef(false);
   // 组件卸载时一定恢复背光，避免留下黑屏
   useEffect(() => () => {
-    if (dimTimer.current) clearTimeout(dimTimer.current);
+    if (dimTimer.current) { clearTimeout(dimTimer.current); dimTimer.current = null; }
+    if (dimmedRef.current) {
+      dimmedRef.current = false;
+      setDimState(false);
+      // 卸载路径无法 await，用 catch 兜住（失败也不该阻塞卸载）
+      api.undimScreen().catch(() => { /* 卸载中失败只能静默 */ });
+    }
   }, []);
-
   const enterDim = async () => {
     try {
       // ⚠️ 第一步：先关掉 QAM 侧边菜单，再让遮罩接管。
@@ -75,9 +88,9 @@ export function Speaker() {
       } catch {
         /* 老版本没有这个 API，忽略 */
       }
-
       const r: any = await api.dimScreen();
       // 通知全局遮罩显示，再更新本地按钮状态
+      dimmedRef.current = true;
       setDimState(true);
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
@@ -94,16 +107,31 @@ export function Speaker() {
       toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
     }
   };
-
   const exitDim = async () => {
     if (dimTimer.current) { clearTimeout(dimTimer.current); dimTimer.current = null; }
+    dimmedRef.current = false;
     setDimState(false);
-    try { await api.undimScreen(); } catch { /* ignore */ }
+    try {
+      await api.undimScreen();
+    } catch (e) {
+      // 恢复背光失败是「屏幕可能黑着」的严重问题，不能静默吞掉
+      toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
+    }
   };
-
   const ad = state?.adapter;
   const connected = state?.connected || [];
 
+  // 播放进度插值：后端最快 4 秒才给一次位置，这里按本地时钟平滑推进，
+  // 否则进度条和歌词位置看起来是「一跳一跳」的（真机反馈「跟不上」）。
+  const smoothPos = useSmoothPosition(
+    state?.track && state.track.duration_ms > 0
+      ? {
+          positionMs: state.track.position_ms,
+          durationMs: state.track.duration_ms,
+          status: state.track.status,
+        }
+      : null,
+  );
   const act = async (fn: () => Promise<any>, okMsg?: string) => {
     if (busy) return;
     setBusy(true);
@@ -116,16 +144,14 @@ export function Speaker() {
       setBusy(false);
     }
   };
-
   const toggleDiscoverable = async (on: boolean) => {
     await act(() => api.setDiscoverable(on), on ? t("qam.discoverable") : t("qam.notVisible"));
   };
-
   const toggleMute = () => {
     if (!state) return;
-    act(() => api.setMute(!state.volume.muted), state.volume.muted ? t("common.ok") : t("common.ok"));
+    const muted = !!state.volume?.muted;
+    act(() => api.setMute(!muted), muted ? t("qam.unmute") : t("qam.mute"));
   };
-
   return (
     <PanelSection>
       {/* 状态摘要 */}
@@ -213,10 +239,13 @@ export function Speaker() {
                 <div style={{ fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {d.display || d.name}
                 </div>
-                <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 1 }}>{t("qam.playingLabel")}</div>
+                <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 1 }}>
+                  {/* 只有真的在放歌时才说「正在播放」，否则说「已连接」——
+                      早期无条件写「正在播放」，没放歌时是错误信息 */}
+                  {state?.live ? t("qam.playingLabel") : t("qam.connectedLabel")}
+                </div>
               </div>
               <Focusable
-                onClick={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
                 onActivate={() => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name))}
                 style={{ fontSize: 12, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }}
               >{t("qam.disconnect")}</Focusable>
@@ -238,7 +267,7 @@ export function Speaker() {
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{
               width: 6, height: 6, borderRadius: 3, background: COLORS.accent,
-              animation: "pulse 1.2s ease-in-out infinite",
+              animation: "btPulse 1.2s ease-in-out infinite",
             }} />
             {t("qam.negotiating")}
           </div>
@@ -246,17 +275,6 @@ export function Speaker() {
             {t("qam.negotiatingHint")}
           </div>
           <Focusable
-            onClick={() => act(async () => {
-              const r = await api.fixA2dp(connected[0]?.mac);
-              if (r.ok) {
-                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
-              } else {
-                toaster.toast({
-                  title: t("qam.a2dpFixFailed"),
-                  body: r.detail || r.reason || "",
-                });
-              }
-            })}
             onActivate={() => act(async () => {
               const r = await api.fixA2dp(connected[0]?.mac);
               if (r.ok) {
@@ -329,10 +347,11 @@ export function Speaker() {
               }}>
                 <div style={{
                   height: "100%",
-                  width: `${Math.min(100, (state.track.position_ms / state.track.duration_ms) * 100)}%`,
+                  width: `${Math.min(100, (smoothPos / state.track.duration_ms) * 100)}%`,
                   background: COLORS.accent,
                   borderRadius: 2,
-                  transition: "width 0.9s linear",
+                  // 插值每 500ms 推进一次，用同样时长的线性过渡把台阶抹平
+                  transition: "width 0.5s linear",
                 }} />
               </div>
               <div style={{
@@ -340,7 +359,7 @@ export function Speaker() {
                 fontSize: FONT.caption, color: COLORS.dim, marginTop: 3,
                 fontVariantNumeric: "tabular-nums",
               }}>
-                <span>{state.track.position}</span>
+                <span>{fmtMs(smoothPos)}</span>
                 <span>{state.track.duration}</span>
               </div>
             </div>
@@ -364,7 +383,7 @@ export function Speaker() {
           display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
           color: COLORS.sub, fontSize: 12,
         }}>
-          {state?.volume.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
+          {state?.volume?.muted ? <FaVolumeMute size={12} /> : <FaVolumeUp size={12} />}
           <span>{t("qam.volume")}</span>
           <span style={{ fontSize: 11, color: COLORS.dim, marginLeft: "auto" }}>
             {t("qam.volumeHint")}
@@ -373,7 +392,7 @@ export function Speaker() {
         <Focusable flow-children="row" style={{ display: "flex", gap: 8 }}>
           <VolBtn onClick={() => act(() => api.stepVolume(-10))} label="−10%" />
           <VolBtn onClick={() => act(() => api.stepVolume(-5))} label="−5%" />
-          <VolBtn onClick={toggleMute} label={state?.volume.muted ? t("qam.unmute") : t("qam.mute")} />
+          <VolBtn onClick={toggleMute} label={state?.volume?.muted ? t("qam.unmute") : t("qam.mute")} />
           <VolBtn onClick={() => act(() => api.stepVolume(5))} label="+5%" />
           <VolBtn onClick={() => act(() => api.stepVolume(10))} label="+10%" />
         </Focusable>
@@ -404,7 +423,6 @@ export function Speaker() {
       {state?.screen?.available && (
         <>
           <Focusable
-            onClick={enterDim}
             onActivate={enterDim}
             style={{
               marginTop: 8, padding: "10px 12px", borderRadius: RADIUS.sm, cursor: "pointer",

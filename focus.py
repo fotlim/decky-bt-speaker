@@ -23,7 +23,7 @@
 
 import re
 
-from bt import BtError, run_cmd, which
+from bt import BtError, run_cached, run_cmd, which
 
 MODES = ("receiver_first", "coexist", "manual")
 
@@ -106,11 +106,15 @@ class Focus:
         return [ln.strip() for ln in (out or "").splitlines() if "bluez" in ln.lower()]
 
     async def get_active_profile(self):
-        """读取蓝牙卡当前激活的 profile（能看出用的是 SBC 还是 AAC）。"""
+        """读取蓝牙卡当前激活的 profile（能看出用的是 SBC 还是 AAC）。
+
+        ⚠️ 走 `run_cached`：`a2dp.read_cards()` 跑的是**同一条命令**，
+        两者在同一次 `status()` 里各调一次就是白烧一个进程。
+        """
         if not which("pactl"):
             return ""
         try:
-            rc, out = await run_cmd(["pactl", "list", "cards"], timeout=8.0)
+            rc, out = await run_cached(["pactl", "list", "cards"], ttl=1.5, timeout=8.0)
         except BtError:
             return ""
         if rc != 0:

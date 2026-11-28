@@ -75,6 +75,7 @@ const EN: Dict = {
   "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
   "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
   "qam.playingLabel": "Playing",
+  "qam.connectedLabel": "Connected",
   "qam.negotiating": "Negotiating audio (A2DP)…",
   "qam.negotiatingHint": "The Bluetooth link is up, but the audio profile is still being negotiated. It usually takes 1-6 seconds before the Deck shows up as a speaker on your device. Just wait a moment.",
   "qam.a2dpForce": "Force A2DP sink profile",
@@ -195,6 +196,15 @@ const EN: Dict = {
   "set.resumeEvents": "{n} suspend/resume events captured, last: {last}",
   "set.lastDevice": "last device {mac}",
   "set.sysinfo": "System info",
+  "set.multiOutput": "Deck multi-output",
+  "set.multiOutputDesc": "Play to speakers + BT headset + wired headset at once.",
+  "set.multiOn": "multi-output on",
+  "set.multiOff": "multi-output off",
+  "set.resample": "resample {hz} Hz",
+  "set.tooSlow": "client too slow x{n}",
+  "set.noTooSlow": "no client too slow in log",
+  "set.profileLabel": "Profile: {name}",
+  "set.versionsLabel": "PipeWire {pw} / WirePlumber {wp} / BlueZ {bz}",
 
   // EQ
   "eq.presets": "Presets",
@@ -259,6 +269,9 @@ const EN: Dict = {
   "diag.viewLog": "View log",
   "diag.pluginLog": "Plugin log",
   "diag.agent": "Pairing agent",
+  "diag.composition": "Steam UI composition layer",
+  "diag.compOk": "Overlay can cover the top bar",
+  "diag.compMissing": "Unavailable (older loader) - the top bar may stay visible while dimmed",
 
   // 自检项（后端只返回 key，这里翻译）
   "chk.bluetoothctl": "bluetoothctl available",
@@ -334,6 +347,7 @@ const ZH: Dict = {
   "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
   "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
   "qam.playingLabel": "正在播放",
+  "qam.connectedLabel": "已连接",
   "qam.negotiating": "正在协商音频（A2DP）…",
   "qam.negotiatingHint": "蓝牙链路已连上，但音频 profile 还在协商。通常 1~6 秒后你的设备上才会出现这台 Deck 作为音箱。稍等一下就好。",
   "qam.a2dpForce": "强制切到 A2DP 接收模式",
@@ -451,6 +465,15 @@ const ZH: Dict = {
   "set.resumeEvents": "已捕获 {n} 次睡眠/唤醒事件，最近一次：{last}",
   "set.lastDevice": "上次设备 {mac}",
   "set.sysinfo": "系统信息",
+  "set.multiOutput": "Deck 多路输出",
+  "set.multiOutputDesc": "同时输出到扬声器 + 蓝牙耳机 + 有线耳机。",
+  "set.multiOn": "多路输出已开启",
+  "set.multiOff": "多路输出已关闭",
+  "set.resample": "重采样 {hz} Hz",
+  "set.tooSlow": "客户端过慢 x{n}",
+  "set.noTooSlow": "日志里没有客户端过慢记录",
+  "set.profileLabel": "当前档位：{name}",
+  "set.versionsLabel": "PipeWire {pw} / WirePlumber {wp} / BlueZ {bz}",
 
   "eq.presets": "预设",
   "eq.hint": "用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。",
@@ -513,6 +536,9 @@ const ZH: Dict = {
   "diag.viewLog": "查看日志",
   "diag.pluginLog": "插件日志",
   "diag.agent": "配对 agent",
+  "diag.composition": "Steam UI 合成层",
+  "diag.compOk": "遮罩可以盖住顶栏",
+  "diag.compMissing": "不可用（loader 版本较旧）—— 息屏时顶栏可能还露着",
 
   // 自检项
   "chk.bluetoothctl": "bluetoothctl 可用",
@@ -574,11 +600,6 @@ let _lang: Lang | null = null;
 export function getLang(): Lang {
   if (_lang === null) _lang = detectLang();
   return _lang;
-}
-
-/** 手动覆盖语言（设置项里可以给用户切换）。 */
-export function setLang(lang: Lang | null) {
-  _lang = lang;
 }
 
 /**

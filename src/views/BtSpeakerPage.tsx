@@ -15,7 +15,6 @@
  *
  * 好处：改设置不用在 1200 行里滚，改设备列表也不怕碰到设置。
  */
-
 import { useState } from "react";
 import { Focusable } from "@decky/ui";
 import { useSpeaker } from "../store";
@@ -26,22 +25,17 @@ import { DevicesTab } from "./page/DevicesTab";
 import { SettingsTab } from "./page/SettingsTab";
 import { EqTab } from "./page/EqTab";
 import { DiagTab } from "./page/DiagTab";
-
 type Tab = "devices" | "settings" | "eq" | "diag";
-
 const TABS: [Tab, string][] = [
   ["devices", "tab.devices"],
   ["settings", "tab.settings"],
   ["eq", "tab.eq"],
   ["diag", "tab.diag"],
 ];
-
 export function BtSpeakerPage() {
   const { state, error, refresh } = useSpeaker();
   const [tab, setTab] = useState<Tab>("devices");
-
   const ad = state?.adapter;
-
   return (
     // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
     // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
@@ -97,7 +91,6 @@ export function BtSpeakerPage() {
     </div>
   );
 }
-
 // ---------------------------------------------------------------------------
 // 头部：标题 + 副标题 + 状态徽章
 // ---------------------------------------------------------------------------
@@ -140,7 +133,6 @@ function Header({
     </div>
   );
 }
-
 // ---------------------------------------------------------------------------
 // Tab 切换
 // ---------------------------------------------------------------------------
@@ -156,7 +148,6 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
           <Focusable
             key={k}
             onActivate={() => onChange(k)}
-            onClick={() => onChange(k)}
             style={{
               padding: `${SPACE.md}px ${SPACE.xl}px`,
               borderRadius: RADIUS.sm,

@@ -45,10 +45,6 @@ function meta(): { version: string; build: string } {
   return { version: "", build: "" };
 }
 
-export function getVersion(): string {
-  return meta().version;
-}
-
 /** 形如 `v2.8.2 · 11-27 22:15`；拿不到版本就只显示构建时间。 */
 export function versionLabel(): string {
   const { version, build } = meta();

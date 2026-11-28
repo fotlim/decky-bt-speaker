@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Focusable, SliderField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../../backend";
@@ -10,14 +10,14 @@ import {
   Btn, Pill, Hint, SectionTitle, ToggleRow, errMsg,
 } from "../../components";
 import { t } from "../../i18n";
-
 export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh: () => void }) {
   const [alias, setAlias] = useState(state.adapter?.alias || "");
   const [busy, setBusy] = useState(false);
+  const aliasRef = useRef<HTMLInputElement | null>(null);
+  /** 滑杆拖动中的临时值；null = 用后端真实值。避免拖动时每格都打后端。 */
+  const [silenceDraft, setSilenceDraft] = useState<number | null>(null);
   const s = state.settings || {};
-
   useEffect(() => { setAlias(state.adapter?.alias || ""); }, [state.adapter?.alias]);
-
   const save = async (key: string, value: boolean | number | string, label: string) => {
     try {
       await api.setSetting(key, value);
@@ -26,7 +26,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
     }
   };
-
   const changeFocus = async (mode: string) => {
     try {
       const r = await api.setFocusMode(mode);
@@ -39,7 +38,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
     }
   };
-
   const setSilence = async (sec: number) => {
     try {
       await api.setSilenceTimeout(sec);
@@ -48,7 +46,22 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
     }
   };
-
+  /**
+   * 滑杆防抖：拖动过程中连续触发，只在停手 400ms 后提交一次。
+   * 定时器存在 ref 里，卸载时清掉（避免切 tab 后还打后端）。
+   */
+  const silenceTimer = useRef<any>(null);
+  const scheduleSilence = (sec: number) => {
+    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+    silenceTimer.current = setTimeout(() => {
+      silenceTimer.current = null;
+      setSilenceDraft(null);      // 提交后交还给后端真实值
+      setSilence(sec);
+    }, 400);
+  };
+  useEffect(() => () => {
+    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+  }, []);
   const applyAlias = async () => {
     const v = alias.trim();
     if (!v || busy) return;
@@ -62,24 +75,38 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       setBusy(false);
     }
   };
-
   return (
     <div style={{ marginTop: SPACE.xl, maxWidth: 720 }}>
       <SectionTitle>{t("set.name")}</SectionTitle>
       <Hint>{t("set.nameHint")}</Hint>
       <div style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
-        <input
-          value={alias}
-          onChange={(e) => setAlias(e.target.value)}
-          maxLength={40}
-          placeholder="Steam Deck"
-          style={{
-            flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
-            fontSize: FONT.bodyLg, boxSizing: "border-box",
-            background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
-            color: COLORS.text, outline: "none",
+        {/* ⚠️ 必须包 Focusable：Steam 的手柄焦点系统只走 Focusable 树，
+            裸 `<input>` 在游戏模式下**根本选不中**，也就唤不起软键盘 ——
+            表现就是「改名」这个功能手柄完全用不了（真机反馈过）。 */}
+        <Focusable
+          onActivate={() => {
+            // 手柄 A 键：聚焦输入框并唤起 Steam 软键盘
+            try {
+              const el = aliasRef.current;
+              if (el) { el.focus(); }
+            } catch { /* 老版本忽略 */ }
           }}
-        />
+          style={{ flex: 1, display: "flex" }}
+        >
+          <input
+            ref={aliasRef}
+            value={alias}
+            onChange={(e) => setAlias(e.target.value)}
+            maxLength={40}
+            placeholder="Steam Deck"
+            style={{
+              flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+              fontSize: FONT.bodyLg, boxSizing: "border-box",
+              background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
+              color: COLORS.text, outline: "none",
+            }}
+          />
+        </Focusable>
         <Btn variant="primary" onClick={applyAlias} disabled={busy}>
           {busy ? t("common.saving") : t("common.save")}
         </Btn>
@@ -126,7 +153,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               : t("set.agentDown")}
         </div>
         <Focusable
-          onClick={async () => {
+onActivate={async () => {
             try {
               const r = await api.restartAgent();
               toaster.toast({
@@ -137,9 +164,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             } catch (e) {
               toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
-          }}
-          onActivate={async () => {
-            try { await api.restartAgent(); setTimeout(refresh, 800); } catch { /* ignore */ }
           }}
           style={{
             padding: `${SPACE.xs}px ${SPACE.lg}px`, borderRadius: RADIUS.md,
@@ -159,7 +183,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           return (
             <Focusable
               key={p.key}
-              onClick={async () => {
+onActivate={async () => {
                 try {
                   const r = await api.setCodecPreset(p.key);
                   toaster.toast({
@@ -170,9 +194,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 } catch (e) {
                   toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                 }
-              }}
-              onActivate={async () => {
-                try { await api.setCodecPreset(p.key); setTimeout(refresh, 1500); } catch { /* ignore */ }
               }}
               style={{
                 display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
@@ -192,7 +213,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{t(p.label_key)}</div>
                 <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }}>{t(p.desc_key)}</div>
               </div>
-              <Pill>resample {p.resample}</Pill>
+              <Pill>{t("set.resample", { hz: p.resample })}</Pill>
             </Focusable>
           );
         })}
@@ -229,7 +250,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
 
       <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
         <Focusable
-          onClick={async () => {
+onActivate={async () => {
             try {
               const r = await api.fixStutter();
               toaster.toast({
@@ -241,9 +262,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
           }}
-          onActivate={async () => {
-            try { await api.fixStutter(); setTimeout(refresh, 1500); } catch { /* ignore */ }
-          }}
           style={{
             padding: `${SPACE.md}px ${SPACE.xl}px`,
             borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
@@ -251,14 +269,14 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           }}
         >{t("set.fixStutter")}</Focusable>
         <Focusable
-          onClick={async () => {
+onActivate={async () => {
             try {
               const r = await api.diagnoseStutter();
               const lines = [];
               if (r.too_slow?.count > 0) {
-                lines.push(`client too slow x${r.too_slow.count}`);
+                lines.push(t("set.tooSlow", { n: r.too_slow.count }));
               } else if (r.too_slow?.checked) {
-                lines.push("no client too slow in log");
+                lines.push(t("set.noTooSlow"));
               }
               if (r.codec) lines.push(`${t("set.codecCurrent", { codec: r.codec })}`);
               if (r.wifi?.advice) lines.push(r.wifi.advice);
@@ -269,9 +287,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             } catch (e) {
               toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
             }
-          }}
-          onActivate={async () => {
-            try { await api.diagnoseStutter(); } catch { /* ignore */ }
           }}
           style={{
             padding: `${SPACE.md}px ${SPACE.xl}px`,
@@ -296,7 +311,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           return (
             <Focusable
               key={mode}
-              onClick={() => changeFocus(mode)}
               onActivate={() => changeFocus(mode)}
               style={{
                 display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
@@ -331,12 +345,17 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             : ""}
         </div>
         <SliderField
-          value={s.silence_disconnect ?? 0}
+          value={silenceDraft ?? (s.silence_disconnect ?? 0)}
           min={0}
           max={600}
           step={30}
           showValue={false}
-          onChange={(v) => { setSilence(v); }}
+          // ⚠️ SliderField 只有 onChange，没有「松手」回调，而它在拖动过程中
+          //    会**每一格**触发一次（0~600 / 30 = 21 档）。早期直接在这里
+          //    调后端 + refresh()，滑一下就是二十来次 RPC，每次 refresh
+          //    又要 fork 一堆命令 —— Deck 上直接卡顿。
+          //    现在拖动只更新本地草稿，停手 400ms 后才真正提交一次。
+          onChange={(v) => { setSilenceDraft(v); scheduleSilence(v); }}
         />
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: FONT.small, color: COLORS.dim }}>
           <span>{t("set.silenceOff")}</span><span>5m</span><span>10m</span>
@@ -350,7 +369,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       </Hint>
       <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
         <Focusable
-          onClick={async () => {
+onActivate={async () => {
             try {
               await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
               toaster.toast({ title: t("set.setBaseline"), body: "" });
@@ -359,18 +378,9 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
             }
           }}
-          onActivate={async () => {
-            try {
-              await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
-              refresh();
-            } catch { /* ignore */ }
-          }}
           style={{ padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: FONT.body, cursor: "pointer" }}
         >{t("set.setBaseline")}</Focusable>
         <Focusable
-          onClick={async () => {
-            try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
-          }}
           onActivate={async () => {
             try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
           }}
@@ -386,7 +396,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           return (
             <Focusable
               key={p.key}
-              onClick={async () => {
+onActivate={async () => {
                 try {
                   await api.setLatencyProfile(p.key);
                   toaster.toast({ title: t(p.label_key), body: "" });
@@ -394,9 +404,6 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 } catch (e) {
                   toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                 }
-              }}
-              onActivate={async () => {
-                try { await api.setLatencyProfile(p.key); setTimeout(refresh, 1200); } catch { /* ignore */ }
               }}
               style={{
                 flex: "1 1 180px", padding: `${SPACE.lg}px ${SPACE.xl}px`, borderRadius: RADIUS.sm, cursor: "pointer",
@@ -414,13 +421,13 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
 
       <SectionTitle>{t("set.sysinfo")}</SectionTitle>
       <ToggleRow
-        label="Deck multi-output"
-        desc="Play to speakers + BT headset + wired headset at once."
+        label={t("set.multiOutput")}
+        desc={t("set.multiOutputDesc")}
         checked={!!s.multi_output}
         onChange={async (v) => {
           try {
             await api.setMultiOutput(v);
-            toaster.toast({ title: v ? "multi-output on" : "multi-output off", body: "" });
+            toaster.toast({ title: v ? t("set.multiOn") : t("set.multiOff"), body: "" });
             setTimeout(refresh, 1500);
           } catch (e) {
             toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
@@ -436,7 +443,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       <SectionTitle>{t("set.codecInfo")}</SectionTitle>
       <div style={{ fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }}>
         <div>{t("set.codecActive")}: {state.codec?.codec || t("common.none")}</div>
-        <div>Profile：{state.codec?.profile || "—"}</div>
+        <div>{t("set.profileLabel", { name: state.codec?.profile || "—" })}</div>
         <div>{t("set.codecRole")}: {state.codec?.role || "—"}</div>
       </div>
 
@@ -472,9 +479,9 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
 
       <SectionTitle>{t("set.sysinfo")}</SectionTitle>
       <div style={{ fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }}>
-        <div>PipeWire：{state.versions?.pipewire || t("common.unknown")}</div>
-        <div>WirePlumber：{state.versions?.wireplumber || t("common.unknown")}</div>
-        <div>BlueZ：{state.versions?.bluez || t("common.unknown")}</div>
+        <div>PipeWire: {state.versions?.pipewire || t("common.unknown")}</div>
+        <div>WirePlumber: {state.versions?.wireplumber || t("common.unknown")}</div>
+        <div>BlueZ: {state.versions?.bluez || t("common.unknown")}</div>
         <div>{t("set.defaultOutput")}: {state.sink || t("common.unknown")}</div>
       </div>
     </div>

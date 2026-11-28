@@ -27,8 +27,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useUIComposition, UIComposition } from "../uiComposition";
-import { subscribeDim, setDimmed as setDimState } from "../dimState";
+import { acquireComposition, UIComposition } from "../uiComposition";
+import { subscribeDim } from "../dimState";
 
 type ReleaseHandle = (() => void) | null;
 
@@ -59,9 +59,6 @@ function wake() {
 export function DimOverlay() {
   const [visible, setVisible] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
-  const releaseRef = useRef<ReleaseHandle>(null);
-  const visibleRef = useRef(false);
-  visibleRef.current = visible;
 
   // 订阅共享状态
   useEffect(() => {
@@ -80,8 +77,20 @@ export function DimOverlay() {
   // 但那是「尽量」—— 用户可能在遮罩显示后又按 QAM 键。提到同层
   // （OverlayQAM）能保证即使 QAM 又弹出来，遮罩也不会被它盖住。
   //
+  // ⚠️ 必须在 effect 里调，并且把返回的释放函数放进 cleanup：
+  //    早期版本在渲染期间直接调用，每次渲染都注册一条合成层请求却从不释放。
+  //    依赖 `visible` —— 只在遮罩真正显示时才占用这个合成层。
+  //
   // 拿不到 hook 就静默降级（见 uiComposition.ts），不会崩。
-  useUIComposition(UIComposition.OverlayQAM);
+  useEffect(() => {
+    if (!visible) return;
+    const release = acquireComposition(UIComposition.OverlayQAM);
+    return () => {
+      if (release) {
+        try { release(); } catch { /* 忽略 */ }
+      }
+    };
+  }, [visible]);
 
   // 聚焦遮罩，让键盘事件能落到这里
   useEffect(() => {
@@ -121,9 +130,7 @@ export function DimOverlay() {
     } catch {
       /* 拿不到就只靠 DOM 事件兜着 */
     }
-    releaseRef.current = release;
     return () => {
-      releaseRef.current = null;
       try {
         release?.();
       } catch {
@@ -170,10 +177,4 @@ export function DimOverlay() {
       <span style={{ opacity: 0.001, userSelect: "none" }}>·</span>
     </div>
   );
-}
-
-/** 供外部（QAM 按钮）触发唤醒。 */
-export function forceWake() {
-  setDimState(false);
-  wake();
 }

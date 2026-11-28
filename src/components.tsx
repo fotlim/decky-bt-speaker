@@ -14,18 +14,15 @@
  * 尺寸和间距都不对。全屏页需要更紧凑、更可控的控件，所以自己实现。
  * QAM 面板（Speaker.tsx）仍然用原生控件，那是对的。
  */
-
 import { Focusable } from "@decky/ui";
 import {
   COLORS, TONES, SPACE, FONT, RADIUS,
   CARD_STYLE, ELLIPSIS, HINT_STYLE,
   type Tone,
 } from "./theme";
-
 // ---------------------------------------------------------------------------
 // 工具函数
 // ---------------------------------------------------------------------------
-
 /**
  * 从 catch 到的任意值里取出可读的错误文本。
  *
@@ -52,20 +49,16 @@ export function errMsg(e: unknown): string {
   }
   return String(e);
 }
-
 // ---------------------------------------------------------------------------
 // 按钮
 // ---------------------------------------------------------------------------
-
 type BtnVariant = "primary" | "ghost" | "danger" | "ok";
-
 const BTN_VARIANTS: Record<BtnVariant, { bg: string; fg: string }> = {
   primary: { bg: COLORS.accent, fg: "#fff" },
   ghost: { bg: COLORS.surfaceHover, fg: COLORS.text },
   danger: { bg: TONES.warn.bg, fg: TONES.warn.fg },
   ok: { bg: TONES.ok.bg, fg: TONES.ok.fg },
 };
-
 /**
  * 胶囊按钮 —— 全屏页里**唯一**的按钮形态。
  *
@@ -89,8 +82,16 @@ export function Btn({
   };
   return (
     <Focusable
+      // ⚠️ 只挂 onActivate，**不要**同时挂 onClick。
+      //
+      // 为什么：Steam 在焦点元素上按 A 键时，NavigationManager 会调用
+      // onActivate，**并且**合成一次 DOM click 事件。两个都挂就是双触发 ——
+      // 表现是「开关按一下等于按两下」= 看起来完全没反应，
+      // 或者音量键一下跳两档（真机反馈过）。
+      //
+      // 代价：鼠标点击依赖 Focusable 自己的 click 转发。@decky/ui 的
+      // Focusable 会把 click 映射到 onActivate，所以鼠标路径依然可用。
       onActivate={fire}
-      onClick={fire}
       title={title}
       style={{
         display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -104,48 +105,17 @@ export function Btn({
         background: disabled ? COLORS.surface : v.bg,
         color: disabled ? COLORS.dim : v.fg,
         opacity: disabled ? 0.6 : 1,
+        // disabled 时不让指针事件触发（onActivate 内部也会判断 disabled）
+        pointerEvents: disabled ? "none" : "auto",
       }}
     >
       {children}
     </Focusable>
   );
 }
-
-/** 圆形图标按钮（QAM 里用不到，全屏页的工具栏用） */
-export function IconButton({
-  onClick, children, size = 36, active = false, danger = false, disabled = false, label,
-}: {
-  onClick: () => void; children: any; size?: number; active?: boolean; danger?: boolean;
-  disabled?: boolean; label?: string;
-}) {
-  const bg = disabled
-    ? COLORS.surface
-    : danger
-      ? COLORS.accentWarm
-      : active
-        ? "rgba(76,154,255,0.9)"
-        : COLORS.surfaceHover;
-  return (
-    <Focusable
-      onActivate={() => { if (!disabled) onClick(); }}
-      onClick={() => { if (!disabled) onClick(); }}
-      style={{
-        width: size, height: size, borderRadius: RADIUS.full, display: "flex",
-        alignItems: "center", justifyContent: "center",
-        cursor: disabled ? "default" : "pointer",
-        background: bg, color: disabled ? COLORS.dim : "#fff", flexShrink: 0,
-      }}
-      aria-label={label}
-    >
-      {children}
-    </Focusable>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // 标签 / 徽章
 // ---------------------------------------------------------------------------
-
 /** 小徽章。`tone` 决定配色，全部来自 TONES。 */
 export function Pill({ children, tone = "neutral" }: { children: any; tone?: Tone }) {
   const c = TONES[tone] || TONES.neutral;
@@ -157,25 +127,9 @@ export function Pill({ children, tone = "neutral" }: { children: any; tone?: Ton
     }}>{children}</span>
   );
 }
-
-/** 状态圆点（配合 Pill 或独立使用） */
-export function Dot({ tone = "ok", size = 8, pulse = false }: {
-  tone?: Tone; size?: number; pulse?: boolean;
-}) {
-  const c = TONES[tone] || TONES.neutral;
-  return (
-    <span style={{
-      width: size, height: size, borderRadius: RADIUS.full,
-      background: c.fg, flexShrink: 0, display: "inline-block",
-      animation: pulse ? "btPulse 1.4s ease-in-out infinite" : undefined,
-    }} />
-  );
-}
-
 // ---------------------------------------------------------------------------
 // 布局
 // ---------------------------------------------------------------------------
-
 /** 分节标题 */
 export function SectionTitle({ children, right }: { children: any; right?: any }) {
   return (
@@ -188,7 +142,6 @@ export function SectionTitle({ children, right }: { children: any; right?: any }
     </div>
   );
 }
-
 /** 分组小标题（比分节标题低一级） */
 export function GroupTitle({ children }: { children: any }) {
   return (
@@ -199,7 +152,6 @@ export function GroupTitle({ children }: { children: any }) {
     }}>{children}</div>
   );
 }
-
 /** 卡片容器（纯容器，不带交互） */
 export function Card({ children, onClick, active = false }: {
   children: any; onClick?: () => void; active?: boolean;
@@ -213,12 +165,11 @@ export function Card({ children, onClick, active = false }: {
   );
   if (!onClick) return inner;
   return (
-    <Focusable onActivate={onClick} onClick={onClick} style={{ cursor: "pointer", marginBottom: SPACE.md }}>
+    <Focusable onActivate={onClick} style={{ cursor: "pointer", marginBottom: SPACE.md }}>
       {inner}
     </Focusable>
   );
 }
-
 /** 横向排列的 Focusable 容器（手柄导航需要 flow-children） */
 export function Row({ children, gap = SPACE.md, align = "center", wrap = false }: {
   children: any; gap?: number; align?: string; wrap?: boolean;
@@ -232,7 +183,6 @@ export function Row({ children, gap = SPACE.md, align = "center", wrap = false }
     </Focusable>
   );
 }
-
 /** 纵向排列的 Focusable 容器 */
 export function Stack({ children, gap = SPACE.md }: { children: any; gap?: number }) {
   return (
@@ -241,11 +191,9 @@ export function Stack({ children, gap = SPACE.md }: { children: any; gap?: numbe
     </Focusable>
   );
 }
-
 // ---------------------------------------------------------------------------
 // 文字
 // ---------------------------------------------------------------------------
-
 /**
  * 加载占位。
  *
@@ -260,7 +208,6 @@ export function Loading({ text = "" }: { text?: string }) {
     </div>
   );
 }
-
 export function ErrorText({ text }: { text: string }) {
   return (
     <div style={{
@@ -271,12 +218,10 @@ export function ErrorText({ text }: { text: string }) {
     }}>{text}</div>
   );
 }
-
 /** 说明文字 */
 export function Hint({ children }: { children: any }) {
   return <div style={{ margin: `${SPACE.sm}px ${SPACE.xs}px`, ...HINT_STYLE }}>{children}</div>;
 }
-
 /** 单行截断的文字 */
 export function EllipsisText({ children, size = FONT.body, color = COLORS.text, bold = false }: {
   children: any; size?: number; color?: string; bold?: boolean;
@@ -287,11 +232,9 @@ export function EllipsisText({ children, size = FONT.body, color = COLORS.text, 
     }}>{children}</div>
   );
 }
-
 // ---------------------------------------------------------------------------
 // 开关
 // ---------------------------------------------------------------------------
-
 /**
  * 开关（Toggle）。手写而不是用 `ToggleField`，因为全屏页需要
  * 「一行内放标签 + 开关」的紧凑布局，原生控件会撑满整行。
@@ -301,14 +244,16 @@ export function Toggle({ checked, onChange, disabled = false }: {
 }) {
   return (
     <Focusable
+      // ⚠️ 同 Btn：只挂 onActivate。onClick 和 onActivate 同时挂会双触发，
+      //    开关按一下等于按两下 = 看起来毫无反应。
       onActivate={() => { if (!disabled) onChange(!checked); }}
-      onClick={() => { if (!disabled) onChange(!checked); }}
       style={{
         width: 42, height: 24, borderRadius: RADIUS.full, flexShrink: 0,
         position: "relative", cursor: disabled ? "default" : "pointer",
         background: checked ? COLORS.accent : COLORS.surfaceActive,
         opacity: disabled ? 0.5 : 1,
         transition: "background 0.15s",
+        pointerEvents: disabled ? "none" : "auto",
       }}
     >
       <div style={{
@@ -319,7 +264,6 @@ export function Toggle({ checked, onChange, disabled = false }: {
     </Focusable>
   );
 }
-
 /** 带标签和说明的一整行开关 */
 export function ToggleRow({ label, desc, checked, onChange, disabled = false }: {
   label: string; desc?: string; checked: boolean;
@@ -344,11 +288,9 @@ export function ToggleRow({ label, desc, checked, onChange, disabled = false }: 
     </div>
   );
 }
-
 // ---------------------------------------------------------------------------
 // 设备头像
 // ---------------------------------------------------------------------------
-
 export function Avatar({ icon, connected }: { icon?: string; connected?: boolean }) {
   const isPhone = (icon || "").includes("phone");
   const glyph = isPhone ? "📱" : (icon || "").includes("computer") ? "💻" : "🔊";

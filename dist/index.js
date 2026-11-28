@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"3.2.2","build":"11-28 15:52"};
+var __BT_META__ = {"version":"3.3.0","build":"11-28 16:40"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -187,8 +187,17 @@ const api = {
  * 但那需要常驻 `dbus-monitor` 进程，权衡后这里先用自适应轮询
  * （零额外常驻进程，实现简单，实测开销可接受）。
  */
-const FAST_MS = 4000; // 有外部音源在播
-const IDLE_MS = 10000; // 已连接但没有音源
+// 间隔的取舍
+// ----------
+// 每次 `status()` 要 fork 十几个外部进程（bluetoothctl / wpctl / pactl /
+// pw-dump / busctl…），在 Deck 上不便宜。但「有外部音源在播」时，
+// 状态确实在变（曲目、位置、协商进度），间隔太大会显得卡。
+//
+// v3.3.0 把后端重复命令合并、给静态数据加缓存之后，单次开销明显下降，
+// 于是播放档位可以从 4 秒提到 2 秒 —— 进度条另有前端插值兜底
+// （见 progress.ts），所以即使这里保守一点也不会「一跳一跳」。
+const FAST_MS = 2000; // 有外部音源在播：要跟播放状态
+const IDLE_MS = 8000; // 已连接但没有音源
 const HIDDEN_MS = 30000; // 界面不可见
 let _state = null;
 let _error = null;
@@ -197,6 +206,8 @@ let _subs = new Set();
 let _timer = null;
 let _inflight = null;
 let _visible = false;
+/** 请求「尽快再刷一次」时置位：等当前 in-flight 结束立刻补跑，而不是并行再起一个。 */
+let _wantRefresh = false;
 function emit() { _subs.forEach((f) => f()); }
 /** 按当前状态算出下次该等多久。 */
 function nextInterval() {
@@ -204,13 +215,19 @@ function nextInterval() {
         return HIDDEN_MS;
     if (_state?.live)
         return FAST_MS; // 有人在放歌，需要跟进度
-    if (_state?.connected?.length)
-        return IDLE_MS;
-    return IDLE_MS;
+    return IDLE_MS; // 空闲 / 已连接未播放
 }
 async function refresh(force = false) {
-    if (_inflight && !force)
+    // 已经有请求在跑：
+    //   - 普通调用直接复用它（去重）
+    //   - force 调用**不再并行起第二个**，而是记下「跑完再补一次」
+    //     —— 并行起多个 status() 只会让后端多 fork 几倍的命令，
+    //        而且先完成的那个会提前把 _inflight 置空，第三个调用又能再起一个。
+    if (_inflight) {
+        if (force)
+            _wantRefresh = true;
         return _inflight;
+    }
     _inflight = (async () => {
         try {
             const r = await api.status();
@@ -224,7 +241,14 @@ async function refresh(force = false) {
             _loading = false;
             _inflight = null;
             emit();
-            reschedule();
+            // 期间有人要求强制刷新 -> 立刻补一次（下一轮仍走同一去重逻辑）
+            if (_wantRefresh) {
+                _wantRefresh = false;
+                refresh(true);
+            }
+            else {
+                reschedule();
+            }
         }
     })();
     return _inflight;
@@ -239,15 +263,30 @@ function reschedule() {
         return; // 没人订阅就不轮询
     _timer = setTimeout(() => { refresh(); }, nextInterval());
 }
-function setVisible(v) {
-    if (_visible === v)
-        return;
-    _visible = v;
-    // 刚变可见立刻刷新一次，避免看到过期数据
-    if (v)
-        refresh(true);
-    else
+/**
+ * 可见性用**引用计数**而不是单个布尔。
+ *
+ * ⚠️ 真机 bug：QAM 面板（`Speaker`）和全屏页（`BtSpeakerPage`）共用这个单例。
+ * 早期用单一 `_visible` 标志，QAM 卸载时无条件 `setPanelVisible(false)`，
+ * 会把**仍在前台**的全屏页一起降频到 30 秒 —— 表现为全屏页里播放进度
+ * 半天不动、A2DP 状态看着卡死。
+ *
+ * 现在改成计数：谁挂载谁 +1、卸载 -1，只有计数归零才算「不可见」。
+ */
+let _visibleCount = 0;
+function acquireVisible() {
+    _visibleCount += 1;
+    if (_visibleCount === 1) {
+        _visible = true;
+        refresh(true); // 刚变可见立刻刷新，避免看到过期数据
+    }
+}
+function releaseVisible() {
+    _visibleCount = Math.max(0, _visibleCount - 1);
+    if (_visibleCount === 0) {
+        _visible = false;
         reschedule();
+    }
 }
 function startPolling() {
     if (!_timer)
@@ -264,14 +303,22 @@ function useSpeaker() {
     SP_REACT.useEffect(() => {
         const f = () => force((n) => n + 1);
         _subs.add(f);
+        acquireVisible(); // 挂载即算可见（计数 +1）
         startPolling();
-        // 页面可见性：切到别的界面时降频
-        const onVis = () => setVisible(!document.hidden);
+        // 浏览器层面的页面可见性：整个窗口切走时降频。
+        // 注意这只影响「窗口」维度，与面板自身的挂载/卸载是两回事，
+        // 所以这里不能直接改 _visible，只在窗口隐藏时额外降频。
+        const onVis = () => {
+            if (document.hidden)
+                reschedule();
+            else
+                refresh(true);
+        };
         document.addEventListener("visibilitychange", onVis);
-        setVisible(!document.hidden);
         return () => {
             _subs.delete(f);
             document.removeEventListener("visibilitychange", onVis);
+            releaseVisible(); // 计数 -1，归零才真正降频
             // 最后一个订阅者离开时停掉定时器（下次挂载会重新起）
             if (_subs.size === 0) {
                 _visible = false;
@@ -284,8 +331,6 @@ function useSpeaker() {
     }, []);
     return { state: _state, error: _error, loading: _loading, refresh: () => { refresh(true); } };
 }
-/** 供 QAM 面板显式标记可见性（QAM 收起时 document.hidden 不一定变）。 */
-function setPanelVisible(v) { setVisible(v); }
 
 /**
  * 设计令牌（design tokens）：颜色 + 间距 + 字号 + 圆角。
@@ -473,7 +518,27 @@ function Btn({ onClick, children, variant = "ghost", disabled = false, small = f
         if (!disabled)
             onClick();
     };
-    return (SP_JSX.jsx(DFL.Focusable, { onActivate: fire, onClick: fire, title: title, style: {
+    return (SP_JSX.jsx(DFL.Focusable
+    // ⚠️ 只挂 onActivate，**不要**同时挂 onClick。
+    //
+    // 为什么：Steam 在焦点元素上按 A 键时，NavigationManager 会调用
+    // onActivate，**并且**合成一次 DOM click 事件。两个都挂就是双触发 ——
+    // 表现是「开关按一下等于按两下」= 看起来完全没反应，
+    // 或者音量键一下跳两档（真机反馈过）。
+    //
+    // 代价：鼠标点击依赖 Focusable 自己的 click 转发。@decky/ui 的
+    // Focusable 会把 click 映射到 onActivate，所以鼠标路径依然可用。
+    , { 
+        // ⚠️ 只挂 onActivate，**不要**同时挂 onClick。
+        //
+        // 为什么：Steam 在焦点元素上按 A 键时，NavigationManager 会调用
+        // onActivate，**并且**合成一次 DOM click 事件。两个都挂就是双触发 ——
+        // 表现是「开关按一下等于按两下」= 看起来完全没反应，
+        // 或者音量键一下跳两档（真机反馈过）。
+        //
+        // 代价：鼠标点击依赖 Focusable 自己的 click 转发。@decky/ui 的
+        // Focusable 会把 click 映射到 onActivate，所以鼠标路径依然可用。
+        onActivate: fire, title: title, style: {
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             gap: SPACE.xs,
             padding: small ? `${SPACE.xs}px ${SPACE.lg}px` : `${SPACE.md}px ${SPACE.xl}px`,
@@ -485,6 +550,8 @@ function Btn({ onClick, children, variant = "ghost", disabled = false, small = f
             background: disabled ? COLORS.surface : v.bg,
             color: disabled ? COLORS.dim : v.fg,
             opacity: disabled ? 0.6 : 1,
+            // disabled 时不让指针事件触发（onActivate 内部也会判断 disabled）
+            pointerEvents: disabled ? "none" : "auto",
         }, children: children }));
 }
 // ---------------------------------------------------------------------------
@@ -526,7 +593,7 @@ function Card({ children, onClick, active = false }) {
         }, children: children }));
     if (!onClick)
         return inner;
-    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, onClick: onClick, style: { cursor: "pointer", marginBottom: SPACE.md }, children: inner }));
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, style: { cursor: "pointer", marginBottom: SPACE.md }, children: inner }));
 }
 /** 纵向排列的 Focusable 容器 */
 function Stack({ children, gap = SPACE.md }) {
@@ -571,14 +638,20 @@ function EllipsisText({ children, size = FONT.body, color = COLORS.text, bold = 
  * 「一行内放标签 + 开关」的紧凑布局，原生控件会撑满整行。
  */
 function Toggle({ checked, onChange, disabled = false }) {
-    return (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { if (!disabled)
-            onChange(!checked); }, onClick: () => { if (!disabled)
+    return (SP_JSX.jsx(DFL.Focusable
+    // ⚠️ 同 Btn：只挂 onActivate。onClick 和 onActivate 同时挂会双触发，
+    //    开关按一下等于按两下 = 看起来毫无反应。
+    , { 
+        // ⚠️ 同 Btn：只挂 onActivate。onClick 和 onActivate 同时挂会双触发，
+        //    开关按一下等于按两下 = 看起来毫无反应。
+        onActivate: () => { if (!disabled)
             onChange(!checked); }, style: {
             width: 42, height: 24, borderRadius: RADIUS.full, flexShrink: 0,
             position: "relative", cursor: disabled ? "default" : "pointer",
             background: checked ? COLORS.accent : COLORS.surfaceActive,
             opacity: disabled ? 0.5 : 1,
             transition: "background 0.15s",
+            pointerEvents: disabled ? "none" : "auto",
         }, children: SP_JSX.jsx("div", { style: {
                 position: "absolute", top: 3, left: checked ? 21 : 3,
                 width: 18, height: 18, borderRadius: RADIUS.full,
@@ -674,6 +747,7 @@ const EN = {
     "qam.dimKeepAwake": "Auto-suspend is blocked while the screen is off",
     "qam.dimScreenHint": "The screen turns off and the Deck stays awake, so the audio link survives.",
     "qam.playingLabel": "Playing",
+    "qam.connectedLabel": "Connected",
     "qam.negotiating": "Negotiating audio (A2DP)…",
     "qam.negotiatingHint": "The Bluetooth link is up, but the audio profile is still being negotiated. It usually takes 1-6 seconds before the Deck shows up as a speaker on your device. Just wait a moment.",
     "qam.a2dpForce": "Force A2DP sink profile",
@@ -787,6 +861,15 @@ const EN = {
     "set.resumeEvents": "{n} suspend/resume events captured, last: {last}",
     "set.lastDevice": "last device {mac}",
     "set.sysinfo": "System info",
+    "set.multiOutput": "Deck multi-output",
+    "set.multiOutputDesc": "Play to speakers + BT headset + wired headset at once.",
+    "set.multiOn": "multi-output on",
+    "set.multiOff": "multi-output off",
+    "set.resample": "resample {hz} Hz",
+    "set.tooSlow": "client too slow x{n}",
+    "set.noTooSlow": "no client too slow in log",
+    "set.profileLabel": "Profile: {name}",
+    "set.versionsLabel": "PipeWire {pw} / WirePlumber {wp} / BlueZ {bz}",
     // EQ
     "eq.presets": "Presets",
     "eq.hint": "Uses PipeWire's built-in param_eq (no external plugins). Switching restarts PipeWire — expect a second of silence.",
@@ -846,6 +929,9 @@ const EN = {
     "diag.viewLog": "View log",
     "diag.pluginLog": "Plugin log",
     "diag.agent": "Pairing agent",
+    "diag.composition": "Steam UI composition layer",
+    "diag.compOk": "Overlay can cover the top bar",
+    "diag.compMissing": "Unavailable (older loader) - the top bar may stay visible while dimmed",
     // 自检项（后端只返回 key，这里翻译）
     "chk.bluetoothctl": "bluetoothctl available",
     "chk.busctl": "busctl available",
@@ -912,6 +998,7 @@ const ZH = {
     "qam.dimKeepAwake": "息屏期间已阻止系统自动休眠",
     "qam.dimScreenHint": "息屏后会保持唤醒，音频链路不会断。",
     "qam.playingLabel": "正在播放",
+    "qam.connectedLabel": "已连接",
     "qam.negotiating": "正在协商音频（A2DP）…",
     "qam.negotiatingHint": "蓝牙链路已连上，但音频 profile 还在协商。通常 1~6 秒后你的设备上才会出现这台 Deck 作为音箱。稍等一下就好。",
     "qam.a2dpForce": "强制切到 A2DP 接收模式",
@@ -1022,6 +1109,15 @@ const ZH = {
     "set.resumeEvents": "已捕获 {n} 次睡眠/唤醒事件，最近一次：{last}",
     "set.lastDevice": "上次设备 {mac}",
     "set.sysinfo": "系统信息",
+    "set.multiOutput": "Deck 多路输出",
+    "set.multiOutputDesc": "同时输出到扬声器 + 蓝牙耳机 + 有线耳机。",
+    "set.multiOn": "多路输出已开启",
+    "set.multiOff": "多路输出已关闭",
+    "set.resample": "重采样 {hz} Hz",
+    "set.tooSlow": "客户端过慢 x{n}",
+    "set.noTooSlow": "日志里没有客户端过慢记录",
+    "set.profileLabel": "当前档位：{name}",
+    "set.versionsLabel": "PipeWire {pw} / WirePlumber {wp} / BlueZ {bz}",
     "eq.presets": "预设",
     "eq.hint": "用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。",
     "eq.bands": "{n} 段",
@@ -1079,6 +1175,9 @@ const ZH = {
     "diag.viewLog": "查看日志",
     "diag.pluginLog": "插件日志",
     "diag.agent": "配对 agent",
+    "diag.composition": "Steam UI 合成层",
+    "diag.compOk": "遮罩可以盖住顶栏",
+    "diag.compMissing": "不可用（loader 版本较旧）—— 息屏时顶栏可能还露着",
     // 自检项
     "chk.bluetoothctl": "bluetoothctl 可用",
     "chk.busctl": "busctl 可用",
@@ -1258,9 +1357,88 @@ function versionLabel() {
     return build ? `v${version} · ${build}` : `v${version}`;
 }
 
+/**
+ * 播放进度插值。
+ *
+ * 为什么需要？
+ * ----------
+ * 后端轮询最快也是 4 秒一次（`store.ts` 的 `FAST_MS`）—— 因为每次
+ * `status()` 要 fork 十几个外部进程，不能为了进度条把它提到 1 秒。
+ *
+ * 但 4 秒一跳的进度条看起来就是「卡顿、跟不上」，用户的原话是
+ * 「歌词有点跟不上的感觉」。而播放位置本身是**匀速推进**的：
+ * 只要知道「上次读到的位置」和「读到它的时刻」，中间的值可以自己算。
+ *
+ * 做法：把后端给的 `position_ms` 当成锚点，用本地时间往前推。
+ * 每 500ms 重算一次（只触发这一个组件的重渲染，不碰后端）。
+ *
+ * ⚠️ 边界：
+ *  - 暂停 / 停止时不插值（位置不该动）
+ *  - 后端值往回跳（换歌、seek）时以**后端为准**，立刻重置锚点
+ *  - 插值结果不超过 `duration_ms`（避免进度条冲过 100%）
+ *  - 暂停后恢复播放，锚点时间要重算，否则会把暂停时长也算进去
+ */
+
+/** 插值刷新间隔（毫秒）。500ms 对手柄 UI 足够，也不会太耗。 */
+const TICK_MS = 500;
+/**
+ * 返回「此刻」的播放位置（毫秒），比后端值平滑。
+ *
+ * 输入不变时也会随时间推进 —— 这正是需要的效果。
+ */
+function useSmoothPosition(input) {
+    const [pos, setPos] = SP_REACT.useState(input?.positionMs ?? 0);
+    // 锚点：后端值 + 读到它的本地时刻
+    const anchorPos = SP_REACT.useRef(0);
+    const anchorAt = SP_REACT.useRef(0);
+    const playing = (input?.status || "").toLowerCase() === "playing";
+    const backendPos = input?.positionMs ?? 0;
+    const duration = input?.durationMs ?? 0;
+    // 后端值变化时重置锚点。
+    //
+    // 只在「后端值明显不同于我们插值出来的值」时重置，否则每 4 秒一次
+    // 的轮询会把锚点不断拉回，插值就白做了。
+    // 判定阈值 1.5 秒：小于它就认为只是读取抖动，不值得重置。
+    SP_REACT.useEffect(() => {
+        if (!input) {
+            anchorPos.current = 0;
+            anchorAt.current = 0;
+            setPos(0);
+            return;
+        }
+        const now = Date.now();
+        const projected = playing && anchorAt.current
+            ? anchorPos.current + (now - anchorAt.current)
+            : anchorPos.current;
+        const drift = Math.abs(backendPos - projected);
+        if (drift > 1500 || !anchorAt.current) {
+            anchorPos.current = backendPos;
+            anchorAt.current = now;
+            setPos(backendPos);
+        }
+    }, [backendPos, playing, !!input]);
+    // 播放中才推进
+    SP_REACT.useEffect(() => {
+        if (!playing || !anchorAt.current)
+            return;
+        const id = setInterval(() => {
+            const raw = anchorPos.current + (Date.now() - anchorAt.current);
+            const capped = duration > 0 ? Math.min(raw, duration) : raw;
+            setPos(Math.max(0, capped));
+        }, TICK_MS);
+        return () => clearInterval(id);
+    }, [playing, duration]);
+    return Math.max(0, Math.round(pos));
+}
+/** 把毫秒格式化成 `m:ss`（与后端 `_fmt_ms` 保持一致）。 */
+function fmtMs(ms) {
+    const total = Math.max(0, Math.floor((ms || 0) / 1000));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
 function VolBtn({ onClick, label }) {
-    return (SP_JSX.jsx(DFL.Focusable, { onClick: onClick, onActivate: onClick, style: {
+    return (SP_JSX.jsx(DFL.Focusable, { onActivate: onClick, style: {
             flex: 1, minWidth: 0, padding: "9px 0", borderRadius: RADIUS.sm, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             background: "rgba(255,255,255,0.07)", border: `1px solid ${COLORS.border}`,
@@ -1270,11 +1448,9 @@ function VolBtn({ onClick, label }) {
 function Speaker() {
     const { state, error } = useSpeaker();
     const [busy, setBusy] = SP_REACT.useState(false);
-    // QAM 面板挂载即视为可见；卸载时通知 store 降频
-    SP_REACT.useEffect(() => {
-        setPanelVisible(true);
-        return () => setPanelVisible(false);
-    }, []);
+    // ⚠️ 可见性由 `useSpeaker()` 内部统一管理（引用计数），
+    //    这里**不要**再调 setPanelVisible —— 那会让计数减两次，
+    //    导致全屏页还开着却被判为「不可见」而降频到 30 秒。
     // ---- 息屏（当音箱时省电 / 防烧屏）--------------------------------------
     //
     // ⚠️ 遮罩不在这里渲染。它挂成**全局组件**（见 index.tsx），
@@ -1286,10 +1462,33 @@ function Speaker() {
     // 面板本身不因息屏而改变（息屏时 QAM 已被 CloseSideMenus 收起）。
     // 早期这里留了一个只写不读的 useState，是死代码。
     const dimTimer = SP_REACT.useRef(null);
+    /**
+     * 卸载时「是否已经处于息屏状态」。
+     *
+     * ⚠️ 为什么需要它（真机隐患，必须修）
+     * ---------------------------------
+     * 早期卸载清理只做了 `clearTimeout(dimTimer)`，**从不调 `undimScreen()`**。
+     * 而 `enterDim()` 第一步是 `Navigation.CloseSideMenus()` —— 它会让 QAM
+     * 面板立刻卸载。于是「点息屏」这个动作本身就把唯一的兜底（`max_seconds`
+     * 定时器）连同组件一起清掉了。一旦遮罩唤醒链路失效（手柄事件没接上、
+     * 合成层没挂上），屏幕就永久黑着，用户只能长按电源键硬重启。
+     *
+     * 正确语义：**只要背光是被我们关掉的，组件离开时就必须还回去。**
+     * 用 ref 而不是 state，因为清理函数要读最新值且不触发重渲染。
+     */
+    const dimmedRef = SP_REACT.useRef(false);
     // 组件卸载时一定恢复背光，避免留下黑屏
     SP_REACT.useEffect(() => () => {
-        if (dimTimer.current)
+        if (dimTimer.current) {
             clearTimeout(dimTimer.current);
+            dimTimer.current = null;
+        }
+        if (dimmedRef.current) {
+            dimmedRef.current = false;
+            setDimmed(false);
+            // 卸载路径无法 await，用 catch 兜住（失败也不该阻塞卸载）
+            api.undimScreen().catch(() => { });
+        }
     }, []);
     const enterDim = async () => {
         try {
@@ -1312,6 +1511,7 @@ function Speaker() {
             }
             const r = await api.dimScreen();
             // 通知全局遮罩显示，再更新本地按钮状态
+            dimmedRef.current = true;
             setDimmed(true);
             const secs = (r.max_seconds || 300) * 1000;
             if (dimTimer.current)
@@ -1335,14 +1535,27 @@ function Speaker() {
             clearTimeout(dimTimer.current);
             dimTimer.current = null;
         }
+        dimmedRef.current = false;
         setDimmed(false);
         try {
             await api.undimScreen();
         }
-        catch { /* ignore */ }
+        catch (e) {
+            // 恢复背光失败是「屏幕可能黑着」的严重问题，不能静默吞掉
+            toaster.toast({ title: t("qam.dimFailed"), body: errMsg(e) });
+        }
     };
     const ad = state?.adapter;
     const connected = state?.connected || [];
+    // 播放进度插值：后端最快 4 秒才给一次位置，这里按本地时钟平滑推进，
+    // 否则进度条和歌词位置看起来是「一跳一跳」的（真机反馈「跟不上」）。
+    const smoothPos = useSmoothPosition(state?.track && state.track.duration_ms > 0
+        ? {
+            positionMs: state.track.position_ms,
+            durationMs: state.track.duration_ms,
+            status: state.track.status,
+        }
+        : null);
     const act = async (fn, okMsg) => {
         if (busy)
             return;
@@ -1365,7 +1578,8 @@ function Speaker() {
     const toggleMute = () => {
         if (!state)
             return;
-        act(() => api.setMute(!state.volume.muted), state.volume.muted ? t("common.ok") : t("common.ok"));
+        const muted = !!state.volume?.muted;
+        act(() => api.setMute(!muted), muted ? t("qam.unmute") : t("qam.mute"));
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "2px 2px 8px" }, children: [SP_JSX.jsx("div", { style: {
                             width: 38, height: 38, borderRadius: 19, display: "flex", alignItems: "center", justifyContent: "center",
@@ -1380,25 +1594,14 @@ function Speaker() {
                             : t("qam.rfkillSoft") })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.setPower(true), t("qam.btOn")), children: t("qam.turnOnBt") }) }), state?.rfkill?.soft && !state.rfkill.hard && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => act(() => api.unblockRfkill(), t("qam.unblockRfkill")), children: t("qam.unblockRfkill") }) }))] })), connected.length > 0 && (SP_JSX.jsx("div", { style: { margin: "6px 0 2px" }, children: connected.map((d) => (SP_JSX.jsxs("div", { style: {
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", marginBottom: 6,
                         borderRadius: 9, background: "rgba(76,195,138,0.10)", border: "1px solid rgba(76,195,138,0.25)",
-                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: t("qam.playingLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 12, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), connected.length > 0 && state?.a2dp && !state.a2dp.ready && (SP_JSX.jsxs("div", { style: {
+                    }, children: [SP_JSX.jsx("div", { style: { color: COLORS.ok, flexShrink: 0 }, children: (d.icon || "").includes("phone") ? SP_JSX.jsx(FaMobileAlt, { size: 15 }) : SP_JSX.jsx(FaLaptop, { size: 15 }) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 13, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: d.display || d.name }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 1 }, children: state?.live ? t("qam.playingLabel") : t("qam.connectedLabel") })] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => act(() => api.deviceAction(d.mac, "disconnect"), t("dev.disconnected") + " " + (d.display || d.name)), style: { fontSize: 12, color: COLORS.sub, padding: "4px 9px", borderRadius: 7, background: "rgba(255,255,255,0.07)", cursor: "pointer", flexShrink: 0 }, children: t("qam.disconnect") })] }, d.mac))) })), connected.length > 0 && state?.a2dp && !state.a2dp.ready && (SP_JSX.jsxs("div", { style: {
                     margin: "6px 0 2px", padding: "9px 11px", borderRadius: 8, fontSize: 12,
                     lineHeight: 1.6, background: "rgba(76,154,255,0.10)",
                     border: "1px solid rgba(76,154,255,0.28)", color: "#a8c8ff",
                 }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 7 }, children: [SP_JSX.jsx("span", { style: {
                                     width: 6, height: 6, borderRadius: 3, background: COLORS.accent,
-                                    animation: "pulse 1.2s ease-in-out infinite",
-                                } }), t("qam.negotiating")] }), SP_JSX.jsx("div", { style: { marginTop: 5, color: COLORS.dim, fontSize: 11 }, children: t("qam.negotiatingHint") }), SP_JSX.jsx(DFL.Focusable, { onClick: () => act(async () => {
-                            const r = await api.fixA2dp(connected[0]?.mac);
-                            if (r.ok) {
-                                toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
-                            }
-                            else {
-                                toaster.toast({
-                                    title: t("qam.a2dpFixFailed"),
-                                    body: r.detail || r.reason || "",
-                                });
-                            }
-                        }), onActivate: () => act(async () => {
+                                    animation: "btPulse 1.2s ease-in-out infinite",
+                                } }), t("qam.negotiating")] }), SP_JSX.jsx("div", { style: { marginTop: 5, color: COLORS.dim, fontSize: 11 }, children: t("qam.negotiatingHint") }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => act(async () => {
                             const r = await api.fixA2dp(connected[0]?.mac);
                             if (r.ok) {
                                 toaster.toast({ title: t("qam.a2dpFixed"), body: r.profile || "" });
@@ -1436,18 +1639,19 @@ function Speaker() {
                                     overflow: "hidden",
                                 }, children: SP_JSX.jsx("div", { style: {
                                         height: "100%",
-                                        width: `${Math.min(100, (state.track.position_ms / state.track.duration_ms) * 100)}%`,
+                                        width: `${Math.min(100, (smoothPos / state.track.duration_ms) * 100)}%`,
                                         background: COLORS.accent,
                                         borderRadius: 2,
-                                        transition: "width 0.9s linear",
+                                        // 插值每 500ms 推进一次，用同样时长的线性过渡把台阶抹平
+                                        transition: "width 0.5s linear",
                                     } }) }), SP_JSX.jsxs("div", { style: {
                                     display: "flex", justifyContent: "space-between",
                                     fontSize: FONT.caption, color: COLORS.dim, marginTop: 3,
                                     fontVariantNumeric: "tabular-nums",
-                                }, children: [SP_JSX.jsx("span", { children: state.track.position }), SP_JSX.jsx("span", { children: state.track.duration })] })] })), (!state.track || state.track.duration_ms <= 0) && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim }, children: t("qam.noTrackInfo") }))] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
+                                }, children: [SP_JSX.jsx("span", { children: fmtMs(smoothPos) }), SP_JSX.jsx("span", { children: state.track.duration })] })] })), (!state.track || state.track.duration_ms <= 0) && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim }, children: t("qam.noTrackInfo") }))] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
-                        }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {
+                        }, children: [state?.volume?.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume?.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onActivate: enterDim, style: {
                             marginTop: 8, padding: "10px 12px", borderRadius: RADIUS.sm, cursor: "pointer",
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                             background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
@@ -1462,9 +1666,22 @@ function Speaker() {
                 }, children: versionLabel() }))] }));
 }
 
+/**
+ * 「显示没有名称的设备」的偏好。
+ *
+ * 存在模块级而不是组件内：切 tab 会让组件卸载重建，`useState` 会丢，
+ * 用户每次回来都得重新关一遍。
+ */
+let _showUnnamed = true;
 function DevicesTab({ paired, connectedMacs, discoverable, alias, onRefresh, }) {
-    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(true);
+    // ⚠️ 偏好存在模块级而不是组件内：切 tab 会让组件卸载重建，
+    //    useState 的值会丢，「显示无名设备」的选择每次都回到默认值。
+    const [showUnnamed, setShowUnnamed] = SP_REACT.useState(_showUnnamed);
     const [busyMac, setBusyMac] = SP_REACT.useState(null);
+    const updateShowUnnamed = (v) => {
+        _showUnnamed = v;
+        setShowUnnamed(v);
+    };
     const shownPaired = showUnnamed ? paired : paired.filter((d) => d.has_real_name !== false);
     const hiddenPaired = paired.length - shownPaired.length;
     /** 统一的设备操作入口（连接/断开/信任/修复/移除都走这里）。 */
@@ -1489,7 +1706,7 @@ function DevicesTab({ paired, connectedMacs, discoverable, alias, onRefresh, }) 
             setBusyMac(null);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: onRefresh, showUnnamed: showUnnamed, busyMac: busyMac, setBusyMac: setBusyMac }), SP_JSX.jsx("div", { style: { marginTop: SPACE.lg }, children: SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: setShowUnnamed }) }), !paired.length ? (SP_JSX.jsx(Hint, { children: t("dev.noDevices") })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: shownPaired.length }) }), !showUnnamed && hiddenPaired > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenPaired", { n: hiddenPaired }) })), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: shownPaired.map((d) => (SP_JSX.jsx(PairedRow, { device: d, connected: connectedMacs.has(d.mac), busy: busyMac === d.mac, onAct: act }, d.mac))) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }))] }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsx(ScanPanel, { alias: alias, discoverable: discoverable, onPaired: onRefresh, showUnnamed: showUnnamed, busyMac: busyMac, setBusyMac: setBusyMac }), SP_JSX.jsx("div", { style: { marginTop: SPACE.lg }, children: SP_JSX.jsx(ToggleRow, { label: t("dev.showUnnamed"), desc: t("dev.showUnnamedDesc"), checked: showUnnamed, onChange: updateShowUnnamed }) }), !paired.length ? (SP_JSX.jsx(Hint, { children: t("dev.noDevices") })) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("dev.pairedCount", { n: shownPaired.length }) }), !showUnnamed && hiddenPaired > 0 && (SP_JSX.jsx(Hint, { children: t("dev.hiddenPaired", { n: hiddenPaired }) })), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", children: shownPaired.map((d) => (SP_JSX.jsx(PairedRow, { device: d, connected: connectedMacs.has(d.mac), busy: busyMac === d.mac, onAct: act }, d.mac))) }), SP_JSX.jsxs(Hint, { children: [t("dev.hint"), SP_JSX.jsx("br", {}), SP_JSX.jsx("b", { style: { color: COLORS.sub }, children: t("dev.hintPair") })] })] }))] }));
 }
 // ---------------------------------------------------------------------------
 // 已配对设备的一行
@@ -1531,7 +1748,7 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed, busyMac, setBus
             const started = Date.now();
             tickRef.current = setInterval(() => {
                 setElapsed(Math.floor((Date.now() - started) / 1000));
-            }, 500);
+            }, 1000);
             pollRef.current = setInterval(async () => {
                 try {
                     const r = await api.scanList();
@@ -1573,14 +1790,30 @@ function ScanPanel({ alias, discoverable, onPaired, showUnnamed, busyMac, setBus
         setScanning(false);
         setScanned(true);
     };
-    // 卸载时清理所有定时器（含之前漏掉的 autoRef）
+    // 卸载时清理所有定时器，并**主动停止后端扫描**。
+    //
+    // ⚠️ 早期只清了定时器，没调 `scanStop()` —— 切走 tab 后后端仍在扫描，
+    //    白白占着蓝牙射频直到 20 秒超时。Deck 是电池设备，这种浪费要避免。
+    // 用 ref 记住「当前是否在扫」，因为清理函数拿不到最新的 state。
+    const scanningRef = SP_REACT.useRef(false);
+    scanningRef.current = scanning;
     SP_REACT.useEffect(() => () => {
-        if (pollRef.current)
+        if (pollRef.current) {
             clearInterval(pollRef.current);
-        if (tickRef.current)
+            pollRef.current = null;
+        }
+        if (tickRef.current) {
             clearInterval(tickRef.current);
-        if (autoRef.current)
+            tickRef.current = null;
+        }
+        if (autoRef.current) {
             clearTimeout(autoRef.current);
+            autoRef.current = null;
+        }
+        if (scanningRef.current) {
+            // 卸载路径无法 await，失败也只能静默（后端 20 秒后会自己停）
+            api.scanStop().catch(() => { });
+        }
     }, []);
     const pair = async (mac, name, alreadyPaired) => {
         if (busyMac)
@@ -1648,6 +1881,9 @@ function devLabel(d) {
 function SettingsTab({ state, refresh }) {
     const [alias, setAlias] = SP_REACT.useState(state.adapter?.alias || "");
     const [busy, setBusy] = SP_REACT.useState(false);
+    const aliasRef = SP_REACT.useRef(null);
+    /** 滑杆拖动中的临时值；null = 用后端真实值。避免拖动时每格都打后端。 */
+    const [silenceDraft, setSilenceDraft] = SP_REACT.useState(null);
     const s = state.settings || {};
     SP_REACT.useEffect(() => { setAlias(state.adapter?.alias || ""); }, [state.adapter?.alias]);
     const save = async (key, value, label) => {
@@ -1681,6 +1917,24 @@ function SettingsTab({ state, refresh }) {
             toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
         }
     };
+    /**
+     * 滑杆防抖：拖动过程中连续触发，只在停手 400ms 后提交一次。
+     * 定时器存在 ref 里，卸载时清掉（避免切 tab 后还打后端）。
+     */
+    const silenceTimer = SP_REACT.useRef(null);
+    const scheduleSilence = (sec) => {
+        if (silenceTimer.current)
+            clearTimeout(silenceTimer.current);
+        silenceTimer.current = setTimeout(() => {
+            silenceTimer.current = null;
+            setSilenceDraft(null); // 提交后交还给后端真实值
+            setSilence(sec);
+        }, 400);
+    };
+    SP_REACT.useEffect(() => () => {
+        if (silenceTimer.current)
+            clearTimeout(silenceTimer.current);
+    }, []);
     const applyAlias = async () => {
         const v = alias.trim();
         if (!v || busy)
@@ -1697,12 +1951,21 @@ function SettingsTab({ state, refresh }) {
             setBusy(false);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: t("set.name") }), SP_JSX.jsx(Hint, { children: t("set.nameHint") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
-                            flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
-                            fontSize: FONT.bodyLg, boxSizing: "border-box",
-                            background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
-                            color: COLORS.text, outline: "none",
-                        } }), SP_JSX.jsx(Btn, { variant: "primary", onClick: applyAlias, disabled: busy, children: busy ? t("common.saving") : t("common.save") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.audioTuning") }), SP_JSX.jsx(ToggleRow, { label: t("set.audioTuningLabel"), desc: t("set.audioTuningDesc"), checked: !!state.tuning?.installed, onChange: async (v) => {
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: t("set.name") }), SP_JSX.jsx(Hint, { children: t("set.nameHint") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => {
+                            // 手柄 A 键：聚焦输入框并唤起 Steam 软键盘
+                            try {
+                                const el = aliasRef.current;
+                                if (el) {
+                                    el.focus();
+                                }
+                            }
+                            catch { /* 老版本忽略 */ }
+                        }, style: { flex: 1, display: "flex" }, children: SP_JSX.jsx("input", { ref: aliasRef, value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
+                                flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+                                fontSize: FONT.bodyLg, boxSizing: "border-box",
+                                background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
+                                color: COLORS.text, outline: "none",
+                            } }) }), SP_JSX.jsx(Btn, { variant: "primary", onClick: applyAlias, disabled: busy, children: busy ? t("common.saving") : t("common.save") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.audioTuning") }), SP_JSX.jsx(ToggleRow, { label: t("set.audioTuningLabel"), desc: t("set.audioTuningDesc"), checked: !!state.tuning?.installed, onChange: async (v) => {
                     try {
                         if (v) {
                             await api.applyTuning();
@@ -1724,7 +1987,7 @@ function SettingsTab({ state, refresh }) {
                             ? t("set.agentReady")
                             : state.agent
                                 ? t("set.agentRunning")
-                                : t("set.agentDown") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                                : t("set.agentDown") }), SP_JSX.jsx(DFL.Focusable, { onActivate: async () => {
                             try {
                                 const r = await api.restartAgent();
                                 toaster.toast({
@@ -1736,19 +1999,13 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.restartAgent();
-                                setTimeout(refresh, 800);
-                            }
-                            catch { /* ignore */ }
                         }, style: {
                             padding: `${SPACE.xs}px ${SPACE.lg}px`, borderRadius: RADIUS.md,
                             fontSize: FONT.small, cursor: "pointer",
                             background: COLORS.surfaceHover, color: COLORS.text, flexShrink: 0,
                         }, children: t("set.restartAgent") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.codec") }), SP_JSX.jsx(Hint, { children: t("set.codecHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: SPACE.md }, children: (state.quality?.presets || []).map((p) => {
                     const active = (s.codec_preset || "balanced") === p.key;
-                    return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
+                    return (SP_JSX.jsxs(DFL.Focusable, { onActivate: async () => {
                             try {
                                 const r = await api.setCodecPreset(p.key);
                                 toaster.toast({
@@ -1760,12 +2017,6 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.setCodecPreset(p.key);
-                                setTimeout(refresh, 1500);
-                            }
-                            catch { /* ignore */ }
                         }, style: {
                             display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
                             borderRadius: RADIUS.sm, cursor: "pointer",
@@ -1775,12 +2026,12 @@ function SettingsTab({ state, refresh }) {
                                     width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t(p.label_key) }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: t(p.desc_key) })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t(p.label_key) }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: t(p.desc_key) })] }), SP_JSX.jsx(Pill, { children: t("set.resample", { hz: p.resample }) })] }, p.key));
                 }) }), SP_JSX.jsxs(Hint, { children: [t("set.codecCurrent", { codec: state.quality?.active_profile || t("common.none") }), SP_JSX.jsx("span", { style: { color: COLORS.accent } }), SP_JSX.jsx("br", {}), t("set.codecReconnect")] }), SP_JSX.jsx(SectionTitle, { children: t("set.stutter") }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
                     margin: "6px 0 10px", padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm, fontSize: FONT.small, lineHeight: 1.7,
                     background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
                     color: "#ffb3b3", whiteSpace: "pre-wrap",
-                }, children: [SP_JSX.jsxs("b", { children: ["\u26A0\uFE0F ", t("set.stutterWifi")] }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / "), "\n", t("set.stutterWifiBody")] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: t("set.stutterOk") })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                }, children: [SP_JSX.jsxs("b", { children: ["\u26A0\uFE0F ", t("set.stutterWifi")] }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / "), "\n", t("set.stutterWifiBody")] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: t("set.stutterOk") })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: async () => {
                             try {
                                 const r = await api.fixStutter();
                                 toaster.toast({
@@ -1792,25 +2043,19 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.fixStutter();
-                                setTimeout(refresh, 1500);
-                            }
-                            catch { /* ignore */ }
                         }, style: {
                             padding: `${SPACE.md}px ${SPACE.xl}px`,
                             borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
                             background: COLORS.accent, color: "#fff",
-                        }, children: t("set.fixStutter") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                        }, children: t("set.fixStutter") }), SP_JSX.jsx(DFL.Focusable, { onActivate: async () => {
                             try {
                                 const r = await api.diagnoseStutter();
                                 const lines = [];
                                 if (r.too_slow?.count > 0) {
-                                    lines.push(`client too slow x${r.too_slow.count}`);
+                                    lines.push(t("set.tooSlow", { n: r.too_slow.count }));
                                 }
                                 else if (r.too_slow?.checked) {
-                                    lines.push("no client too slow in log");
+                                    lines.push(t("set.noTooSlow"));
                                 }
                                 if (r.codec)
                                     lines.push(`${t("set.codecCurrent", { codec: r.codec })}`);
@@ -1824,11 +2069,6 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.diagnoseStutter();
-                            }
-                            catch { /* ignore */ }
                         }, style: {
                             padding: `${SPACE.md}px ${SPACE.xl}px`,
                             borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
@@ -1839,7 +2079,7 @@ function SettingsTab({ state, refresh }) {
                     ["manual", t("set.focusManual"), t("set.focusManualDesc")],
                 ].map(([mode, label, desc]) => {
                     const active = (s.focus_mode || "coexist") === mode;
-                    return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => changeFocus(mode), onActivate: () => changeFocus(mode), style: {
+                    return (SP_JSX.jsxs(DFL.Focusable, { onActivate: () => changeFocus(mode), style: {
                             display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
                             borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
@@ -1851,7 +2091,13 @@ function SettingsTab({ state, refresh }) {
                                 }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: desc })] })] }, mode));
                 }) }), SP_JSX.jsx(SectionTitle, { children: t("set.power") }), SP_JSX.jsx(Hint, { children: t("set.powerHint") }), SP_JSX.jsxs("div", { style: { marginTop: SPACE.md }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text, marginBottom: SPACE.sm }, children: [t("set.silence"), state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
                                 ? t("set.silenceRemain", { n: state.silence.remaining })
-                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: s.silence_disconnect ?? 0, min: 0, max: 600, step: 30, showValue: false, onChange: (v) => { setSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: FONT.small, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: t("set.silenceOff") }), SP_JSX.jsx("span", { children: "5m" }), SP_JSX.jsx("span", { children: "10m" })] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.normalize") }), SP_JSX.jsxs(Hint, { children: [t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") }), state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: silenceDraft ?? (s.silence_disconnect ?? 0), min: 0, max: 600, step: 30, showValue: false, 
+                        // ⚠️ SliderField 只有 onChange，没有「松手」回调，而它在拖动过程中
+                        //    会**每一格**触发一次（0~600 / 30 = 21 档）。早期直接在这里
+                        //    调后端 + refresh()，滑一下就是二十来次 RPC，每次 refresh
+                        //    又要 fork 一堆命令 —— Deck 上直接卡顿。
+                        //    现在拖动只更新本地草稿，停手 400ms 后才真正提交一次。
+                        onChange: (v) => { setSilenceDraft(v); scheduleSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: FONT.small, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: t("set.silenceOff") }), SP_JSX.jsx("span", { children: "5m" }), SP_JSX.jsx("span", { children: "10m" })] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.normalize") }), SP_JSX.jsxs(Hint, { children: [t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") }), state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: async () => {
                             try {
                                 await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
                                 toaster.toast({ title: t("set.setBaseline"), body: "" });
@@ -1860,19 +2106,7 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.saveFailed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
-                                refresh();
-                            }
-                            catch { /* ignore */ }
-                        }, style: { padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: FONT.body, cursor: "pointer" }, children: t("set.setBaseline") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
-                            try {
-                                await api.resetVolumeBaseline();
-                                refresh();
-                            }
-                            catch { /* ignore */ }
-                        }, onActivate: async () => {
+                        }, style: { padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: FONT.body, cursor: "pointer" }, children: t("set.setBaseline") }), SP_JSX.jsx(DFL.Focusable, { onActivate: async () => {
                             try {
                                 await api.resetVolumeBaseline();
                                 refresh();
@@ -1880,7 +2114,7 @@ function SettingsTab({ state, refresh }) {
                             catch { /* ignore */ }
                         }, style: { padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: FONT.body, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: t("set.latencyHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
                     const active = (s.latency_profile || "balanced") === p.key;
-                    return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
+                    return (SP_JSX.jsxs(DFL.Focusable, { onActivate: async () => {
                             try {
                                 await api.setLatencyProfile(p.key);
                                 toaster.toast({ title: t(p.label_key), body: "" });
@@ -1889,35 +2123,30 @@ function SettingsTab({ state, refresh }) {
                             catch (e) {
                                 toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
                             }
-                        }, onActivate: async () => {
-                            try {
-                                await api.setLatencyProfile(p.key);
-                                setTimeout(refresh, 1200);
-                            }
-                            catch { /* ignore */ }
                         }, style: {
                             flex: "1 1 180px", padding: `${SPACE.lg}px ${SPACE.xl}px`, borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
                         }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t(p.label_key) }), SP_JSX.jsxs("div", { style: { fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: t(p.desc_key) })] }, p.key));
-                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsx(ToggleRow, { label: "Deck multi-output", desc: "Play to speakers + BT headset + wired headset at once.", checked: !!s.multi_output, onChange: async (v) => {
+                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsx(ToggleRow, { label: t("set.multiOutput"), desc: t("set.multiOutputDesc"), checked: !!s.multi_output, onChange: async (v) => {
                     try {
                         await api.setMultiOutput(v);
-                        toaster.toast({ title: v ? "multi-output on" : "multi-output off", body: "" });
+                        toaster.toast({ title: v ? t("set.multiOn") : t("set.multiOff"), body: "" });
                         setTimeout(refresh, 1500);
                     }
                     catch (e) {
                         toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
+                } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsx("div", { children: t("set.profileLabel", { name: state.codec?.profile || "—" }) }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
                     ? t("set.resumeDescOn", { backend: state.power.backend })
-                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
+                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire: ", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber: ", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ: ", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
 }
 
 function EqTab({ state, refresh }) {
     const [busy, setBusy] = SP_REACT.useState(null);
     const [importText, setImportText] = SP_REACT.useState("");
     const [showImport, setShowImport] = SP_REACT.useState(false);
+    const importRef = SP_REACT.useRef(null);
     const presets = state.eq?.presets || [];
     const current = state.eq?.preset || "flat";
     const apply = async (key) => {
@@ -1967,19 +2196,24 @@ function EqTab({ state, refresh }) {
             toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: t("eq.presets") }), SP_JSX.jsx(Hint, { children: t("eq.hint") }), SP_JSX.jsxs(Stack, { gap: SPACE.md, children: [presets.map((p) => (SP_JSX.jsx(PresetRow, { preset: p, active: current === p.key, busy: busy === p.key, onPick: () => apply(p.key) }, p.key))), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsx(Hint, { children: t("eq.importHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: () => setShowImport(!showImport), children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(Btn, { variant: "danger", onClick: removeEq, children: t("eq.removeEq") }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: SPACE.lg }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: {
-                            marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
-                            width: "100%", minHeight: 120, boxSizing: "border-box",
-                            fontSize: FONT.small, color: COLORS.text, fontFamily: "monospace",
-                            background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
-                            outline: "none", resize: "vertical",
-                        } }), SP_JSX.jsx("div", { style: { marginTop: SPACE.md }, children: SP_JSX.jsx(Btn, { variant: "primary", onClick: doImport, disabled: busy === "import", children: busy === "import" ? t("eq.importing") : t("eq.applyImport") }) })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: t("eq.presets") }), SP_JSX.jsx(Hint, { children: t("eq.hint") }), SP_JSX.jsxs(Stack, { gap: SPACE.md, children: [presets.map((p) => (SP_JSX.jsx(PresetRow, { preset: p, active: current === p.key, busy: busy === p.key, onPick: () => apply(p.key) }, p.key))), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsx(Hint, { children: t("eq.importHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: () => setShowImport(!showImport), children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(Btn, { variant: "danger", onClick: removeEq, children: t("eq.removeEq") }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: SPACE.lg }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => {
+                            try {
+                                importRef.current?.focus();
+                            }
+                            catch { /* 忽略 */ }
+                        }, children: SP_JSX.jsx("textarea", { ref: importRef, value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: {
+                                marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
+                                width: "100%", minHeight: 120, boxSizing: "border-box",
+                                fontSize: FONT.small, color: COLORS.text, fontFamily: "monospace",
+                                background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
+                                outline: "none", resize: "vertical",
+                            } }) }), SP_JSX.jsx("div", { style: { marginTop: SPACE.md }, children: SP_JSX.jsx(Btn, { variant: "primary", onClick: doImport, disabled: busy === "import", children: busy === "import" ? t("eq.importing") : t("eq.applyImport") }) })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
 }
 // ---------------------------------------------------------------------------
 // 单个预设行（单选风格）
 // ---------------------------------------------------------------------------
 function PresetRow({ preset, active, busy, onPick }) {
-    return (SP_JSX.jsxs(DFL.Focusable, { onClick: onPick, onActivate: onPick, style: {
+    return (SP_JSX.jsxs(DFL.Focusable, { onActivate: onPick, style: {
             display: "flex", alignItems: "center", gap: SPACE.lg,
             padding: `${SPACE.lg}px ${SPACE.xl}px`,
             borderRadius: RADIUS.lg, cursor: "pointer",
@@ -1993,132 +2227,6 @@ function PresetRow({ preset, active, busy, onPick }) {
                 }, children: active && (SP_JSX.jsx("div", { style: {
                         width: 8, height: 8, borderRadius: RADIUS.full, background: COLORS.accent,
                     } })) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: [t(preset.label_key), busy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: t(preset.desc_key) })] }), preset.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: preset.bands }) })] }));
-}
-
-function DiagTab() {
-    const [data, setData] = SP_REACT.useState(null);
-    const [log, setLog] = SP_REACT.useState(null);
-    const [report, setReport] = SP_REACT.useState("");
-    const [loading, setLoading] = SP_REACT.useState(false);
-    const load = async () => {
-        setLoading(true);
-        try {
-            setData(await api.diagnose());
-        }
-        catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-        }
-        finally {
-            setLoading(false);
-        }
-    };
-    const loadLog = async () => {
-        try {
-            setLog(await api.getLog(200));
-        }
-        catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-        }
-    };
-    const genReport = async () => {
-        try {
-            const r = await api.report();
-            setReport(r.text);
-            toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
-        }
-        catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-        }
-    };
-    const copyReport = async () => {
-        try {
-            const text = report || (await api.report()).text;
-            await navigator.clipboard.writeText(text);
-            toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
-        }
-        catch (e) {
-            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-        }
-    };
-    SP_REACT.useEffect(() => { load(); }, []);
-    const box = {
-        marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
-        background: "rgba(0,0,0,0.35)",
-        fontSize: FONT.caption, color: COLORS.sub, fontFamily: "monospace",
-        whiteSpace: "pre-wrap", maxHeight: 340, overflowY: "auto",
-        lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
-    };
-    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, flexWrap: "wrap" }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: load, disabled: loading, children: loading ? t("common.reading") : t("common.retry") }), SP_JSX.jsx(Btn, { variant: "primary", onClick: genReport, children: t("diag.report") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: copyReport, children: t("diag.copy") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: loadLog, children: t("diag.viewLog") })] }), data?.checks?.length > 0 && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.checks") }), SP_JSX.jsx(Stack, { gap: SPACE.sm, children: data.checks.map((c, i) => (SP_JSX.jsxs("div", { style: {
-                                display: "flex", alignItems: "center", gap: SPACE.md,
-                                padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
-                                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
-                            }, children: [SP_JSX.jsx(Pill, { tone: c.ok ? "ok" : "warn", children: c.ok ? "✓" : "✗" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.body, color: COLORS.text }, children: t(c.key) }), c.detail && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 1 }, children: c.detail }))] })] }, i))) })] })), data?.modules && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.modules") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.modules).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.tools && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.tools") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.tools).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.agent !== undefined && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.agent") }), SP_JSX.jsx(Pill, { tone: data.agent ? "ok" : "warn", children: data.agent ? t("set.agentReady") : t("set.agentDown") })] })), data?.adapter_raw && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw })] })), data?.wp_status && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status })] })), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.report") }), SP_JSX.jsx("div", { style: box, children: report })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.pluginLog") }), SP_JSX.jsx(Hint, { children: log.path }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
-}
-
-const TABS = [
-    ["devices", "tab.devices"],
-    ["settings", "tab.settings"],
-    ["eq", "tab.eq"],
-    ["diag", "tab.diag"],
-];
-function BtSpeakerPage() {
-    const { state, error, refresh } = useSpeaker();
-    const [tab, setTab] = SP_REACT.useState("devices");
-    const ad = state?.adapter;
-    return (
-    // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
-    // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
-    // 全屏路由页如果直接用 inset:0 会被两头遮住。
-    // 用 padding 而非 margin，保证背景色仍然铺满整屏。
-    SP_JSX.jsx("div", { style: {
-            position: "absolute", inset: 0, background: COLORS.bg,
-            paddingTop: "calc(env(safe-area-inset-top, 0px) + 58px)",
-            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 62px)",
-            paddingLeft: "calc(env(safe-area-inset-left, 0px) + 34px)",
-            paddingRight: "calc(env(safe-area-inset-right, 0px) + 34px)",
-            display: "flex", flexDirection: "column",
-            boxSizing: "border-box",
-        }, children: SP_JSX.jsxs("div", { className: "bt-scroll", style: {
-                flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
-                display: "flex", flexDirection: "column",
-                paddingBottom: SPACE.xl,
-            }, children: [SP_JSX.jsx(Header, { alias: ad?.alias, address: ad?.address, powered: !!ad?.powered, discoverable: !!ad?.discoverable, a2dpSink: !!ad?.a2dp_sink }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(TabBar, { tab: tab, onChange: setTab }), !state ? SP_JSX.jsx(Loading, { text: t("page.readingAdapter") }) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: state.paired || [], connectedMacs: new Set((state.connected || []).map((d) => d.mac)), discoverable: !!ad?.discoverable, alias: ad?.alias || "", onRefresh: refresh })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "eq" && SP_JSX.jsx(EqTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }) }));
-}
-// ---------------------------------------------------------------------------
-// 头部：标题 + 副标题 + 状态徽章
-// ---------------------------------------------------------------------------
-function Header({ alias, address, powered, discoverable, a2dpSink, }) {
-    return (SP_JSX.jsxs("div", { style: {
-            display: "flex", alignItems: "flex-start", justifyContent: "space-between",
-            gap: SPACE.xl, marginBottom: SPACE.md,
-        }, children: [SP_JSX.jsxs("div", { style: { minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.page, fontWeight: 700, color: COLORS.text }, children: t("page.title") }), SP_JSX.jsx("div", { style: {
-                            fontSize: FONT.body, color: COLORS.sub, marginTop: 3,
-                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                        }, children: alias ? `${alias} · ${address || t("common.unknown")}` : t("page.readingAdapter") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: {
-                    display: "flex", gap: SPACE.sm, flexWrap: "wrap",
-                    justifyContent: "flex-end", flexShrink: 0, maxWidth: "45%",
-                }, children: [SP_JSX.jsx(Pill, { tone: powered ? "ok" : "warn", children: powered ? t("qam.btOn") : t("qam.btOff") }), SP_JSX.jsx(Pill, { tone: discoverable ? "accent" : "neutral", children: discoverable ? t("qam.discoverable") : t("qam.notVisible") }), SP_JSX.jsx(Pill, { tone: a2dpSink ? "ok" : "warn", children: a2dpSink ? t("page.a2dpSink") : t("page.noSink") })] })] }));
-}
-// ---------------------------------------------------------------------------
-// Tab 切换
-// ---------------------------------------------------------------------------
-function TabBar({ tab, onChange }) {
-    return (SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: {
-            display: "flex", gap: SPACE.sm, margin: `${SPACE.lg}px 0 ${SPACE.xs}px`,
-            borderBottom: `1px solid ${COLORS.border}`, paddingBottom: SPACE.xs,
-        }, children: TABS.map(([k, key]) => {
-            const active = tab === k;
-            return (SP_JSX.jsx(DFL.Focusable, { onActivate: () => onChange(k), onClick: () => onChange(k), style: {
-                    padding: `${SPACE.md}px ${SPACE.xl}px`,
-                    borderRadius: RADIUS.sm,
-                    cursor: "pointer",
-                    fontSize: FONT.bodyLg,
-                    fontWeight: active ? 600 : 400,
-                    background: active ? COLORS.accent : "transparent",
-                    color: active ? "#fff" : COLORS.sub,
-                    transition: "background 0.12s, color 0.12s",
-                }, children: t(key) }, k));
-        }) }));
 }
 
 /**
@@ -2254,13 +2362,29 @@ function resolveHook() {
     return null;
 }
 let warned = false;
+/** hook 是否可用（Steam / loader 版本兼容性探测）。 */
+function compositionAvailable() {
+    return isUICompositionHook(resolveHook());
+}
 /**
  * 把当前组件提升到指定合成层。
  *
  * ⚠️ 内部已做完整保护：hook 不存在、调用抛错，都只会**静默降级**，
  * 绝不会让插件加载失败。这是 v2.8.0 崩溃事故的修复点。
+ *
+ * ⚠️⚠️ 这个函数**不是 React hook**（尽管名字以 use 开头，是历史遗留）：
+ * 它没有内部 state，也不依赖渲染顺序，可以在 effect 里安全调用。
+ *
+ * 早期实现直接**在渲染期间**调用 `hook(...)` —— 这是错的：
+ *   1. 渲染函数必须是纯的，不能有副作用（React 严格模式会渲染两次，
+ *      于是每次渲染都多注册一条合成层请求）
+ *   2. 返回的 `releaseComposition` 被丢弃，请求只增不减，
+ *      长时间使用后合成层请求会累积
+ *
+ * 调用方必须在 `useEffect` 里调它，并把返回的释放函数放进 cleanup。
+ * 返回 `null` 表示「当前环境不支持」（旧版 loader），调用方无需处理。
  */
-function useUIComposition(composition) {
+function acquireComposition(composition) {
     const hook = resolveHook();
     if (!isUICompositionHook(hook)) {
         if (!warned) {
@@ -2273,10 +2397,19 @@ function useUIComposition(composition) {
             console.warn("[bt-speaker] Steam UI composition hook unavailable (older loader?). " +
                 "The dim overlay cannot cover the top bar, but screen-off still works.");
         }
-        return;
+        return null;
     }
     try {
-        hook(composition, "bt-speaker");
+        const res = hook(composition, "bt-speaker");
+        // hook 可能返回 { releaseComposition } 也可能返回 void（旧版）
+        if (res && typeof res.releaseComposition === "function") {
+            return () => {
+                try {
+                    res.releaseComposition();
+                }
+                catch { /* 忽略 */ }
+            };
+        }
     }
     catch (e) {
         if (!warned) {
@@ -2284,6 +2417,144 @@ function useUIComposition(composition) {
             console.warn("[bt-speaker] UI composition call failed, degraded gracefully", e);
         }
     }
+    return null;
+}
+/** 供诊断页显示：当前环境到底能不能用合成层提升。 */
+function compositionDiagnostics() {
+    return {
+        available: compositionAvailable(),
+        findVar: optionalFn("findVar") !== null,
+        findModuleExport: optionalFn("findModuleExport") !== null,
+        findModuleChild: optionalFn("findModuleChild") !== null,
+    };
+}
+
+function DiagTab() {
+    const [data, setData] = SP_REACT.useState(null);
+    const [log, setLog] = SP_REACT.useState(null);
+    const [report, setReport] = SP_REACT.useState("");
+    const [loading, setLoading] = SP_REACT.useState(false);
+    /** 合成层能力探测是纯前端、同步的，算一次就够（后端不知道 loader 版本）。 */
+    const [composition] = SP_REACT.useState(() => compositionDiagnostics());
+    const load = async () => {
+        setLoading(true);
+        try {
+            setData(await api.diagnose());
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    const loadLog = async () => {
+        try {
+            setLog(await api.getLog(200));
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
+    const genReport = async () => {
+        try {
+            const r = await api.report();
+            setReport(r.text);
+            toaster.toast({ title: t("diag.generated"), body: t("diag.generatedBody") });
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
+    const copyReport = async () => {
+        try {
+            const text = report || (await api.report()).text;
+            await navigator.clipboard.writeText(text);
+            toaster.toast({ title: t("diag.copied"), body: t("diag.copiedBody") });
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
+    };
+    SP_REACT.useEffect(() => { load(); }, []);
+    const box = {
+        marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
+        background: "rgba(0,0,0,0.35)",
+        fontSize: FONT.caption, color: COLORS.sub, fontFamily: "monospace",
+        whiteSpace: "pre-wrap", maxHeight: 340, overflowY: "auto",
+        lineHeight: 1.55, border: `1px solid ${COLORS.border}`,
+    };
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl }, children: [SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, flexWrap: "wrap" }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: load, disabled: loading, children: loading ? t("common.reading") : t("common.retry") }), SP_JSX.jsx(Btn, { variant: "primary", onClick: genReport, children: t("diag.report") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: copyReport, children: t("diag.copy") }), SP_JSX.jsx(Btn, { variant: "ghost", onClick: loadLog, children: t("diag.viewLog") })] }), data?.checks?.length > 0 && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SectionTitle, { children: t("diag.checks") }), SP_JSX.jsx(Stack, { gap: SPACE.sm, children: data.checks.map((c) => (SP_JSX.jsxs("div", { style: {
+                                display: "flex", alignItems: "center", gap: SPACE.md,
+                                padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+                                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                            }, children: [SP_JSX.jsx(Pill, { tone: c.ok ? "ok" : "warn", children: c.ok ? "✓" : "✗" }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.body, color: COLORS.text }, children: t(c.key) }), c.detail && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 1 }, children: c.detail }))] })] }, c.key))) })] })), data?.modules && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.modules") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.modules).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.tools && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.tools") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: Object.entries(data.tools).map(([k, v]) => (SP_JSX.jsx(Pill, { tone: v ? "ok" : "warn", children: k }, k))) })] })), data?.agent !== undefined && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.agent") }), SP_JSX.jsx(Pill, { tone: data.agent ? "ok" : "warn", children: data.agent ? t("set.agentReady") : t("set.agentDown") })] })), SP_JSX.jsx(GroupTitle, { children: t("diag.composition") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.sm, flexWrap: "wrap" }, children: [SP_JSX.jsx(Pill, { tone: composition.available ? "ok" : "warn", children: composition.available ? t("diag.compOk") : t("diag.compMissing") }), ["findVar", "findModuleExport", "findModuleChild"].map((k) => (SP_JSX.jsx(Pill, { tone: composition[k] ? "ok" : "neutral", children: k }, k)))] }), data?.adapter_raw && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.adapterRaw") }), SP_JSX.jsx("div", { style: box, children: data.adapter_raw })] })), data?.wp_status && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.wpStatus") }), SP_JSX.jsx("div", { style: box, children: data.wp_status })] })), report && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.report") }), SP_JSX.jsx("div", { style: box, children: report })] })), log && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(GroupTitle, { children: t("diag.pluginLog") }), SP_JSX.jsx(Hint, { children: log.path }), SP_JSX.jsx("div", { style: box, children: log.text || t("common.empty") })] }))] }));
+}
+
+const TABS = [
+    ["devices", "tab.devices"],
+    ["settings", "tab.settings"],
+    ["eq", "tab.eq"],
+    ["diag", "tab.diag"],
+];
+function BtSpeakerPage() {
+    const { state, error, refresh } = useSpeaker();
+    const [tab, setTab] = SP_REACT.useState("devices");
+    const ad = state?.adapter;
+    return (
+    // 外层：铺满屏幕，负责给 Steam 的顶栏 / 底栏让位。
+    // Steam 游戏模式顶部有状态栏（电量/时间），底部有 A/B 按钮提示条，
+    // 全屏路由页如果直接用 inset:0 会被两头遮住。
+    // 用 padding 而非 margin，保证背景色仍然铺满整屏。
+    SP_JSX.jsx("div", { style: {
+            position: "absolute", inset: 0, background: COLORS.bg,
+            paddingTop: "calc(env(safe-area-inset-top, 0px) + 58px)",
+            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 62px)",
+            paddingLeft: "calc(env(safe-area-inset-left, 0px) + 34px)",
+            paddingRight: "calc(env(safe-area-inset-right, 0px) + 34px)",
+            display: "flex", flexDirection: "column",
+            boxSizing: "border-box",
+        }, children: SP_JSX.jsxs("div", { className: "bt-scroll", style: {
+                flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden",
+                display: "flex", flexDirection: "column",
+                paddingBottom: SPACE.xl,
+            }, children: [SP_JSX.jsx(Header, { alias: ad?.alias, address: ad?.address, powered: !!ad?.powered, discoverable: !!ad?.discoverable, a2dpSink: !!ad?.a2dp_sink }), error && SP_JSX.jsx(ErrorText, { text: error }), SP_JSX.jsx(TabBar, { tab: tab, onChange: setTab }), !state ? SP_JSX.jsx(Loading, { text: t("page.readingAdapter") }) : (SP_JSX.jsxs(SP_JSX.Fragment, { children: [tab === "devices" && (SP_JSX.jsx(DevicesTab, { paired: state.paired || [], connectedMacs: new Set((state.connected || []).map((d) => d.mac)), discoverable: !!ad?.discoverable, alias: ad?.alias || "", onRefresh: refresh })), tab === "settings" && SP_JSX.jsx(SettingsTab, { state: state, refresh: refresh }), tab === "eq" && SP_JSX.jsx(EqTab, { state: state, refresh: refresh }), tab === "diag" && SP_JSX.jsx(DiagTab, {})] }))] }) }));
+}
+// ---------------------------------------------------------------------------
+// 头部：标题 + 副标题 + 状态徽章
+// ---------------------------------------------------------------------------
+function Header({ alias, address, powered, discoverable, a2dpSink, }) {
+    return (SP_JSX.jsxs("div", { style: {
+            display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+            gap: SPACE.xl, marginBottom: SPACE.md,
+        }, children: [SP_JSX.jsxs("div", { style: { minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.page, fontWeight: 700, color: COLORS.text }, children: t("page.title") }), SP_JSX.jsx("div", { style: {
+                            fontSize: FONT.body, color: COLORS.sub, marginTop: 3,
+                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }, children: alias ? `${alias} · ${address || t("common.unknown")}` : t("page.readingAdapter") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: {
+                    display: "flex", gap: SPACE.sm, flexWrap: "wrap",
+                    justifyContent: "flex-end", flexShrink: 0, maxWidth: "45%",
+                }, children: [SP_JSX.jsx(Pill, { tone: powered ? "ok" : "warn", children: powered ? t("qam.btOn") : t("qam.btOff") }), SP_JSX.jsx(Pill, { tone: discoverable ? "accent" : "neutral", children: discoverable ? t("qam.discoverable") : t("qam.notVisible") }), SP_JSX.jsx(Pill, { tone: a2dpSink ? "ok" : "warn", children: a2dpSink ? t("page.a2dpSink") : t("page.noSink") })] })] }));
+}
+// ---------------------------------------------------------------------------
+// Tab 切换
+// ---------------------------------------------------------------------------
+function TabBar({ tab, onChange }) {
+    return (SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: {
+            display: "flex", gap: SPACE.sm, margin: `${SPACE.lg}px 0 ${SPACE.xs}px`,
+            borderBottom: `1px solid ${COLORS.border}`, paddingBottom: SPACE.xs,
+        }, children: TABS.map(([k, key]) => {
+            const active = tab === k;
+            return (SP_JSX.jsx(DFL.Focusable, { onActivate: () => onChange(k), style: {
+                    padding: `${SPACE.md}px ${SPACE.xl}px`,
+                    borderRadius: RADIUS.sm,
+                    cursor: "pointer",
+                    fontSize: FONT.bodyLg,
+                    fontWeight: active ? 600 : 400,
+                    background: active ? COLORS.accent : "transparent",
+                    color: active ? "#fff" : COLORS.sub,
+                    transition: "background 0.12s, color 0.12s",
+                }, children: t(key) }, k));
+        }) }));
 }
 
 /** SetCatchAllGamepadInput 的返回值形态不固定，统一成「释放函数」。 */
@@ -2313,9 +2584,6 @@ function wake() {
 function DimOverlay() {
     const [visible, setVisible] = SP_REACT.useState(false);
     const ref = SP_REACT.useRef(null);
-    const releaseRef = SP_REACT.useRef(null);
-    const visibleRef = SP_REACT.useRef(false);
-    visibleRef.current = visible;
     // 订阅共享状态
     SP_REACT.useEffect(() => {
         return subscribeDim((v) => setVisible(v));
@@ -2332,8 +2600,24 @@ function DimOverlay() {
     // 但那是「尽量」—— 用户可能在遮罩显示后又按 QAM 键。提到同层
     // （OverlayQAM）能保证即使 QAM 又弹出来，遮罩也不会被它盖住。
     //
+    // ⚠️ 必须在 effect 里调，并且把返回的释放函数放进 cleanup：
+    //    早期版本在渲染期间直接调用，每次渲染都注册一条合成层请求却从不释放。
+    //    依赖 `visible` —— 只在遮罩真正显示时才占用这个合成层。
+    //
     // 拿不到 hook 就静默降级（见 uiComposition.ts），不会崩。
-    useUIComposition(UIComposition.OverlayQAM);
+    SP_REACT.useEffect(() => {
+        if (!visible)
+            return;
+        const release = acquireComposition(UIComposition.OverlayQAM);
+        return () => {
+            if (release) {
+                try {
+                    release();
+                }
+                catch { /* 忽略 */ }
+            }
+        };
+    }, [visible]);
     // 聚焦遮罩，让键盘事件能落到这里
     SP_REACT.useEffect(() => {
         if (!visible)
@@ -2375,9 +2659,7 @@ function DimOverlay() {
         catch {
             /* 拿不到就只靠 DOM 事件兜着 */
         }
-        releaseRef.current = release;
         return () => {
-            releaseRef.current = null;
             try {
                 release?.();
             }

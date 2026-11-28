@@ -32,6 +32,8 @@ from btutil import (  # noqa: F401  (re-export 给老代码用)
     _parse_uuids,
     friendly_device_name,
     classify_peer,
+    run_cached,
+    cache_clear,
 )
 
 # ---------------------------------------------------------------------------
@@ -973,7 +975,14 @@ class Wp:
         return True
 
     async def status_text(self):
-        rc, out = await run_cmd(["wpctl", "status"], timeout=6.0)
+        """读 `wpctl status` 全文。
+
+        ⚠️ 走共享缓存：同一次 `status()` 里，这个函数被
+        `parse_default_sink()` 和 `output.list_sinks()` **各调一次**
+        （后者在 main.status 里通过 output.list_sinks 又读一遍），
+        等于同一个进程 fork 两遍。缓存 1.5 秒足够覆盖一次 RPC。
+        """
+        rc, out = await run_cached(["wpctl", "status"], ttl=1.5, timeout=6.0)
         return out if rc == 0 else ""
 
     @staticmethod
@@ -1002,8 +1011,24 @@ class Wp:
         return bool(re.search(r"bluez_(?:input|output)\.", text or "", re.I))
 
 
+_versions_cache = None
+
+
 async def versions():
-    """收集 PipeWire / WirePlumber / BlueZ 版本，供诊断页显示。"""
+    """收集 PipeWire / WirePlumber / BlueZ 版本，供诊断页显示。
+
+    ⚠️ 性能：这个函数要 fork **3 个进程**，而版本号在插件运行期间
+    **永远不会变**（除非用户中途升级了系统，那时重启插件即可）。
+    早期每次 `status()` 都重新查一遍 —— 播歌时每 4 秒白烧 3 个进程，
+    占整次轮询开销的近 1/5。
+
+    现在只在第一次调用时真正查，之后直接返回缓存。
+    `force=True` 可强制重查（诊断页的「刷新」按钮用）。
+    """
+    global _versions_cache
+    if _versions_cache is not None:
+        return dict(_versions_cache)
+
     out = {"pipewire": "", "wireplumber": "", "bluez": ""}
 
     async def _grab(key, argv, pattern):
@@ -1019,7 +1044,17 @@ async def versions():
     await _grab("pipewire", ["pipewire", "--version"], r"libpipewire\s+([0-9]+\.[0-9]+\.[0-9]+)")
     await _grab("wireplumber", ["wireplumber", "--version"], r"([0-9]+\.[0-9]+\.[0-9]+)")
     await _grab("bluez", ["bluetoothctl", "--version"], r"([0-9]+\.[0-9]+)")
+
+    # 三个都为空说明环境异常（比如 PATH 不对），不缓存，下次再试
+    if any(out.values()):
+        _versions_cache = dict(out)
     return out
+
+
+def reset_versions_cache():
+    """清空版本缓存（测试 / 诊断页强制刷新用）。"""
+    global _versions_cache
+    _versions_cache = None
 
 
 # ---------------------------------------------------------------------------

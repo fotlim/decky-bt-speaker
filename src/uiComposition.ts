@@ -152,8 +152,20 @@ export function compositionAvailable(): boolean {
  *
  * ⚠️ 内部已做完整保护：hook 不存在、调用抛错，都只会**静默降级**，
  * 绝不会让插件加载失败。这是 v2.8.0 崩溃事故的修复点。
+ *
+ * ⚠️⚠️ 这个函数**不是 React hook**（尽管名字以 use 开头，是历史遗留）：
+ * 它没有内部 state，也不依赖渲染顺序，可以在 effect 里安全调用。
+ *
+ * 早期实现直接**在渲染期间**调用 `hook(...)` —— 这是错的：
+ *   1. 渲染函数必须是纯的，不能有副作用（React 严格模式会渲染两次，
+ *      于是每次渲染都多注册一条合成层请求）
+ *   2. 返回的 `releaseComposition` 被丢弃，请求只增不减，
+ *      长时间使用后合成层请求会累积
+ *
+ * 调用方必须在 `useEffect` 里调它，并把返回的释放函数放进 cleanup。
+ * 返回 `null` 表示「当前环境不支持」（旧版 loader），调用方无需处理。
  */
-export function useUIComposition(composition: UIComposition): void {
+export function acquireComposition(composition: UIComposition): (() => void) | null {
   const hook = resolveHook();
   if (!isUICompositionHook(hook)) {
     if (!warned) {
@@ -168,16 +180,23 @@ export function useUIComposition(composition: UIComposition): void {
         "The dim overlay cannot cover the top bar, but screen-off still works.",
       );
     }
-    return;
+    return null;
   }
   try {
-    hook(composition, "bt-speaker");
+    const res = hook(composition, "bt-speaker");
+    // hook 可能返回 { releaseComposition } 也可能返回 void（旧版）
+    if (res && typeof (res as any).releaseComposition === "function") {
+      return () => {
+        try { (res as any).releaseComposition(); } catch { /* 忽略 */ }
+      };
+    }
   } catch (e) {
     if (!warned) {
       warned = true;
       console.warn("[bt-speaker] UI composition call failed, degraded gracefully", e);
     }
   }
+  return null;
 }
 
 /** 供诊断页显示：当前环境到底能不能用合成层提升。 */
