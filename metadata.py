@@ -47,11 +47,47 @@ STATUS_LABELS = {
 }
 
 
-def player_path(mac, adapter="hci0"):
-    """构造 MediaPlayer1 的对象路径。"""
+def player_path(mac, adapter="hci0", index=0):
+    """构造 MediaPlayer1 的对象路径。
+
+    ⚠️ `index` 默认 0 只是「常见情况」。BlueZ 的 player 编号取决于注册顺序，
+    可能是 player1 / player2。实际使用时应该用 `discover_players()` 列出
+    真实存在的路径，而不是靠猜。
+    """
     if not is_mac(mac):
         return ""
-    return "/org/bluez/%s/dev_%s/player0" % (adapter, mac.upper().replace(":", "_"))
+    return "/org/bluez/%s/dev_%s/player%d" % (
+        adapter, mac.upper().replace(":", "_"), index)
+
+
+def parse_player_paths(tree_text):
+    """从 `busctl tree org.bluez` 的输出里提取所有 MediaPlayer 相关路径。
+
+    busctl tree 输出形如：
+        └─/org/bluez/hci0/dev_CC_42_10_8A_70_42
+          └─/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0
+
+    返回 [路径字符串...]（只保留以 /player 结尾的）。
+    """
+    if not tree_text:
+        return []
+    out = []
+    for line in tree_text.splitlines():
+        # 去掉树形前缀
+        s = re.sub(r"^[\s\u2502\u251c\u2514\u2500]*", "", line).strip()
+        if not s.startswith("/org/bluez/"):
+            continue
+        if re.search(r"/player\d+$", s) and s not in out:
+            out.append(s)
+    return out
+
+
+def mac_from_path(path):
+    """从 `/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0` 里取出 MAC。"""
+    m = re.search(r"dev_([0-9A-Fa-f]{2}(?:_[0-9A-Fa-f]{2}){5})", path or "")
+    if not m:
+        return ""
+    return m.group(1).replace("_", ":").upper()
 
 
 def parse_busctl_dict(text):
@@ -135,18 +171,54 @@ class Metadata:
             return None
         return strip_ansi(out).strip()
 
+    async def _list_players(self):
+        """列出系统里真实存在的 MediaPlayer1 对象路径。
+
+        为什么要动态列而不是拼路径？
+        --------------------------
+        两个坑（都踩过）：
+        1. 适配器名不一定是 hci0（多适配器 / 改名）
+        2. player 编号不一定是 player0（取决于注册顺序，可能是 1、2…）
+
+        早期直接拼 `/org/bluez/hci0/dev_XX/player0`，对不上就永远读不到
+        元数据，表现为「对端设备未提供曲目信息」—— 而实际上对端提供了。
+        """
+        if not which("busctl"):
+            return []
+        try:
+            rc, out = await run_cmd(["busctl", "tree", "org.bluez"], timeout=8.0)
+        except BtError:
+            return []
+        if rc != 0:
+            return []
+        return parse_player_paths(strip_ansi(out))
+
     async def read(self, mac):
         """读取某设备的曲目信息。
 
         返回 dict 或 None（对方没提供 AVRCP 元数据时返回 None，不是错误）。
         """
-        path = player_path(mac, self.adapter)
-        if not path:
+        if not is_mac(mac):
             return None
 
-        track_raw = await self._get(path, "Track")
-        if track_raw is None:
-            # 没有 player 对象 = 这个设备不支持 AVRCP 或还没开始播放
+        # 1. 先动态列出所有 player 路径，按 MAC 匹配
+        want = mac.upper()
+        paths = [p for p in await self._list_players()
+                 if mac_from_path(p) == want]
+
+        # 2. 列不到就退回「拼路径」的老办法（兼容 busctl tree 不可用的环境），
+        #    但把 player 0~3 都试一遍，而不是只试 0
+        if not paths:
+            paths = [player_path(mac, self.adapter, i) for i in range(4)]
+
+        # 3. 逐个试，第一个能读到 Track 的就算
+        for path in paths:
+            track_raw = await self._get(path, "Track")
+            if track_raw is not None:
+                break
+        else:
+            # 所有路径都读不到 = 该设备不支持 AVRCP 或还没开始播放
+            self._log("未找到 %s 的 MediaPlayer 对象（对端可能不支持 AVRCP 元数据）" % mac)
             return None
 
         track = parse_track(track_raw)

@@ -4,6 +4,82 @@
 
 ---
 
+## [3.2.1] - 2026-11-28
+
+**修「对端设备未提供曲目信息」—— 其实是我们自己没找到 player 路径**
+
+### 现象
+
+QAM 的「正在播放」卡片显示「对端设备未提供曲目信息」，但手机明明在放歌。
+
+### 根因（两个都是我们自己的问题）
+
+`metadata.py` 读 AVRCP 元数据时，**靠拼字符串猜 D-Bus 对象路径**：
+
+```python
+# 错误写法
+return "/org/bluez/%s/dev_%s/player0" % (adapter, mac)   # adapter 硬编码 "hci0"
+```
+
+两个坑：
+
+| 坑 | 说明 |
+|---|---|
+| **适配器名硬编码 `hci0`** | 多适配器 / 改名时路径就错了 |
+| **player 编号猜 `player0`** | BlueZ 的 MediaPlayer 对象编号取决于注册顺序，可能是 `player1` / `player2` |
+
+猜不中 → `busctl get-property` 返回非 0 → 代码认为「对端没提供元数据」→
+界面显示「未提供曲目信息」。**而对端其实提供了。**
+
+### 修复
+
+1. **动态发现**：用 `busctl tree org.bluez` 列出系统里**真实存在**的
+   MediaPlayer 路径，再按 MAC 匹配。
+
+```python
+paths = [p for p in await self._list_players() if mac_from_path(p) == want]
+```
+
+2. **兜底**：`busctl tree` 不可用时，退回拼路径，但把 `player0`~`player3`
+   **都试一遍**，而不是只试 0。
+
+3. 新增纯函数（可单独测试）：
+   - `parse_player_paths(tree_text)` —— 从 busctl tree 输出提取 player 路径
+   - `mac_from_path(path)` —— 从路径反推 MAC
+   - `player_path(mac, adapter, index)` —— 支持任意编号
+
+4. 找不到时**记日志**（写清楚是「对端可能不支持 AVRCP」还是「路径没匹配上」），
+   下次排查不用再猜。
+
+### 测试
+
+新增 13 项：
+
+```
+PASS  player_path 默认 player0
+PASS  player_path 支持 player2
+PASS  非法 MAC 返回空
+PASS  解析出 2 个 player 路径
+PASS  认出 player0
+PASS  认出 player1（编号非 0）
+PASS  从路径取 MAC
+PASS  从 hci1 路径也能取
+PASS  非 player 路径返回空
+PASS  源码里有动态发现（_list_players）
+PASS  源码里会尝试多个 player 编号
+...
+```
+
+后两项是**回归锁**：防止有人把逻辑改回「只拼 player0」。
+
+### 验证
+
+```
+tests_offline / i18n(226) / api / rpc(48) / bundle / tsc / pack   全过
+```
+
+---
+
 ## [3.2.0] - 2026-11-28
 
 **QAM 的「正在播放」改成纯信息卡片；删掉不起作用的外部源音量**

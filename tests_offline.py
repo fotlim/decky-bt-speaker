@@ -6,6 +6,7 @@
 
 import sys
 import os
+import io
 import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -659,6 +660,54 @@ def test_wifi():
     check("None 不崩", wifi.analyze([])["risk"] == "none")
 
 
+def test_metadata_paths():
+    print("AVRCP 元数据：player 路径动态发现（真机「未提供曲目信息」的修复）")
+    import metadata
+
+    # ---- player_path 支持任意编号 ----
+    check("player_path 默认 player0",
+          metadata.player_path("CC:42:10:8A:70:42") ==
+          "/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0")
+    check("player_path 支持 player2",
+          metadata.player_path("CC:42:10:8A:70:42", "hci1", 2) ==
+          "/org/bluez/hci1/dev_CC_42_10_8A_70_42/player2")
+    check("非法 MAC 返回空", metadata.player_path("not-a-mac") == "")
+
+    # ---- busctl tree 解析 ----
+    TREE = """org.bluez
+└─/org/bluez/hci0
+  ├─/org/bluez/hci0/dev_CC_42_10_8A_70_42
+  │ └─/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0
+  └─/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF
+    └─/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/player1
+"""
+    paths = metadata.parse_player_paths(TREE)
+    check("解析出 2 个 player 路径", len(paths) == 2, str(paths))
+    check("认出 player0",
+          "/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0" in paths)
+    check("认出 player1（编号非 0）",
+          "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/player1" in paths)
+    check("空输入返回空表", metadata.parse_player_paths("") == [])
+    check("None 返回空表", metadata.parse_player_paths(None) == [])
+
+    # ---- 从路径反推 MAC ----
+    check("从路径取 MAC",
+          metadata.mac_from_path("/org/bluez/hci0/dev_CC_42_10_8A_70_42/player0")
+          == "CC:42:10:8A:70:42")
+    check("从 hci1 路径也能取",
+          metadata.mac_from_path("/org/bluez/hci1/dev_AA_BB_CC_DD_EE_FF/player2")
+          == "AA:BB:CC:DD:EE:FF")
+    check("非 player 路径返回空",
+          metadata.mac_from_path("/org/bluez/hci0") == "")
+    check("空路径返回空", metadata.mac_from_path("") == "")
+
+    # ---- 回归：不允许再硬编码只试 player0 ----
+    src = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "metadata.py"), encoding="utf-8").read()
+    check("源码里有动态发现（_list_players）", "_list_players" in src)
+    check("源码里会尝试多个 player 编号", "range(4)" in src)
+
+
 def test_settings_validation():
     print("设置项类型校验（防脏数据）")
     # main.py 会 import decky（Decky Loader 注入），这里用桩模块替代
@@ -1309,7 +1358,8 @@ if __name__ == "__main__":
                test_nodes_parse, test_focus, test_silence, test_eq,
                test_output, test_metadata, test_quality, test_wifi,
                test_screen, test_wp_kernel, test_classify_peer, test_normalize_mac, test_mac_like, test_parse_uuids, test_parse_rssi,
-               test_settings_validation, test_power_parse, test_inhibit, test_a2dp, test_dimsession):
+               test_settings_validation, test_power_parse, test_inhibit, test_a2dp,
+               test_dimsession, test_metadata_paths):
         fn()
     print()
     if FAILED:

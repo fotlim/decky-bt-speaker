@@ -321,7 +321,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.1**.
 
 | Version | Contents |
 |---|---|
@@ -371,6 +371,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.0**.
 | 3.1.0 | Preset lists (codec / latency / EQ) fully localized — backend returns i18n keys; config-file comments bilingual |
 | 3.1.1 | Real-device screenshots (privacy pixelated) + fixed the broken publish.image |
 | 3.2.0 | QAM "Now playing" is now a pure info card (title/artist/progress bar); removed the external-source volume buttons — they never controlled the phone volume |
+| 3.2.1 | Fixed "no track info from the source device" — the player D-Bus path was guessed (hci0/player0); now discovered via usctl tree |
 
 ---
 
@@ -718,7 +719,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.2.0**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.2.1**。
 
 | 版本 | 内容 |
 |---|---|
@@ -768,6 +769,7 @@ python pack.py          # 打包 zip
 | 3.1.0 | 预设列表（音质/延迟/EQ）完全本地化 —— 后端只返回 i18n key；配置文件注释改中英双语 |
 | 3.1.1 | 真机截图（隐私已打码）+ 修好失效的 publish.image |
 | 3.2.0 | QAM「正在播放」改成纯信息卡片（曲名/歌手/进度条）；删掉外部源音量按钮 —— 它控制不了手机音量 |
+| 3.2.1 | 修「对端设备未提供曲目信息」—— player 的 D-Bus 路径原来是猜的（hci0/player0），现改为 busctl tree 动态发现 |
 
 ---
 
