@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"3.0.0","build":"11-28 10:59"};
+var __BT_META__ = {"version":"3.0.1","build":"11-28 11:26"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -1249,10 +1249,11 @@ function Speaker() {
     //    因为 QAM 面板的 DOM 被 Steam 容器包着、容器带 transform，
     //    会让 position:fixed 的包含块退化，盖不住顶栏。
     //    这里只负责「按按钮 → 调后端 → 更新共享状态」。
-    const [dimmed, setDimmedState] = SP_REACT.useState(false);
+    //
+    // 注意：QAM 里**不需要**读 `dimmed` 状态 —— 遮罩是全局的，
+    // 面板本身不因息屏而改变（息屏时 QAM 已被 CloseSideMenus 收起）。
+    // 早期这里留了一个只写不读的 useState，是死代码。
     const dimTimer = SP_REACT.useRef(null);
-    // 跟随共享状态（全局遮罩被输入唤醒时，按钮文案也要跟着变回来）
-    SP_REACT.useEffect(() => subscribeDim((v) => setDimmedState(v)), []);
     // 组件卸载时一定恢复背光，避免留下黑屏
     SP_REACT.useEffect(() => () => {
         if (dimTimer.current)
@@ -1280,7 +1281,6 @@ function Speaker() {
             const r = await api.dimScreen();
             // 通知全局遮罩显示，再更新本地按钮状态
             setDimmed(true);
-            setDimmedState(true);
             const secs = (r.max_seconds || 300) * 1000;
             if (dimTimer.current)
                 clearTimeout(dimTimer.current);
@@ -1304,7 +1304,6 @@ function Speaker() {
             dimTimer.current = null;
         }
         setDimmed(false);
-        setDimmedState(false);
         try {
             await api.undimScreen();
         }
@@ -1641,14 +1640,12 @@ function SettingsTab({ state, refresh }) {
             setBusy(false);
         }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: t("set.name") }), SP_JSX.jsx(Hint, { children: t("set.nameHint") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
-                            flex: 1, padding: "10px 12px", borderRadius: 9, fontSize: 14,
-                            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 720 }, children: [SP_JSX.jsx(SectionTitle, { children: t("set.name") }), SP_JSX.jsx(Hint, { children: t("set.nameHint") }), SP_JSX.jsxs("div", { style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx("input", { value: alias, onChange: (e) => setAlias(e.target.value), maxLength: 40, placeholder: "Steam Deck", style: {
+                            flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+                            fontSize: FONT.bodyLg, boxSizing: "border-box",
+                            background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
                             color: COLORS.text, outline: "none",
-                        } }), SP_JSX.jsx(DFL.Focusable, { onClick: applyAlias, onActivate: applyAlias, style: {
-                            padding: "10px 20px", borderRadius: 9, fontSize: 14, cursor: "pointer",
-                            background: COLORS.accent, color: "#fff", opacity: busy ? 0.6 : 1,
-                        }, children: busy ? t("common.saving") : t("common.save") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.audioTuning") }), SP_JSX.jsx(ToggleRow, { label: t("set.audioTuningLabel"), desc: t("set.audioTuningDesc"), checked: !!state.tuning?.installed, onChange: async (v) => {
+                        } }), SP_JSX.jsx(Btn, { variant: "primary", onClick: applyAlias, disabled: busy, children: busy ? t("common.saving") : t("common.save") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.audioTuning") }), SP_JSX.jsx(ToggleRow, { label: t("set.audioTuningLabel"), desc: t("set.audioTuningDesc"), checked: !!state.tuning?.installed, onChange: async (v) => {
                     try {
                         if (v) {
                             await api.applyTuning();
@@ -1663,10 +1660,10 @@ function SettingsTab({ state, refresh }) {
                     catch (e) {
                         toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                     }
-                } }), SP_JSX.jsx(Hint, { children: t("set.tuningHint", { path: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }) }), SP_JSX.jsx(SectionTitle, { children: t("set.pairing") }), SP_JSX.jsx(Hint, { children: t("set.pairingHint") }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx("div", { style: {
+                } }), SP_JSX.jsx(Hint, { children: t("set.tuningHint", { path: state.tuning?.path || "~/.config/wireplumber/wireplumber.conf.d/50-bt-speaker.conf" }) }), SP_JSX.jsx(SectionTitle, { children: t("set.pairing") }), SP_JSX.jsx(Hint, { children: t("set.pairingHint") }), SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx("div", { style: {
                             width: 8, height: 8, borderRadius: 4, flexShrink: 0,
                             background: state.agent_registered ? COLORS.ok : state.agent ? "#e0a800" : COLORS.accentWarm,
-                        } }), SP_JSX.jsx("div", { style: { flex: 1, fontSize: 13, color: COLORS.text }, children: state.agent_registered
+                        } }), SP_JSX.jsx("div", { style: { flex: 1, fontSize: FONT.body, color: COLORS.text }, children: state.agent_registered
                             ? t("set.agentReady")
                             : state.agent
                                 ? t("set.agentRunning")
@@ -1689,9 +1686,10 @@ function SettingsTab({ state, refresh }) {
                             }
                             catch { /* ignore */ }
                         }, style: {
-                            padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
-                            background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
-                        }, children: t("set.restartAgent") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.codec") }), SP_JSX.jsx(Hint, { children: t("set.codecHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: (state.quality?.presets || []).map((p) => {
+                            padding: `${SPACE.xs}px ${SPACE.lg}px`, borderRadius: RADIUS.md,
+                            fontSize: FONT.small, cursor: "pointer",
+                            background: COLORS.surfaceHover, color: COLORS.text, flexShrink: 0,
+                        }, children: t("set.restartAgent") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.codec") }), SP_JSX.jsx(Hint, { children: t("set.codecHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: SPACE.md }, children: (state.quality?.presets || []).map((p) => {
                     const active = (s.codec_preset || "balanced") === p.key;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
@@ -1712,20 +1710,20 @@ function SettingsTab({ state, refresh }) {
                             }
                             catch { /* ignore */ }
                         }, style: {
-                            display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
-                            borderRadius: 10, cursor: "pointer",
+                            display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                            borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
                         }, children: [SP_JSX.jsx("div", { style: {
                                     width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
                 }) }), SP_JSX.jsxs(Hint, { children: [t("set.codecCurrent", { codec: state.quality?.active_profile || t("common.none") }), SP_JSX.jsx("span", { style: { color: COLORS.accent } }), SP_JSX.jsx("br", {}), t("set.codecReconnect")] }), SP_JSX.jsx(SectionTitle, { children: t("set.stutter") }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
-                    margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9, fontSize: 12, lineHeight: 1.7,
+                    margin: "6px 0 10px", padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm, fontSize: FONT.small, lineHeight: 1.7,
                     background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
                     color: "#ffb3b3", whiteSpace: "pre-wrap",
-                }, children: [SP_JSX.jsxs("b", { children: ["\u26A0\uFE0F ", t("set.stutterWifi")] }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / "), "\n", t("set.stutterWifiBody")] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: t("set.stutterOk") })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                }, children: [SP_JSX.jsxs("b", { children: ["\u26A0\uFE0F ", t("set.stutterWifi")] }), "\n", state.wifi.wifi_24g.map((w) => `${w.ssid || w.interface} (ch ${w.channel}, ${w.freq_mhz} MHz)`).join(" / "), "\n", t("set.stutterWifiBody")] })), state.wifi && state.wifi.risk === "none" && (SP_JSX.jsx(Hint, { children: t("set.stutterOk") })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 const r = await api.fixStutter();
                                 toaster.toast({
@@ -1744,7 +1742,8 @@ function SettingsTab({ state, refresh }) {
                             }
                             catch { /* ignore */ }
                         }, style: {
-                            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+                            padding: `${SPACE.md}px ${SPACE.xl}px`,
+                            borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
                             background: COLORS.accent, color: "#fff",
                         }, children: t("set.fixStutter") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
@@ -1774,27 +1773,28 @@ function SettingsTab({ state, refresh }) {
                             }
                             catch { /* ignore */ }
                         }, style: {
-                            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
-                            background: "rgba(255,255,255,0.08)", color: COLORS.text,
-                        }, children: t("set.diagStutter") })] }), SP_JSX.jsx(Hint, { children: t("set.stutterHint") }), SP_JSX.jsx(SectionTitle, { children: t("set.focus") }), SP_JSX.jsx(Hint, { children: t("set.focusHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: 8 }, children: [
+                            padding: `${SPACE.md}px ${SPACE.xl}px`,
+                            borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
+                            background: COLORS.surfaceHover, color: COLORS.text,
+                        }, children: t("set.diagStutter") })] }), SP_JSX.jsx(Hint, { children: t("set.stutterHint") }), SP_JSX.jsx(SectionTitle, { children: t("set.focus") }), SP_JSX.jsx(Hint, { children: t("set.focusHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "column", style: { marginTop: SPACE.md }, children: [
                     ["coexist", t("set.focusCoexist"), t("set.focusCoexistDesc")],
                     ["receiver_first", t("set.focusReceiver"), t("set.focusReceiverDesc")],
                     ["manual", t("set.focusManual"), t("set.focusManualDesc")],
                 ].map(([mode, label, desc]) => {
                     const active = (s.focus_mode || "coexist") === mode;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => changeFocus(mode), onActivate: () => changeFocus(mode), style: {
-                            display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
-                            borderRadius: 10, cursor: "pointer",
+                            display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                            borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
                         }, children: [SP_JSX.jsx("div", { style: {
                                     width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 2 }, children: desc })] })] }, mode));
-                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.power") }), SP_JSX.jsx(Hint, { children: t("set.powerHint") }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 13.5, color: COLORS.text, marginBottom: 6 }, children: [t("set.silence"), state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: label }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: desc })] })] }, mode));
+                }) }), SP_JSX.jsx(SectionTitle, { children: t("set.power") }), SP_JSX.jsx(Hint, { children: t("set.powerHint") }), SP_JSX.jsxs("div", { style: { marginTop: SPACE.md }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text, marginBottom: SPACE.sm }, children: [t("set.silence"), state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
                                 ? t("set.silenceRemain", { n: state.silence.remaining })
-                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: s.silence_disconnect ?? 0, min: 0, max: 600, step: 30, showValue: false, onChange: (v) => { setSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: t("set.silenceOff") }), SP_JSX.jsx("span", { children: "5m" }), SP_JSX.jsx("span", { children: "10m" })] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.normalize") }), SP_JSX.jsxs(Hint, { children: [t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") }), state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                                : ""] }), SP_JSX.jsx(DFL.SliderField, { value: s.silence_disconnect ?? 0, min: 0, max: 600, step: 30, showValue: false, onChange: (v) => { setSilence(v); } }), SP_JSX.jsxs("div", { style: { display: "flex", justifyContent: "space-between", fontSize: FONT.small, color: COLORS.dim }, children: [SP_JSX.jsx("span", { children: t("set.silenceOff") }), SP_JSX.jsx("span", { children: "5m" }), SP_JSX.jsx("span", { children: "10m" })] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.normalize") }), SP_JSX.jsxs(Hint, { children: [t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") }), state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.setVolumeBaseline(state.live?.volume ?? state.volume.volume);
                                 toaster.toast({ title: t("set.setBaseline"), body: "" });
@@ -1809,7 +1809,7 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: t("set.setBaseline") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
+                        }, style: { padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: FONT.body, cursor: "pointer" }, children: t("set.setBaseline") }), SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.resetVolumeBaseline();
                                 refresh();
@@ -1821,7 +1821,7 @@ function SettingsTab({ state, refresh }) {
                                 refresh();
                             }
                             catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: t("set.latencyHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
+                        }, style: { padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: FONT.body, cursor: "pointer" }, children: t("set.resetBaseline") })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(Hint, { children: t("set.latencyHint") }), SP_JSX.jsx(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: 8, flexWrap: "wrap" }, children: (state.output?.latency_profiles || []).map((p) => {
                     const active = (s.latency_profile || "balanced") === p.key;
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
@@ -1839,10 +1839,10 @@ function SettingsTab({ state, refresh }) {
                             }
                             catch { /* ignore */ }
                         }, style: {
-                            flex: "1 1 180px", padding: "11px 14px", borderRadius: 10, cursor: "pointer",
+                            flex: "1 1 180px", padding: `${SPACE.lg}px ${SPACE.xl}px`, borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
-                        }, children: [SP_JSX.jsx("div", { style: { fontSize: 13.5, color: COLORS.text }, children: p.label }), SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: p.desc })] }, p.key));
+                        }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: p.label }), SP_JSX.jsxs("div", { style: { fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: p.desc })] }, p.key));
                 }) }), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsx(ToggleRow, { label: "Deck multi-output", desc: "Play to speakers + BT headset + wired headset at once.", checked: !!s.multi_output, onChange: async (v) => {
                     try {
                         await api.setMultiOutput(v);
@@ -1852,9 +1852,9 @@ function SettingsTab({ state, refresh }) {
                     catch (e) {
                         toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
                     }
-                } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
+                } }), SP_JSX.jsxs(Hint, { children: [t("set.outputsNow"), " ", (state.output?.sinks || []).map((k) => k.name).join(" · ") || t("common.reading"), SP_JSX.jsx("br", {}), t("set.avdtpLimit")] }), SP_JSX.jsx(SectionTitle, { children: t("set.codecInfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: [t("set.codecActive"), ": ", state.codec?.codec || t("common.none")] }), SP_JSX.jsxs("div", { children: ["Profile\uFF1A", state.codec?.profile || "—"] }), SP_JSX.jsxs("div", { children: [t("set.codecRole"), ": ", state.codec?.role || "—"] })] }), SP_JSX.jsx(SectionTitle, { children: t("set.behavior") }), SP_JSX.jsx(ToggleRow, { label: t("set.autoStart"), desc: t("set.autoStartDesc"), checked: !!s.auto_start, onChange: (v) => save("auto_start", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.keepAlive"), desc: t("set.keepAliveDesc"), checked: !!s.keep_alive, onChange: (v) => save("keep_alive", v, t("common.ok")) }), SP_JSX.jsx(ToggleRow, { label: t("set.resume"), desc: state.power?.watching
                     ? t("set.resumeDescOn", { backend: state.power.backend })
-                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
+                    : t("set.resumeDescOff"), checked: !!s.resume_restore, onChange: (v) => save("resume_restore", v, t("common.ok")) }), state.power?.watching && (SP_JSX.jsxs(Hint, { children: [t("set.resumeEvents", { n: state.power.events, last: state.power.last ? (state.power.last[0] === "sleep" ? "sleep" : "resume") : "-" }), s.last_device ? t("set.lastDevice", { mac: s.last_device }) : ""] })), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsxs("div", { style: { fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }, children: [SP_JSX.jsxs("div", { children: ["PipeWire\uFF1A", state.versions?.pipewire || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["WirePlumber\uFF1A", state.versions?.wireplumber || t("common.unknown")] }), SP_JSX.jsxs("div", { children: ["BlueZ\uFF1A", state.versions?.bluez || t("common.unknown")] }), SP_JSX.jsxs("div", { children: [t("set.defaultOutput"), ": ", state.sink || t("common.unknown")] })] })] }));
 }
 
 function EqTab({ state, refresh }) {
@@ -1900,46 +1900,42 @@ function EqTab({ state, refresh }) {
             setBusy(null);
         }
     };
-    const box = {
-        marginTop: 8, padding: 10, borderRadius: 9, width: "100%", minHeight: 120,
-        fontSize: 12, color: COLORS.text, fontFamily: "monospace",
-        background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
-        outline: "none", resize: "vertical",
+    const removeEq = async () => {
+        try {
+            await api.removeEq();
+            toaster.toast({ title: t("eq.removeEq"), body: "" });
+            setTimeout(refresh, 1500);
+        }
+        catch (e) {
+            toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
+        }
     };
-    return (SP_JSX.jsxs("div", { style: { marginTop: 16, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: t("eq.presets") }), SP_JSX.jsx(Hint, { children: t("eq.hint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", style: { marginTop: 10 }, children: [presets.map((p) => {
-                        const active = current === p.key;
-                        const isBusy = busy === p.key;
-                        return (SP_JSX.jsxs(DFL.Focusable, { onClick: () => apply(p.key), onActivate: () => apply(p.key), style: {
-                                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", marginBottom: 8,
-                                borderRadius: 11, cursor: "pointer",
-                                background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
-                                border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
-                                opacity: isBusy ? 0.5 : 1,
-                            }, children: [SP_JSX.jsx("div", { style: {
-                                        width: 16, height: 16, borderRadius: 8, flexShrink: 0,
-                                        border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
-                                        display: "flex", alignItems: "center", justifyContent: "center",
-                                    }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsxs("div", { style: { fontSize: 14.5, color: COLORS.text }, children: [p.label, isBusy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: p.desc })] }), p.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: p.bands }) })] }, p.key));
-                    }), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: 14, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: 11.5, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsx(Hint, { children: t("eq.importHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 10, marginTop: 8 }, children: [SP_JSX.jsx(DFL.Focusable, { onClick: () => setShowImport(!showImport), onActivate: () => setShowImport(!showImport), style: { padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }, children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(DFL.Focusable, { onClick: async () => {
-                            try {
-                                await api.removeEq();
-                                toaster.toast({ title: t("eq.removeEq"), body: "" });
-                                setTimeout(refresh, 1500);
-                            }
-                            catch (e) {
-                                toaster.toast({ title: t("toast.failed"), body: errMsg(e) });
-                            }
-                        }, onActivate: async () => {
-                            try {
-                                await api.removeEq();
-                                setTimeout(refresh, 1500);
-                            }
-                            catch { /* ignore */ }
-                        }, style: { padding: "8px 16px", borderRadius: 18, background: "rgba(236,65,65,0.14)", color: COLORS.accentWarm, fontSize: 13, cursor: "pointer" }, children: t("eq.removeEq") }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: 10 }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: box }), SP_JSX.jsx(DFL.Focusable, { onClick: doImport, onActivate: doImport, style: {
-                            display: "inline-block", marginTop: 8, padding: "9px 20px", borderRadius: 9,
-                            background: COLORS.accent, color: "#fff", fontSize: 13.5, cursor: "pointer",
-                            opacity: busy === "import" ? 0.5 : 1,
-                        }, children: busy === "import" ? t("eq.importing") : t("eq.applyImport") })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
+    return (SP_JSX.jsxs("div", { style: { marginTop: SPACE.xl, maxWidth: 760 }, children: [SP_JSX.jsx(SectionTitle, { children: t("eq.presets") }), SP_JSX.jsx(Hint, { children: t("eq.hint") }), SP_JSX.jsxs(Stack, { gap: SPACE.md, children: [presets.map((p) => (SP_JSX.jsx(PresetRow, { preset: p, active: current === p.key, busy: busy === p.key, onPick: () => apply(p.key) }, p.key))), current === "custom" && (SP_JSX.jsxs(Card, { active: true, children: [SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t("eq.custom") }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: t("eq.customActive") })] }), SP_JSX.jsx(Pill, { tone: "accent", children: t("eq.active") })] }))] }), SP_JSX.jsx(SectionTitle, { children: t("eq.import") }), SP_JSX.jsx(Hint, { children: t("eq.importHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: SPACE.md, marginTop: SPACE.md }, children: [SP_JSX.jsx(Btn, { variant: "ghost", onClick: () => setShowImport(!showImport), children: showImport ? t("eq.collapse") : t("eq.paste") }), state.eq?.installed && (SP_JSX.jsx(Btn, { variant: "danger", onClick: removeEq, children: t("eq.removeEq") }))] }), showImport && (SP_JSX.jsxs("div", { style: { marginTop: SPACE.lg }, children: [SP_JSX.jsx("textarea", { value: importText, onChange: (e) => setImportText(e.target.value), placeholder: "Preamp: -6.8 dB\nFilter 1: ON PK Fc 21 Hz Gain 6.7 dB Q 1.100\nFilter 2: ON LSC Fc 85 Hz Gain 6.9 dB Q 3.000", style: {
+                            marginTop: SPACE.md, padding: SPACE.lg, borderRadius: RADIUS.sm,
+                            width: "100%", minHeight: 120, boxSizing: "border-box",
+                            fontSize: FONT.small, color: COLORS.text, fontFamily: "monospace",
+                            background: "rgba(0,0,0,0.35)", border: `1px solid ${COLORS.border}`,
+                            outline: "none", resize: "vertical",
+                        } }), SP_JSX.jsx("div", { style: { marginTop: SPACE.md }, children: SP_JSX.jsx(Btn, { variant: "primary", onClick: doImport, disabled: busy === "import", children: busy === "import" ? t("eq.importing") : t("eq.applyImport") }) })] })), SP_JSX.jsxs(Hint, { children: [t("eq.configPath"), " ", SP_JSX.jsx("span", { style: { color: COLORS.sub }, children: state.eq?.path || "~/.config/pipewire/pipewire.conf.d/60-bt-speaker-eq.conf" })] })] }));
+}
+// ---------------------------------------------------------------------------
+// 单个预设行（单选风格）
+// ---------------------------------------------------------------------------
+function PresetRow({ preset, active, busy, onPick }) {
+    return (SP_JSX.jsxs(DFL.Focusable, { onClick: onPick, onActivate: onPick, style: {
+            display: "flex", alignItems: "center", gap: SPACE.lg,
+            padding: `${SPACE.lg}px ${SPACE.xl}px`,
+            borderRadius: RADIUS.lg, cursor: "pointer",
+            background: active ? TONES.accent.bg : COLORS.surface,
+            border: `1px solid ${active ? TONES.accent.border : COLORS.border}`,
+            opacity: busy ? 0.5 : 1,
+        }, children: [SP_JSX.jsx("div", { style: {
+                    width: 16, height: 16, borderRadius: RADIUS.full, flexShrink: 0,
+                    border: `2px solid ${active ? COLORS.accent : COLORS.surfaceActive}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                }, children: active && (SP_JSX.jsx("div", { style: {
+                        width: 8, height: 8, borderRadius: RADIUS.full, background: COLORS.accent,
+                    } })) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: [preset.label, busy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: preset.desc })] }), preset.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: preset.bands }) })] }));
 }
 
 function DiagTab() {

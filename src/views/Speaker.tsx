@@ -6,10 +6,10 @@ import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
 import { api } from "../backend";
 import { useSpeaker, setPanelVisible } from "../store";
-import { COLORS, ROUTE, RADIUS, SPACE, FONT } from "../theme";
+import { COLORS, ROUTE, RADIUS } from "../theme";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
-import { subscribeDim, setDimmed as setDimState } from "../dimState";
+import { setDimmed as setDimState } from "../dimState";
 import { versionLabel } from "../version";
 
 /** 音量调节按钮：只发指令不读状态，因此不存在同步问题。 */
@@ -46,11 +46,11 @@ export function Speaker() {
   //    因为 QAM 面板的 DOM 被 Steam 容器包着、容器带 transform，
   //    会让 position:fixed 的包含块退化，盖不住顶栏。
   //    这里只负责「按按钮 → 调后端 → 更新共享状态」。
-  const [dimmed, setDimmedState] = useState(false);
+  //
+  // 注意：QAM 里**不需要**读 `dimmed` 状态 —— 遮罩是全局的，
+  // 面板本身不因息屏而改变（息屏时 QAM 已被 CloseSideMenus 收起）。
+  // 早期这里留了一个只写不读的 useState，是死代码。
   const dimTimer = useRef<any>(null);
-
-  // 跟随共享状态（全局遮罩被输入唤醒时，按钮文案也要跟着变回来）
-  useEffect(() => subscribeDim((v) => setDimmedState(v)), []);
 
   // 组件卸载时一定恢复背光，避免留下黑屏
   useEffect(() => () => {
@@ -79,7 +79,6 @@ export function Speaker() {
       const r: any = await api.dimScreen();
       // 通知全局遮罩显示，再更新本地按钮状态
       setDimState(true);
-      setDimmedState(true);
       const secs = (r.max_seconds || 300) * 1000;
       if (dimTimer.current) clearTimeout(dimTimer.current);
       dimTimer.current = setTimeout(() => { exitDim(); }, secs);
@@ -99,7 +98,6 @@ export function Speaker() {
   const exitDim = async () => {
     if (dimTimer.current) { clearTimeout(dimTimer.current); dimTimer.current = null; }
     setDimState(false);
-    setDimmedState(false);
     try { await api.undimScreen(); } catch { /* ignore */ }
   };
 

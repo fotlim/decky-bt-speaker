@@ -10,7 +10,7 @@ import { Focusable } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api } from "../../backend";
 import type { CheckItem } from "../../types";
-import { COLORS, SPACE, FONT, RADIUS, TONES } from "../../theme";
+import { COLORS, SPACE, FONT, RADIUS } from "../../theme";
 import {
   Btn, Pill, Hint, SectionTitle, GroupTitle, Stack, errMsg,
 } from "../../components";

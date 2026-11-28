@@ -407,7 +407,7 @@ class Plugin:
         #    漏掉任何一步都会给用户留下黑屏或无法休眠的机器。
         if self.dim is not None:
             try:
-                await self.dim.session.shutdown()
+                await self.dim.shutdown()
             except Exception as e:  # noqa: BLE001
                 self._log("卸载时结束息屏会话失败：%s" % e)
         # 1. 停后台任务（不 await，避免拖慢）
@@ -437,7 +437,7 @@ class Plugin:
     @_safe
     async def get_screen(self):
         """屏幕状态：能不能息屏、当前是否已息屏、亮度值。"""
-        return self.dim.session.screen_status()
+        return self.dim.screen_status()
 
     @_safe
     async def dim_screen(self):
@@ -834,7 +834,7 @@ class Plugin:
             "wifi": (await self._cached_async("wifi", 60.0, wifi.detect) if wifi is not None else None),
             # 息屏状态（背光是否已归 0）
             # 息屏状态（背光 / 抑制锁）—— 逻辑在 dimsession.py
-            "screen": (self.dim.session.status() if self.dim is not None else None),
+            "screen": (self.dim.status() if self.dim is not None else None),
             "quality": {
                 "preset": self.settings.get("codec_preset", "balanced"),
                 # 预设列表是静态数据，缓存 10 分钟
@@ -1704,9 +1704,7 @@ class Plugin:
 
         # 休眠相关证据：回答「为什么息屏后蓝牙会断」
         out["sleep"] = {
-            "inhibit": (self.dim.session._inhibitor.status()
-                         if self.dim is not None and self.dim.session._inhibitor is not None
-                         else {}),
+            "inhibit": (self.dim.inhibit_dict() if self.dim is not None else {}),
             "logind": (await inhibit.logind_info() if inhibit is not None else {}),
         }
         return out

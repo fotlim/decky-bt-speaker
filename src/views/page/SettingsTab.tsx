@@ -5,9 +5,9 @@ import { api } from "../../backend";
 import type {
   SpeakerStatus, CodecPreset, WifiInterface, LatencyProfile, SinkNode,
 } from "../../types";
-import { COLORS, SPACE, FONT, RADIUS, TONES } from "../../theme";
+import { COLORS, SPACE, FONT, RADIUS } from "../../theme";
 import {
-  Btn, Pill, Dot, Hint, SectionTitle, GroupTitle, ToggleRow, Stack, Row, Card, errMsg,
+  Btn, Pill, Hint, SectionTitle, ToggleRow, errMsg,
 } from "../../components";
 import { t } from "../../i18n";
 
@@ -64,29 +64,25 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
   };
 
   return (
-    <div style={{ marginTop: 16, maxWidth: 720 }}>
+    <div style={{ marginTop: SPACE.xl, maxWidth: 720 }}>
       <SectionTitle>{t("set.name")}</SectionTitle>
       <Hint>{t("set.nameHint")}</Hint>
-      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
         <input
           value={alias}
           onChange={(e) => setAlias(e.target.value)}
           maxLength={40}
           placeholder="Steam Deck"
           style={{
-            flex: 1, padding: "10px 12px", borderRadius: 9, fontSize: 14,
-            background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`,
+            flex: 1, padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm,
+            fontSize: FONT.bodyLg, boxSizing: "border-box",
+            background: COLORS.surfaceHover, border: `1px solid ${COLORS.border}`,
             color: COLORS.text, outline: "none",
           }}
         />
-        <Focusable
-          onClick={applyAlias}
-          onActivate={applyAlias}
-          style={{
-            padding: "10px 20px", borderRadius: 9, fontSize: 14, cursor: "pointer",
-            background: COLORS.accent, color: "#fff", opacity: busy ? 0.6 : 1,
-          }}
-        >{busy ? t("common.saving") : t("common.save")}</Focusable>
+        <Btn variant="primary" onClick={applyAlias} disabled={busy}>
+          {busy ? t("common.saving") : t("common.save")}
+        </Btn>
       </div>
 
       <SectionTitle>{t("set.audioTuning")}</SectionTitle>
@@ -117,12 +113,12 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       <Hint>
         {t("set.pairingHint")}
       </Hint>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.md, marginTop: SPACE.md }}>
         <div style={{
           width: 8, height: 8, borderRadius: 4, flexShrink: 0,
           background: state.agent_registered ? COLORS.ok : state.agent ? "#e0a800" : COLORS.accentWarm,
         }} />
-        <div style={{ flex: 1, fontSize: 13, color: COLORS.text }}>
+        <div style={{ flex: 1, fontSize: FONT.body, color: COLORS.text }}>
           {state.agent_registered
             ? t("set.agentReady")
             : state.agent
@@ -146,8 +142,9 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             try { await api.restartAgent(); setTimeout(refresh, 800); } catch { /* ignore */ }
           }}
           style={{
-            padding: "7px 14px", borderRadius: 16, fontSize: 12.5, cursor: "pointer",
-            background: "rgba(255,255,255,0.08)", color: COLORS.text, flexShrink: 0,
+            padding: `${SPACE.xs}px ${SPACE.lg}px`, borderRadius: RADIUS.md,
+            fontSize: FONT.small, cursor: "pointer",
+            background: COLORS.surfaceHover, color: COLORS.text, flexShrink: 0,
           }}
         >{t("set.restartAgent")}</Focusable>
       </div>
@@ -156,7 +153,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       <Hint>
         {t("set.codecHint")}
       </Hint>
-      <Focusable flow-children="column" style={{ marginTop: 8 }}>
+      <Focusable flow-children="column" style={{ marginTop: SPACE.md }}>
         {(state.quality?.presets || []).map((p: CodecPreset) => {
           const active = (s.codec_preset || "balanced") === p.key;
           return (
@@ -178,8 +175,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 try { await api.setCodecPreset(p.key); setTimeout(refresh, 1500); } catch { /* ignore */ }
               }}
               style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
-                borderRadius: 10, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                borderRadius: RADIUS.sm, cursor: "pointer",
                 background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                 border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
               }}
@@ -192,8 +189,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, color: COLORS.text }}>{p.label}</div>
-                <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 2 }}>{p.desc}</div>
+                <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{p.label}</div>
+                <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }}>{p.desc}</div>
               </div>
               <Pill>resample {p.resample}</Pill>
             </Focusable>
@@ -212,7 +209,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       {/* 2.4GHz 干扰是蓝牙卡顿的头号原因，直接显示出来 */}
       {state.wifi && state.wifi.risk === "high" && (
         <div style={{
-          margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9, fontSize: 12, lineHeight: 1.7,
+          margin: "6px 0 10px", padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm, fontSize: FONT.small, lineHeight: 1.7,
           background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
           color: "#ffb3b3", whiteSpace: "pre-wrap",
         }}>
@@ -230,7 +227,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
         </Hint>
       )}
 
-      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
+      <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
         <Focusable
           onClick={async () => {
             try {
@@ -248,7 +245,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             try { await api.fixStutter(); setTimeout(refresh, 1500); } catch { /* ignore */ }
           }}
           style={{
-            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
+            padding: `${SPACE.md}px ${SPACE.xl}px`,
+            borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
             background: COLORS.accent, color: "#fff",
           }}
         >{t("set.fixStutter")}</Focusable>
@@ -276,8 +274,9 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
             try { await api.diagnoseStutter(); } catch { /* ignore */ }
           }}
           style={{
-            padding: "9px 18px", borderRadius: 18, cursor: "pointer", fontSize: 13,
-            background: "rgba(255,255,255,0.08)", color: COLORS.text,
+            padding: `${SPACE.md}px ${SPACE.xl}px`,
+            borderRadius: RADIUS.md, cursor: "pointer", fontSize: FONT.body,
+            background: COLORS.surfaceHover, color: COLORS.text,
           }}
         >{t("set.diagStutter")}</Focusable>
       </Focusable>
@@ -287,7 +286,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
 
       <SectionTitle>{t("set.focus")}</SectionTitle>
       <Hint>{t("set.focusHint")}</Hint>
-      <Focusable flow-children="column" style={{ marginTop: 8 }}>
+      <Focusable flow-children="column" style={{ marginTop: SPACE.md }}>
         {([
           ["coexist", t("set.focusCoexist"), t("set.focusCoexistDesc")],
           ["receiver_first", t("set.focusReceiver"), t("set.focusReceiverDesc")],
@@ -300,8 +299,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               onClick={() => changeFocus(mode)}
               onActivate={() => changeFocus(mode)}
               style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 8,
-                borderRadius: 10, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 12, padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                borderRadius: RADIUS.sm, cursor: "pointer",
                 background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                 border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
               }}
@@ -314,8 +313,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, color: COLORS.text }}>{label}</div>
-                <div style={{ fontSize: 11.5, color: COLORS.dim, marginTop: 2 }}>{desc}</div>
+                <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{label}</div>
+                <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }}>{desc}</div>
               </div>
             </Focusable>
           );
@@ -324,8 +323,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
 
       <SectionTitle>{t("set.power")}</SectionTitle>
       <Hint>{t("set.powerHint")}</Hint>
-      <div style={{ marginTop: 8 }}>
-        <div style={{ fontSize: 13.5, color: COLORS.text, marginBottom: 6 }}>
+      <div style={{ marginTop: SPACE.md }}>
+        <div style={{ fontSize: FONT.bodyLg, color: COLORS.text, marginBottom: SPACE.sm }}>
           {t("set.silence")}
           {state.silence?.enabled && state.silence.was_active && state.silence.remaining !== null
             ? t("set.silenceRemain", { n: state.silence.remaining })
@@ -339,7 +338,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           showValue={false}
           onChange={(v) => { setSilence(v); }}
         />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: COLORS.dim }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: FONT.small, color: COLORS.dim }}>
           <span>{t("set.silenceOff")}</span><span>5m</span><span>10m</span>
         </div>
       </div>
@@ -349,7 +348,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
         {t("set.normalizeHint", { base: state.normalize?.baseline != null ? Math.round(state.normalize.baseline * 100) + "%" : t("set.normUnset") })}
         {state.normalize?.jumps ? t("set.normJumps", { n: state.normalize.jumps }) : ""}
       </Hint>
-      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8 }}>
+      <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.md }}>
         <Focusable
           onClick={async () => {
             try {
@@ -366,7 +365,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               refresh();
             } catch { /* ignore */ }
           }}
-          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: 13, cursor: "pointer" }}
+          style={{ padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.text, fontSize: FONT.body, cursor: "pointer" }}
         >{t("set.setBaseline")}</Focusable>
         <Focusable
           onClick={async () => {
@@ -375,13 +374,13 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
           onActivate={async () => {
             try { await api.resetVolumeBaseline(); refresh(); } catch { /* ignore */ }
           }}
-          style={{ padding: "8px 16px", borderRadius: 18, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: 13, cursor: "pointer" }}
+          style={{ padding: `${SPACE.md}px ${SPACE.xl}px`, borderRadius: RADIUS.md, background: "rgba(255,255,255,0.08)", color: COLORS.sub, fontSize: FONT.body, cursor: "pointer" }}
         >{t("set.resetBaseline")}</Focusable>
       </Focusable>
 
       <SectionTitle>{t("set.behavior")}</SectionTitle>
       <Hint>{t("set.latencyHint")}</Hint>
-      <Focusable flow-children="row" style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+      <Focusable flow-children="row" style={{ display: "flex", gap: SPACE.md, marginTop: 8, flexWrap: "wrap" }}>
         {(state.output?.latency_profiles || []).map((p: LatencyProfile) => {
           const active = (s.latency_profile || "balanced") === p.key;
           return (
@@ -400,14 +399,14 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 try { await api.setLatencyProfile(p.key); setTimeout(refresh, 1200); } catch { /* ignore */ }
               }}
               style={{
-                flex: "1 1 180px", padding: "11px 14px", borderRadius: 10, cursor: "pointer",
+                flex: "1 1 180px", padding: `${SPACE.lg}px ${SPACE.xl}px`, borderRadius: RADIUS.sm, cursor: "pointer",
                 background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                 border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
               }}
             >
-              <div style={{ fontSize: 13.5, color: COLORS.text }}>{p.label}</div>
-              <div style={{ fontSize: 11, color: COLORS.accent, marginTop: 2 }}>~{p.latency_ms}ms</div>
-              <div style={{ fontSize: 11, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>
+              <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{p.label}</div>
+              <div style={{ fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }}>~{p.latency_ms}ms</div>
+              <div style={{ fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>
             </Focusable>
           );
         })}
@@ -435,7 +434,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       </Hint>
 
       <SectionTitle>{t("set.codecInfo")}</SectionTitle>
-      <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
+      <div style={{ fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }}>
         <div>{t("set.codecActive")}: {state.codec?.codec || t("common.none")}</div>
         <div>Profile：{state.codec?.profile || "—"}</div>
         <div>{t("set.codecRole")}: {state.codec?.role || "—"}</div>
@@ -472,7 +471,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
       )}
 
       <SectionTitle>{t("set.sysinfo")}</SectionTitle>
-      <div style={{ fontSize: 13, color: COLORS.sub, lineHeight: 1.9 }}>
+      <div style={{ fontSize: FONT.body, color: COLORS.sub, lineHeight: 1.9 }}>
         <div>PipeWire：{state.versions?.pipewire || t("common.unknown")}</div>
         <div>WirePlumber：{state.versions?.wireplumber || t("common.unknown")}</div>
         <div>BlueZ：{state.versions?.bluez || t("common.unknown")}</div>

@@ -105,6 +105,100 @@
 
 ---
 
+## [3.0.1] - 2026-11-28
+
+**修 v3.0.0 的崩溃：`AttributeError: 'DimSession' object has no attribute 'session'`**
+
+### 问题
+
+真机一打开插件就报错，QAM 面板完全不可用。
+
+### 原因
+
+v3.0.0 把 `DimSession` 实例存进 `self.dim`，但调用处写成了：
+
+```python
+self.dim.session.screen_status()   # ❌ self.dim 本身就是 DimSession
+```
+
+把 `self.dim` 当成「容器」了，而它实际就是会话对象本身。
+5 处调用全错，任何一条都会炸。
+
+**为什么测试没抓到？** —— 这是这一版真正的教训：
+
+| 检查 | 结果 | 为什么没抓到 |
+|---|---|---|
+| `tests_offline.py` | 全绿 | 它测的是**纯函数**（解析、状态机），从不访问 `self.dim` |
+| `tests_i18n.py` | 全绿 | 只管文案 |
+| `tests_bundle.py` | 全绿 | 只加载前端产物，不碰 Python |
+| `tsc` / `rollup` | 全绿 | TypeScript 看不到 Python |
+| `pack.py` | 全绿 | 只检查文件结构 |
+
+**没有任何一处真正去访问那个属性。** 静态检查（`py_compile`）也查不出——
+`self.dim.session` 是合法的 Python 语法，只是运行时才发现属性不存在。
+
+### Fixed
+
+- 5 处 `self.dim.session.xxx()` 改为 `self.dim.xxx()`
+- `DimSession` 新增 `inhibit_dict()`：`diagnose()` 需要同步取抑制锁状态，
+  原来直接在 `main.py` 里穿透访问 `self.dim.session._inhibitor.status()`，
+  既用错了层级、又暴露了私有属性
+
+### Added
+
+- **`tests_api.py`：接口自检**
+
+  用 `ast` 解析 `main.py`，收集所有 `self.X` 的**读取**与**赋值**，
+  然后检查每个读取是否都能在「类属性 ∪ `_main()` 里赋值的实例属性」里找到。
+  这样 `self.dim.session` 这种「访问了不存在的属性」能被静态抓出来。
+
+  另附：`DimSession` 的公开方法清单校验、`self.dim.session` 写法的回归锁。
+
+- **`tests_rpc.py`：RPC 冒烟测试**
+
+  真正实例化 `Plugin`，把外部依赖（`bluetoothctl` / `wpctl` / `pactl`）
+  全部 mock 掉，然后**挨个 `await` 全部 51 个 RPC**。
+
+  判定标准很重要：返回 `__bt_error__` **不算失败**（环境里没蓝牙，报错正常）。
+  真正的失败是出现 `AttributeError` / `NameError` / `TypeError` 这类**代码错误**。
+
+  第一次跑就抓出 5 个问题（其中 4 个是我假对象写错、1 个是参数签名不符），
+  说明这个测试确实在起作用。
+
+- **`_decky_stub.py`**：`decky` 模块的最小桩，让上面两个测试能在开发机上
+  导入 `main.py`（真机上 Decky 会注入，开发机没有）
+
+- `tsconfig.json` 开启 `noUnusedLocals`：重构中漏掉的未使用 import
+  现在会直接编译报错
+
+### 顺带修的（都是 v3.0.0 重构的疏漏）
+
+- **`SettingsTab` / `EqTab` 根本没迁移到 token** —— 它们只是被搬了个位置，
+  里面还有 27 + 8 处硬编码样式（`padding: "12px 14px"`、`borderRadius: 11`、
+  `fontSize: 14.5`）。v3.0.0 的 CHANGELOG 说「样式全部收敛」是不准确的，
+  实际只改了 `DevicesTab` 和 `DiagTab`。现在补齐：27 → 0、8 → 0。
+- **大量未使用 import** —— 拆文件时给每个文件套了同一份 import 模板，
+  `SettingsTab` 里有 5 个、`DiagTab` 里有 3 个从未使用。已全部清除。
+- **`Speaker.tsx` 里 `dimmed` 状态只写不读** —— 遮罩移到全局组件后，
+  QAM 面板不需要知道息屏状态。删掉这个死状态。
+
+### 验证
+
+```
+python tests_api.py       接口自检全部通过
+python tests_rpc.py       51 个 RPC，无代码级错误
+python tests_offline.py   全部通过
+python tests_i18n.py      212 key 一致
+python tests_bundle.py    8 项全过
+tsc --noEmit              exit 0（已开 noUnusedLocals）
+pack.py                   自检 1~9 全过，22 文件
+```
+
+另做了**产物验证**：解包 zip，确认 `main.py` 里 8 处 `self.dim.*` 调用
+全部对应 `dimsession.py` 的真实方法，且无 `self.dim.session` 残留。
+
+---
+
 ## [3.0.0] - 2026-11-28
 
 **结构与视觉重构：不改功能，只让代码和界面变得可维护**

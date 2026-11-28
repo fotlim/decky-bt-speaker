@@ -105,6 +105,21 @@ class DimSession:
         st["system"] = await self._inhibit.list_inhibitors()
         return st
 
+    def inhibit_dict(self):
+        """同步版：只取抑制锁自身状态（给 `diagnose()` 用，不查系统锁列表）。
+
+        为什么要单独一个方法？
+        --------------------
+        `diagnose()` 是同步拼装 dict 的，不能 await；而 `inhibit_status()`
+        要 await `list_inhibitors()`。早期为了省事直接在 main.py 里写
+        `self.dim.session._inhibitor.status()` —— 既穿透了封装，又把
+        实现细节（`_inhibitor` 这个私有属性）暴露给了外部。现在收进
+        方法里，外部不需要知道内部怎么存的。
+        """
+        if self._inhibitor is None:
+            return {}
+        return self._inhibitor.status()
+
     # -- 进入息屏 -------------------------------------------------------
     async def enter(self):
         """息屏：先抑制自动休眠，再关屏。
