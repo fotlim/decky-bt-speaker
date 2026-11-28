@@ -170,10 +170,10 @@ function PresetRow({ preset, active, busy, onPick }: {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>
-          {preset.label}{busy ? " …" : ""}
+          {t(preset.label_key)}{busy ? " …" : ""}
         </div>
         <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }}>
-          {preset.desc}
+          {t(preset.desc_key)}
         </div>
       </div>
       {preset.bands > 0 && <Pill>{t("eq.bands", { n: preset.bands })}</Pill>}

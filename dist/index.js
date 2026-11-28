@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"3.0.1","build":"11-28 11:26"};
+var __BT_META__ = {"version":"3.1.0","build":"11-28 14:03"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -801,6 +801,31 @@ const EN = {
     "eq.presets": "Presets",
     "eq.hint": "Uses PipeWire's built-in param_eq (no external plugins). Switching restarts PipeWire — expect a second of silence.",
     "eq.bands": "{n} bands",
+    // EQ 预设（后端只返回 key，这里翻译）
+    "eq.flat": "Flat (off)",
+    "eq.flatDesc": "No change to the sound",
+    "eq.bass": "Bass boost",
+    "eq.bassDesc": "Fills in the thin low end of the Deck speakers — good for pop / electronic",
+    "eq.vocal": "Vocal clarity",
+    "eq.vocalDesc": "Lifts the midrange and cuts muddy lows — good for podcasts / audiobooks / meetings",
+    "eq.bright": "Bright & open",
+    "eq.brightDesc": "Adds high-frequency detail — good for classical / acoustic",
+    "eq.loudness": "Loudness compensation",
+    "eq.loudnessDesc": "Boosts lows and highs at low volume (equal-loudness curve) — for late-night listening",
+    // 音质预设（codec）
+    "codec.balanced": "Balanced (recommended)",
+    "codec.balancedDesc": "SBC-XQ + AAC, a good trade-off between quality and compatibility",
+    "codec.quality": "Quality first",
+    "codec.qualityDesc": "Prefers high-bitrate codecs (LDAC / aptX HD / AAC); may stutter on a weak link",
+    "codec.stable": "Stability first",
+    "codec.stableDesc": "SBC only — lower bitrate, strong interference resistance, average quality",
+    // 延迟档位
+    "lat.low": "Low latency",
+    "lat.lowDesc": "Small buffer, better lip-sync for video; may stutter under heavy Wi-Fi interference",
+    "lat.balanced": "Balanced (recommended)",
+    "lat.balancedDesc": "Default — balances stability and latency",
+    "lat.stable": "Anti-stutter",
+    "lat.stableDesc": "Large buffer, steadier under interference; noticeably higher latency",
     "eq.custom": "Custom (AutoEQ import)",
     "eq.customActive": "Using imported curve",
     "eq.active": "Active",
@@ -1018,6 +1043,31 @@ const ZH = {
     "eq.presets": "预设",
     "eq.hint": "用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。",
     "eq.bands": "{n} 段",
+    // EQ 预设
+    "eq.flat": "平直（关闭）",
+    "eq.flatDesc": "不改变音色",
+    "eq.bass": "低音增强",
+    "eq.bassDesc": "补 Deck 喇叭偏薄的低频，适合流行 / 电子",
+    "eq.vocal": "人声清晰",
+    "eq.vocalDesc": "抬中频、削低频浑浊，适合播客 / 有声书 / 会议",
+    "eq.bright": "明亮通透",
+    "eq.brightDesc": "抬高频细节，适合古典 / 原声乐器",
+    "eq.loudness": "等响补偿",
+    "eq.loudnessDesc": "小音量下补低频和高频（模拟等响曲线），夜间听歌用",
+    // 音质预设
+    "codec.balanced": "均衡（推荐）",
+    "codec.balancedDesc": "SBC-XQ + AAC，音质与兼容性兼顾",
+    "codec.quality": "音质优先",
+    "codec.qualityDesc": "优先高码率编码器（LDAC / aptX HD / AAC），链路差时可能卡顿",
+    "codec.stable": "稳定优先",
+    "codec.stableDesc": "只用 SBC，码率低抗干扰强，音质一般",
+    // 延迟档位
+    "lat.low": "低延迟",
+    "lat.lowDesc": "缓冲小，看视频口型更同步；Wi-Fi 干扰大时可能卡顿",
+    "lat.balanced": "均衡（推荐）",
+    "lat.balancedDesc": "默认档位，兼顾稳定性与延迟",
+    "lat.stable": "抗卡顿",
+    "lat.stableDesc": "缓冲大，干扰环境下更稳；延迟会明显增加",
     "eq.custom": "自定义（AutoEQ 导入）",
     "eq.customActive": "当前正在使用导入的曲线",
     "eq.active": "生效中",
@@ -1695,7 +1745,7 @@ function SettingsTab({ state, refresh }) {
                             try {
                                 const r = await api.setCodecPreset(p.key);
                                 toaster.toast({
-                                    title: `${t("set.codec")}: ${p.label}`,
+                                    title: `${t("set.codec")}: ${t(p.label_key)}`,
                                     body: r.active_profile ? `${t("set.codecCurrent", { codec: r.active_profile })}` : "",
                                 });
                                 setTimeout(refresh, 1500);
@@ -1718,7 +1768,7 @@ function SettingsTab({ state, refresh }) {
                                     width: 16, height: 16, borderRadius: 8, flexShrink: 0,
                                     border: `2px solid ${active ? COLORS.accent : "rgba(255,255,255,0.25)"}`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: p.label }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: p.desc })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
+                                }, children: active && SP_JSX.jsx("div", { style: { width: 8, height: 8, borderRadius: 4, background: COLORS.accent } }) }), SP_JSX.jsxs("div", { style: { flex: 1 }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t(p.label_key) }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }, children: t(p.desc_key) })] }), SP_JSX.jsxs(Pill, { children: ["resample ", p.resample] })] }, p.key));
                 }) }), SP_JSX.jsxs(Hint, { children: [t("set.codecCurrent", { codec: state.quality?.active_profile || t("common.none") }), SP_JSX.jsx("span", { style: { color: COLORS.accent } }), SP_JSX.jsx("br", {}), t("set.codecReconnect")] }), SP_JSX.jsx(SectionTitle, { children: t("set.stutter") }), state.wifi && state.wifi.risk === "high" && (SP_JSX.jsxs("div", { style: {
                     margin: "6px 0 10px", padding: `${SPACE.md}px ${SPACE.lg}px`, borderRadius: RADIUS.sm, fontSize: FONT.small, lineHeight: 1.7,
                     background: "rgba(236,65,65,0.10)", border: "1px solid rgba(236,65,65,0.28)",
@@ -1826,7 +1876,7 @@ function SettingsTab({ state, refresh }) {
                     return (SP_JSX.jsxs(DFL.Focusable, { onClick: async () => {
                             try {
                                 await api.setLatencyProfile(p.key);
-                                toaster.toast({ title: p.label, body: "" });
+                                toaster.toast({ title: t(p.label_key), body: "" });
                                 setTimeout(refresh, 1200);
                             }
                             catch (e) {
@@ -1842,7 +1892,7 @@ function SettingsTab({ state, refresh }) {
                             flex: "1 1 180px", padding: `${SPACE.lg}px ${SPACE.xl}px`, borderRadius: RADIUS.sm, cursor: "pointer",
                             background: active ? "rgba(76,154,255,0.13)" : "rgba(255,255,255,0.045)",
                             border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
-                        }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: p.label }), SP_JSX.jsxs("div", { style: { fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: p.desc })] }, p.key));
+                        }, children: [SP_JSX.jsx("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: t(p.label_key) }), SP_JSX.jsxs("div", { style: { fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }, children: ["~", p.latency_ms, "ms"] }), SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }, children: t(p.desc_key) })] }, p.key));
                 }) }), SP_JSX.jsx(SectionTitle, { children: t("set.sysinfo") }), SP_JSX.jsx(ToggleRow, { label: "Deck multi-output", desc: "Play to speakers + BT headset + wired headset at once.", checked: !!s.multi_output, onChange: async (v) => {
                     try {
                         await api.setMultiOutput(v);
@@ -1935,7 +1985,7 @@ function PresetRow({ preset, active, busy, onPick }) {
                     display: "flex", alignItems: "center", justifyContent: "center",
                 }, children: active && (SP_JSX.jsx("div", { style: {
                         width: 8, height: 8, borderRadius: RADIUS.full, background: COLORS.accent,
-                    } })) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: [preset.label, busy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: preset.desc })] }), preset.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: preset.bands }) })] }));
+                    } })) }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsxs("div", { style: { fontSize: FONT.bodyLg, color: COLORS.text }, children: [t(preset.label_key), busy ? " …" : ""] }), SP_JSX.jsx("div", { style: { fontSize: FONT.small, color: COLORS.dim, marginTop: 3 }, children: t(preset.desc_key) })] }), preset.bands > 0 && SP_JSX.jsx(Pill, { children: t("eq.bands", { n: preset.bands }) })] }));
 }
 
 function DiagTab() {

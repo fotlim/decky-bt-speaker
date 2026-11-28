@@ -105,6 +105,120 @@
 
 ---
 
+## [3.1.0] - 2026-11-28
+
+**修「切英文界面后预设列表还是中文」+ 配置文件注释改中英双语**
+
+### 1. 预设列表没英文化
+
+**现象**：真机截图——界面切成英文后，三个预设列表仍然整块中文：
+
+- 音质预设：`均衡（推荐）` / `音质优先` / `稳定优先`
+- 延迟档位：`低延迟` / `均衡（推荐）` / `抗卡顿`
+- EQ 预设：`平直（关闭）` / `低音增强` / `人声清晰` / `明亮通透` / `等响补偿`
+
+**根因**：后端直接返回了中文字符串，前端只是原样显示。
+
+```python
+# quality.py —— 错误写法
+CODEC_PRESETS = {
+    "balanced": {
+        "label": "均衡（推荐）",              # ← 后端返回中文
+        "desc": "SBC-XQ + AAC，音质与兼容性兼顾",
+        ...
+```
+
+**这和 v2.5.0 修过的「自检项返回中文」是同一类问题** —— 当时只修了自检项，
+漏了这三个预设列表。
+
+**修法**：后端只返回 i18n key，文案由前端按当前语言翻译。
+
+```python
+CODEC_PRESETS = {
+    "balanced": {
+        "label_key": "codec.balanced",
+        "desc_key": "codec.balancedDesc",
+        ...
+```
+
+前端：
+
+```tsx
+<div>{t(p.label_key)}</div>
+<div>{t(p.desc_key)}</div>
+```
+
+新增 36 条 i18n 文案（中英各 18 条）：`eq.*` / `codec.*` / `lat.*`。
+
+### 2. 配置文件注释改中英双语
+
+这些 `.conf` 文件会留在用户的 `~/.config` 里（`50-bt-speaker.conf` 等）。
+英文用户打开看到一屏中文注释会一头雾水。
+
+改成每条注释 `# English / 中文` 双语形式，涉及 5 个模板：
+
+| 文件 | 模板 |
+|---|---|
+| `bt.py` | `WP_CONF_TEMPLATE`（音箱优化） |
+| `quality.py` | 音质配置 |
+| `output.py` | 延迟配置 / 多输出（启用）/ 多输出（关闭） |
+| `eq.py` | 均衡器配置 |
+
+> Python 源码里的注释**没有动** —— 那是给开发者看的，双语反而增加噪音。
+> 只有**写进用户目录**的内容才需要双语。
+
+### 3. 顺带修掉一个真 bug
+
+`current_preset()` / `current_latency()` / `current()` 三个方法用正则从
+配置文件的注释里**反推当前预设**：
+
+```python
+m = re.search(r"预设：(\w+)", text)      # ← 匹配全角冒号
+```
+
+注释改成 `Preset / 预设: bass`（半角冒号 + 中英双语）后，这个正则匹配不到，
+表现为**「切完预设再打开页面，选中状态丢了」**。
+
+修法：新正则同时兼容两种格式：
+
+```python
+m = re.search(r"(?:Preset / 预设|预设)[:：]\s*(\w+)", text)
+```
+
+> 这个 bug 是跑测试时发现的（3 个 `current_*` 反推测试失败）。
+> 如果只改注释不改正则，它会静默失效 —— 用户不会看到报错，只会觉得「设置没保存」。
+
+### 4. 新增回归测试
+
+`tests_i18n.py` 新增 7 项检查，专门锁住这类问题：
+
+```
+PASS  quality.py 无中文 label/desc 字面量
+PASS  quality.py 使用 *_key 字段
+PASS  output.py 无中文 label/desc 字面量
+PASS  output.py 使用 *_key 字段
+PASS  eq.py 无中文 label/desc 字面量
+PASS  eq.py 使用 *_key 字段
+PASS  预设 key 全部有翻译
+```
+
+原理：正则扫描后端源码，找形如 `"label": "含中文"` 的字面量。
+已验证它能抓到旧写法、放行新写法。
+
+### 验证
+
+```
+tests_offline.py   全部通过（10 项断言已同步更新到新结构）
+tests_i18n.py      234 key 一致（原 212 + 新增 22）
+tests_api.py       接口自检通过
+tests_rpc.py       51 个 RPC 无代码级错误
+tests_bundle.py    8 项全过
+tsc --noEmit       exit 0
+pack.py            22 文件
+```
+
+---
+
 ## [3.0.1] - 2026-11-28
 
 **修 v3.0.0 的崩溃：`AttributeError: 'DimSession' object has no attribute 'session'`**

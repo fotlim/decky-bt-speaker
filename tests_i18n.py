@@ -108,6 +108,47 @@ def main():
         miss = sorted(chk - set(en))
         check("自检 key 都有翻译", not miss, str(miss))
 
+    # ------------------------------------------------------------------
+    # 后端不能返回**显示文案**，只能返回 i18n key
+    #
+    # 真机反馈「切英文后音质预设 / 延迟档位 / EQ 预设还是中文」——
+    # 根因是这几个模块直接返回了中文字符串，前端只是原样显示。
+    # v2.5.0 修过「自检项返回中文」，但只修了自检项，漏了预设列表。
+    #
+    # 这里锁住：预设类的 label/desc 必须是 *_key 形式。
+    # ------------------------------------------------------------------
+    print()
+    print("后端预设只返回 i18n key（不返回文案）")
+    PRESET_FILES = ["quality.py", "output.py", "eq.py"]
+    for fn in PRESET_FILES:
+        path = os.path.join(ROOT, fn)
+        if not os.path.exists(path):
+            continue
+        src = io.open(path, encoding="utf-8").read()
+        # 找形如 "label": "均衡（推荐）" 的字面量（带中文的）
+        bad = re.findall(r'"(label|desc)"\s*:\s*"[^"]*[\u4e00-\u9fff][^"]*"', src)
+        check("%s 无中文 label/desc 字面量" % fn, not bad,
+              "发现: %s" % (bad[:3] if bad else ""))
+        # 必须用 *_key
+        if "PRESETS" in src or "CODEC_PRESETS" in src or "LATENCY_PROFILES" in src:
+            check("%s 使用 *_key 字段" % fn, "label_key" in src)
+
+    # 后端返回的 label_key 必须在前端词典里有翻译
+    print()
+    print("后端返回的 i18n key 都有翻译")
+    missing_keys = []
+    for fn in PRESET_FILES:
+        path = os.path.join(ROOT, fn)
+        if not os.path.exists(path):
+            continue
+        src = io.open(path, encoding="utf-8").read()
+        for m in re.finditer(r'"(?:label_key|desc_key)"\s*:\s*"([^"]+)"', src):
+            key = m.group(1)
+            if key not in en:
+                missing_keys.append("%s -> %s" % (fn, key))
+    check("预设 key 全部有翻译", not missing_keys,
+          "缺失: %s" % (missing_keys[:5] if missing_keys else ""))
+
     print()
     print("硬编码中文残留（注释除外）")
 

@@ -163,7 +163,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 try {
                   const r = await api.setCodecPreset(p.key);
                   toaster.toast({
-                    title: `${t("set.codec")}: ${p.label}`,
+                    title: `${t("set.codec")}: ${t(p.label_key)}`,
                     body: r.active_profile ? `${t("set.codecCurrent", { codec: r.active_profile })}` : "",
                   });
                   setTimeout(refresh, 1500);
@@ -189,8 +189,8 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 {active && <div style={{ width: 8, height: 8, borderRadius: 4, background: COLORS.accent }} />}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{p.label}</div>
-                <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }}>{p.desc}</div>
+                <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{t(p.label_key)}</div>
+                <div style={{ fontSize: FONT.small, color: COLORS.dim, marginTop: 2 }}>{t(p.desc_key)}</div>
               </div>
               <Pill>resample {p.resample}</Pill>
             </Focusable>
@@ -389,7 +389,7 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
               onClick={async () => {
                 try {
                   await api.setLatencyProfile(p.key);
-                  toaster.toast({ title: p.label, body: "" });
+                  toaster.toast({ title: t(p.label_key), body: "" });
                   setTimeout(refresh, 1200);
                 } catch (e) {
                   toaster.toast({ title: t("toast.switchFailed"), body: errMsg(e) });
@@ -404,9 +404,9 @@ export function SettingsTab({ state, refresh }: { state: SpeakerStatus; refresh:
                 border: `1px solid ${active ? "rgba(76,154,255,0.4)" : COLORS.border}`,
               }}
             >
-              <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{p.label}</div>
+              <div style={{ fontSize: FONT.bodyLg, color: COLORS.text }}>{t(p.label_key)}</div>
               <div style={{ fontSize: FONT.caption, color: COLORS.accent, marginTop: 2 }}>~{p.latency_ms}ms</div>
-              <div style={{ fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{p.desc}</div>
+              <div style={{ fontSize: FONT.caption, color: COLORS.dim, marginTop: 3, lineHeight: 1.4 }}>{t(p.desc_key)}</div>
             </Focusable>
           );
         })}

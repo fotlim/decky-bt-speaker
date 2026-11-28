@@ -372,7 +372,8 @@ def test_eq():
     check("flat 无滤波器", eq.PRESETS["flat"]["filters"] == [])
     plist = eq.preset_list()
     check("preset_list 有 5 条", len(plist) == 5)
-    check("每条有 label/desc/bands", all("label" in p and "desc" in p and "bands" in p for p in plist))
+    check("每条有 label_key/desc_key/bands",
+          all("label_key" in p and "desc_key" in p and "bands" in p for p in plist))
 
     # 所有预设的滤波器 type 必须是合法的 biquad 标签
     valid_types = {"bq_lowshelf", "bq_highshelf", "bq_peaking", "bq_lowpass",
@@ -388,11 +389,11 @@ def test_eq():
     check("配置含 bq_lowshelf", "bq_lowshelf" in conf)
     check("配置含 Audio/Sink", "Audio/Sink" in conf)
     check("占位符已替换", "{name}" not in conf and "{block}" not in conf)
-    check("预设名写进注释", "预设：bass" in conf)
+    check("预设 key 写进注释", "Preset / 预设: bass" in conf)
 
     flat_conf = eq.build_conf("flat")
     check("flat 用空 filters", "filters = [ ]" in flat_conf)
-    check("未知预设回退 flat", "预设：flat" in eq.build_conf("nonexistent"))
+    check("未知预设回退 flat", "Preset / 预设: flat" in eq.build_conf("nonexistent"))
 
     # 抗削波 clamp（防止增益过头爆音）
     check("含 clamp 抗削波节点", "label = clamp" in conf)
@@ -469,8 +470,8 @@ def test_output():
     check("延迟配置含 bluez_input 匹配", "bluez_input" in conf)
     check("延迟配置含 node.latency", "node.latency" in conf)
     check("延迟配置含 decode-buffer", "bluez5.decode-buffer.latency" in conf)
-    check("档位名写进注释", "档位：low" in conf)
-    check("未知档位回退 balanced", "档位：balanced" in output.build_latency_conf("xxx"))
+    check("档位 key 写进注释", "Profile / 档位: low" in conf)
+    check("未知档位回退 balanced", "Profile / 档位: balanced" in output.build_latency_conf("xxx"))
 
     # combine-stream
     on = output.build_combine_conf(True)
@@ -581,11 +582,11 @@ def test_quality():
     check("配置含 resample.quality", "resample.quality = 10" in conf)
     check("配置含 hw-volume", "bluez5.hw-volume" in conf)
     check("占位符已替换", "{name}" not in conf and "{codecs}" not in conf)
-    check("预设名写进注释", "预设：balanced" in conf)
+    check("预设 key 写进注释", "Preset / 预设: balanced" in conf)
 
     qconf = quality.build_quality_conf("quality")
     check("quality 预设重采样 15", "resample.quality = 15" in qconf)
-    check("未知预设回退 balanced", "预设：balanced" in quality.build_quality_conf("xxx"))
+    check("未知预设回退 balanced", "Preset / 预设: balanced" in quality.build_quality_conf("xxx"))
 
     # pactl 解析
     pactl_out = """Card #2

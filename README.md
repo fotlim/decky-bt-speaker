@@ -300,7 +300,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v3.0.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.1.0**.
 
 | Version | Contents |
 |---|---|
@@ -346,6 +346,8 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v3.0.0**.
 | 2.9.2 | (merged into 2.9.3) |
 | 2.9.3 | Screen-off now closes QAM first and lifts the overlay to the OverlayQAM layer; A2DP readiness reads node.name from pw-dump (the wpctl status check never worked) |
 | 3.0.0 | **Structure & visual refactor (no feature change)** — design-token layer, per-tab files, `dimsession.py`; removed ~60 lines of dead volume code |
+| 3.0.1 | Fixed the `DimSession` crash (`self.dim.session`) + added AST/RPC smoke tests |
+| 3.1.0 | Preset lists (codec / latency / EQ) fully localized — backend returns i18n keys; config-file comments bilingual |
 
 ---
 
@@ -672,7 +674,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.0.0**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.1.0**。
 
 | 版本 | 内容 |
 |---|---|
@@ -718,6 +720,8 @@ python pack.py          # 打包 zip
 | 2.9.2 | （已并入 2.9.3） |
 | 2.9.3 | 息屏时先收起 QAM 并把遮罩提到 OverlayQAM 层；A2DP 判据改从 pw-dump 读 node.name（原来在 wpctl status 里搜，永远搜不到） |
 | 3.0.0 | **结构与视觉重构（不改功能）** —— 设计令牌层、按 Tab 拆分、`dimsession.py`；删掉约 60 行音量死代码 |
+| 3.0.1 | 修 `DimSession` 崩溃（`self.dim.session`）+ 新增 AST / RPC 冒烟测试 |
+| 3.1.0 | 预设列表（音质/延迟/EQ）完全本地化 —— 后端只返回 i18n key；配置文件注释改中英双语 |
 
 ---
 

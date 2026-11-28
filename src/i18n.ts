@@ -200,6 +200,34 @@ const EN: Dict = {
   "eq.presets": "Presets",
   "eq.hint": "Uses PipeWire's built-in param_eq (no external plugins). Switching restarts PipeWire — expect a second of silence.",
   "eq.bands": "{n} bands",
+
+  // EQ 预设（后端只返回 key，这里翻译）
+  "eq.flat": "Flat (off)",
+  "eq.flatDesc": "No change to the sound",
+  "eq.bass": "Bass boost",
+  "eq.bassDesc": "Fills in the thin low end of the Deck speakers — good for pop / electronic",
+  "eq.vocal": "Vocal clarity",
+  "eq.vocalDesc": "Lifts the midrange and cuts muddy lows — good for podcasts / audiobooks / meetings",
+  "eq.bright": "Bright & open",
+  "eq.brightDesc": "Adds high-frequency detail — good for classical / acoustic",
+  "eq.loudness": "Loudness compensation",
+  "eq.loudnessDesc": "Boosts lows and highs at low volume (equal-loudness curve) — for late-night listening",
+
+  // 音质预设（codec）
+  "codec.balanced": "Balanced (recommended)",
+  "codec.balancedDesc": "SBC-XQ + AAC, a good trade-off between quality and compatibility",
+  "codec.quality": "Quality first",
+  "codec.qualityDesc": "Prefers high-bitrate codecs (LDAC / aptX HD / AAC); may stutter on a weak link",
+  "codec.stable": "Stability first",
+  "codec.stableDesc": "SBC only — lower bitrate, strong interference resistance, average quality",
+
+  // 延迟档位
+  "lat.low": "Low latency",
+  "lat.lowDesc": "Small buffer, better lip-sync for video; may stutter under heavy Wi-Fi interference",
+  "lat.balanced": "Balanced (recommended)",
+  "lat.balancedDesc": "Default — balances stability and latency",
+  "lat.stable": "Anti-stutter",
+  "lat.stableDesc": "Large buffer, steadier under interference; noticeably higher latency",
   "eq.custom": "Custom (AutoEQ import)",
   "eq.customActive": "Using imported curve",
   "eq.active": "Active",
@@ -427,6 +455,34 @@ const ZH: Dict = {
   "eq.presets": "预设",
   "eq.hint": "用 PipeWire 内置的 param_eq（不依赖任何外部插件）。切换会重启 PipeWire，可能有一两秒静音。",
   "eq.bands": "{n} 段",
+
+  // EQ 预设
+  "eq.flat": "平直（关闭）",
+  "eq.flatDesc": "不改变音色",
+  "eq.bass": "低音增强",
+  "eq.bassDesc": "补 Deck 喇叭偏薄的低频，适合流行 / 电子",
+  "eq.vocal": "人声清晰",
+  "eq.vocalDesc": "抬中频、削低频浑浊，适合播客 / 有声书 / 会议",
+  "eq.bright": "明亮通透",
+  "eq.brightDesc": "抬高频细节，适合古典 / 原声乐器",
+  "eq.loudness": "等响补偿",
+  "eq.loudnessDesc": "小音量下补低频和高频（模拟等响曲线），夜间听歌用",
+
+  // 音质预设
+  "codec.balanced": "均衡（推荐）",
+  "codec.balancedDesc": "SBC-XQ + AAC，音质与兼容性兼顾",
+  "codec.quality": "音质优先",
+  "codec.qualityDesc": "优先高码率编码器（LDAC / aptX HD / AAC），链路差时可能卡顿",
+  "codec.stable": "稳定优先",
+  "codec.stableDesc": "只用 SBC，码率低抗干扰强，音质一般",
+
+  // 延迟档位
+  "lat.low": "低延迟",
+  "lat.lowDesc": "缓冲小，看视频口型更同步；Wi-Fi 干扰大时可能卡顿",
+  "lat.balanced": "均衡（推荐）",
+  "lat.balancedDesc": "默认档位，兼顾稳定性与延迟",
+  "lat.stable": "抗卡顿",
+  "lat.stableDesc": "缓冲大，干扰环境下更稳；延迟会明显增加",
   "eq.custom": "自定义（AutoEQ 导入）",
   "eq.customActive": "当前正在使用导入的曲线",
   "eq.active": "生效中",

@@ -65,19 +65,47 @@ def install_decky_stub():
 
 
 def collect_self_attrs(tree):
-    """从 AST 里收集两类名字：
-    - 所有 `self.X` 的**读取**（调用、属性访问、传参都算）
-    - 所有 `self.X = ...` 的**赋值**（这些是实例属性，运行时才有）
+    """从 AST 里收集：
+    - `self.X` 的**读取**（返回的集合里，无点的是第一段，带点的是链式后续段）
+    - `self.X = ...` 的**赋值**（这些是实例属性，运行时才有）
+
+    ⚠️ 为什么要拆链式属性？
+    ----------------------
+    v3.0.0 那个 bug 是 `self.dim.session.enter()`。它的 AST 是：
+
+        Attribute(
+          value=Attribute(value=Name('self'), attr='dim'),
+          attr='session')
+
+    只判断「`node.value` 是不是 `Name('self')`」的话，**只能看到 `dim`**，
+    `session` 完全被漏掉 —— 而 `session` 才是真正不存在的那个。
+
+    所以这里把 `self.a.b.c` 拆成 `['a', 'b', 'c']`，逐段记录：
+      - `a`      → 第一段，必须在类/实例上存在
+      - `a.b`    → 后续段，属于运行时对象，需另用「目标类的方法清单」核对
     """
     reads = set()
     writes = set()
 
+    def chain_of(node):
+        """把 self.a.b.c 拆成 ['a','b','c']；不是以 self 开头就返回 None。"""
+        chain = []
+        cur = node
+        while isinstance(cur, ast.Attribute):
+            chain.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name) and cur.id == "self" and chain:
+            chain.reverse()
+            return chain
+        return None
+
     class V(ast.NodeVisitor):
         def visit_Attribute(self, node):
-            # 只关心 self.X 这种
-            if isinstance(node.value, ast.Name) and node.value.id == "self":
-                # 判断是读还是写：看父节点是不是赋值目标
-                reads.add(node.attr)
+            chain = chain_of(node)
+            if chain:
+                reads.add(chain[0])                        # self.a
+                for i in range(1, len(chain)):
+                    reads.add("%s.%s" % (chain[0], chain[i]))  # self.a.b
             self.generic_visit(node)
 
         def visit_Assign(self, node):
@@ -94,10 +122,9 @@ def collect_self_attrs(tree):
             self.generic_visit(node)
 
         def _mark_write(self, tgt):
-            if (isinstance(tgt, ast.Attribute)
-                    and isinstance(tgt.value, ast.Name)
-                    and tgt.value.id == "self"):
-                writes.add(tgt.attr)
+            chain = chain_of(tgt)
+            if chain:
+                writes.add(chain[0])
 
     V().visit(tree)
     return reads, writes
@@ -136,22 +163,42 @@ def main():
     # 实例上会有的：类属性 ∪ _main() 里赋值的
     available = class_members | writes
 
-    # 逐个检查读取的名字
-    missing = sorted(n for n in reads if n not in available)
+    # 逐个检查**第一段**（self.X）—— 带点的链式后续段单独查（见下）
+    first_seg = {n for n in reads if "." not in n}
+    chained = {n for n in reads if "." in n}
+    missing = sorted(n for n in first_seg if n not in available)
 
     print()
     print("检查 self.X 引用是否都存在")
     check("没有引用不存在的成员", not missing,
           "缺失: %s" % ", ".join(missing))
 
-    # 额外：检查对 DimSession 的调用是否都是真实方法
+    # 检查链式属性（self.dim.xxx）的后续段是否是该对象的真实成员。
     #
-    # 这是 v3.0.0 那个 bug 的直接对应检查 —— 当时写的是
-    # `self.dim.session.xxx()`，而 DimSession 根本没有 `session` 属性。
+    # 这是 v3.0.0 那个 bug 的直接对应检查：`self.dim.session.enter()`
+    # 里 `session` 不存在。旧版 collect_self_attrs 只记录最外层 `dim`，
+    # 根本看不到 `session`；现在会得到 `dim.session` 这个键。
+    print()
+    print("检查链式属性（self.X.Y）的后续段")
+    try:
+        import dimsession  # noqa: E402
+        ds_members = set(dir(dimsession.DimSession))
+        bad_chain = []
+        for key in sorted(chained):
+            head, _, attr = key.partition(".")
+            if head != "dim":
+                continue  # 只对已知类型的成员做严格检查
+            if attr not in ds_members:
+                bad_chain.append(key)
+        check("self.dim.Y 的 Y 都是 DimSession 真实成员", not bad_chain,
+              "非法: %s" % ", ".join(bad_chain))
+    except Exception as e:  # noqa: BLE001
+        check("导入 dimsession", False, str(e))
+
+    # 额外：检查对 DimSession 的调用是否都是真实方法
     print()
     print("检查 DimSession 的公开接口")
     try:
-        import dimsession  # noqa: E402
         ds_methods = {n for n in dir(dimsession.DimSession) if not n.startswith("_")}
         for m in ("enter", "exit", "shutdown", "status", "screen_status",
                   "diagnose", "inhibit_status", "inhibit_dict", "set_save"):

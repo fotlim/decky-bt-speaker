@@ -125,8 +125,9 @@ export interface SilenceInfo {
 
 export interface EqPreset {
   key: string;
-  label: string;
-  desc: string;
+  /** i18n key（后端只返回 key，文案由前端翻译） */
+  label_key: string;
+  desc_key: string;
   bands: number;
 }
 
@@ -145,8 +146,9 @@ export interface NormalizeInfo {
 
 export interface LatencyProfile {
   key: string;
-  label: string;
-  desc: string;
+  /** i18n key（后端只返回 key，文案由前端翻译） */
+  label_key: string;
+  desc_key: string;
   latency_ms: number;
 }
 
@@ -189,8 +191,9 @@ export interface WifiInfo {
 
 export interface CodecPreset {
   key: string;
-  label: string;
-  desc: string;
+  /** i18n key（后端只返回 key，文案由前端翻译） */
+  label_key: string;
+  desc_key: string;
   resample: number;
 }
 
