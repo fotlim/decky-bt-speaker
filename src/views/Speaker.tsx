@@ -6,7 +6,7 @@ import { toaster } from "@decky/api";
 import { FaBluetooth, FaVolumeUp, FaVolumeMute, FaMobileAlt, FaLaptop, FaCog, FaMoon } from "react-icons/fa";
 import { api } from "../backend";
 import { useSpeaker, setPanelVisible } from "../store";
-import { COLORS, ROUTE, RADIUS } from "../theme";
+import { COLORS, ROUTE, RADIUS, SPACE, FONT, TONES } from "../theme";
 import { Pill, ErrorText, errMsg } from "../components";
 import { t } from "../i18n";
 import { setDimmed as setDimState } from "../dimState";
@@ -279,49 +279,79 @@ export function Speaker() {
         </div>
       )}
 
-      {/* 谁在放歌：外部蓝牙源 */}
+      {/* 正在播放：纯信息卡片。
+          ⚠️ 这里**不再放音量按钮** —— 下面已经有一整排主音量调节，
+          同一个面板里两套音量控件既重复又让人分不清哪个管什么。
+          （真机反馈：「这个的音量控件和下边音量调节重复了」。）
+          外部源的独立音量调节挪到全屏页的「设置」里，需要时再去调。 */}
       {state?.live && (
         <div style={{
-          margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
-          background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
+          margin: "8px 0 2px", padding: "10px 12px", borderRadius: RADIUS.sm,
+          background: TONES.accent.bg, border: `1px solid ${TONES.accent.border}`,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          {/* 第一行：状态点 + 曲名 + 来源徽章 */}
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE.md, marginBottom: 6 }}>
             <span style={{
-              width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
+              width: 7, height: 7, borderRadius: RADIUS.full, background: COLORS.ok,
+              flexShrink: 0,
+              // 播放中常亮，暂停时变暗
               opacity: state.track?.status === "playing" ? 1 : 0.4,
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div style={{
+                fontSize: FONT.small, color: COLORS.text, fontWeight: 600,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
                 {state.track?.title || t("qam.playing", { name: state.live.name })}
               </div>
-              {state.track?.artist && (
-                <div style={{ fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {state.track.artist}{state.track.album ? ` · ${state.track.album}` : ""}
-                </div>
-              )}
+              <div style={{
+                fontSize: FONT.caption, color: COLORS.sub, marginTop: 1,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {state.track?.artist
+                  ? (state.track.album
+                      ? `${state.track.artist} · ${state.track.album}`
+                      : state.track.artist)
+                  : state.live.name}
+              </div>
             </div>
-            <Pill tone="accent">{state.track?.status_label || t("qam.externalSource")}</Pill>
+            <Pill tone="accent">
+              {state.track?.status_label || t("qam.externalSource")}
+            </Pill>
           </div>
+
+          {/* 第二行：进度条 + 时间（有元数据才显示） */}
           {state.track && state.track.duration_ms > 0 && (
-            <div style={{ fontSize: 11, color: COLORS.dim, marginBottom: 4 }}>
-              {state.track.position} / {state.track.duration}
+            <div>
+              <div style={{
+                height: 3, borderRadius: 2, background: "rgba(255,255,255,0.12)",
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  height: "100%",
+                  width: `${Math.min(100, (state.track.position_ms / state.track.duration_ms) * 100)}%`,
+                  background: COLORS.accent,
+                  borderRadius: 2,
+                  transition: "width 0.9s linear",
+                }} />
+              </div>
+              <div style={{
+                display: "flex", justifyContent: "space-between",
+                fontSize: FONT.caption, color: COLORS.dim, marginTop: 3,
+                fontVariantNumeric: "tabular-nums",
+              }}>
+                <span>{state.track.position}</span>
+                <span>{state.track.duration}</span>
+              </div>
             </div>
           )}
-          {/* 外部音源音量：同样不用滑条（读取不可靠），改相对调节 */}
-          <Focusable flow-children="row" style={{ display: "flex", gap: 6, marginTop: 2 }}>
-            <VolBtn
-              onClick={() => act(() => api.stepSourceVolume(state.live!.id, -10))}
-              label="−10%"
-            />
-            <VolBtn
-              onClick={() => act(() => api.setSourceMute(state.live!.id, !state.live!.muted))}
-              label={state.live.muted ? t("qam.unmute") : t("qam.mute")}
-            />
-            <VolBtn
-              onClick={() => act(() => api.stepSourceVolume(state.live!.id, 10))}
-              label="+10%"
-            />
-          </Focusable>
+
+          {/* 没有元数据时给一句说明，避免卡片显得空 */}
+          {(!state.track || state.track.duration_ms <= 0) && (
+            <div style={{ fontSize: FONT.caption, color: COLORS.dim }}>
+              {t("qam.noTrackInfo")}
+            </div>
+          )}
         </div>
       )}
 

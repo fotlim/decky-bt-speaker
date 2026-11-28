@@ -63,10 +63,6 @@ export const api = {
   /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
   stepVolume: (delta: number) => call<[number], { ok: boolean }>("step_volume", delta),
   setMute: (m: boolean) => call<[boolean], { ok: boolean }>("set_mute", m),
-  stepSourceVolume: (nodeId: number, delta: number) =>
-    call<[number, number], { ok: boolean }>("step_source_volume", nodeId, delta),
-  setSourceMute: (nodeId: number, m: boolean) =>
-    call<[number, boolean], { ok: boolean }>("set_source_mute", nodeId, m),
   boostVolume: (gain = 1.5) =>
     call<[number], { ok: boolean; gain: number; applied: string[] }>("boost_volume", gain),
   diagnoseStutter: () => call<[], any>("diagnose_stutter"),

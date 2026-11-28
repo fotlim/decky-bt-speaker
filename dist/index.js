@@ -1,4 +1,4 @@
-var __BT_META__ = {"version":"3.1.0","build":"11-28 14:03"};
+var __BT_META__ = {"version":"3.2.0","build":"11-28 15:24"};
 
 const manifest = {"name":"Bluetooth Speaker"};
 const API_VERSION = 2;
@@ -143,8 +143,6 @@ const api = {
     /** 相对调节：不读当前值，直接增减。避免依赖读取，因此不会出现同步问题。 */
     stepVolume: (delta) => call("step_volume", delta),
     setMute: (m) => call("set_mute", m),
-    stepSourceVolume: (nodeId, delta) => call("step_source_volume", nodeId, delta),
-    setSourceMute: (nodeId, m) => call("set_source_mute", nodeId, m),
     boostVolume: (gain = 1.5) => call("boost_volume", gain),
     diagnoseStutter: () => call("diagnose_stutter"),
     fixStutter: () => call("fix_stutter"),
@@ -631,7 +629,6 @@ function Avatar({ icon, connected }) {
 const EN = {
     // 通用
     "common.ok": "OK",
-    "common.cancel": "Cancel",
     "common.save": "Save",
     "common.saving": "Saving…",
     "common.remove": "Remove",
@@ -657,15 +654,13 @@ const EN = {
     "qam.rfkillSoft": "Bluetooth is blocked by the radio switch. This is the most common reason it won't turn on.",
     "qam.playing": "Now playing: {name}",
     "qam.externalSource": "External source",
+    "qam.noTrackInfo": "No track info from the source device",
     "qam.disconnect": "Disconnect",
     "qam.volume": "Volume",
     "qam.volumeHint": "use Steam volume keys for exact value",
     "qam.mute": "Mute",
     "qam.unmute": "Unmute",
-    "qam.clipping": "may clip",
-    "qam.boost": "Too quiet? Boost to 130%",
     "qam.boostHint": "Set absolute volume (no read-back needed):",
-    "qam.boosted": "Boosted to 130%",
     "qam.boosted100": "Volume set to 100%",
     "qam.boosted130": "Volume set to 130%",
     "qam.boosted150": "Volume set to 150%",
@@ -673,7 +668,6 @@ const EN = {
     "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
     "qam.manage": "Devices / Settings",
     "qam.dimScreen": "Turn off screen (keep playing)",
-    "qam.dimHint": "Tap anywhere or press any key to wake",
     "qam.dimFailed": "Cannot turn off screen",
     "qam.inhibitFailed": "Bluetooth may drop while screen is off",
     "qam.inhibitFailedBody": "The plugin could not stop the system from auto-suspending. Your Deck will sleep on the idle timer and the audio link drops. Turn off \"sleep after idle\" in Steam > Settings > Power, or check systemd-inhibit permissions.",
@@ -698,7 +692,6 @@ const EN = {
     "dev.search": "Search nearby devices",
     "dev.searchHint": "Streaming scan: results appear as they're found. Tap again to stop early.",
     "dev.searchHintWarn": "Tip: turn on \"Allow devices to find and connect\" in QAM first.",
-    "dev.searching": "Searching…",
     "dev.stopScan": "Stop",
     "dev.foundCount": "{n} found",
     "dev.showUnnamed": "Show unnamed devices",
@@ -714,16 +707,13 @@ const EN = {
     "dev.noDevices": "No devices paired yet. Use \"Search nearby devices\" above to find your phone.",
     "dev.pairedCount": "Paired ({n})",
     "dev.connected": "Connected",
-    "dev.notConnected": "Not connected",
     "dev.connect": "Connect",
-    "dev.connecting": "Connecting…",
     "dev.disconnected": "Disconnected",
     "dev.repair": "Repair",
     "dev.repairing": "Repairing…",
     "dev.removed": "Pairing removed",
     "dev.noName": "device did not broadcast a name",
     "dev.unknownLabel": "Unknown device · {mac}",
-    "dev.pairedTag": "Paired",
     "dev.untrusted": "Untrusted",
     "dev.blocked": "Blocked",
     "dev.trust": "Trust",
@@ -879,7 +869,6 @@ const EN = {
 };
 const ZH = {
     "common.ok": "确定",
-    "common.cancel": "取消",
     "common.save": "保存",
     "common.saving": "保存中…",
     "common.remove": "移除",
@@ -903,15 +892,13 @@ const ZH = {
     "qam.rfkillSoft": "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。",
     "qam.playing": "正在播放：{name}",
     "qam.externalSource": "外部音源",
+    "qam.noTrackInfo": "对端设备未提供曲目信息",
     "qam.disconnect": "断开",
     "qam.volume": "音量",
     "qam.volumeHint": "精确数值请用 Steam 音量键",
     "qam.mute": "静音",
     "qam.unmute": "取消静音",
-    "qam.clipping": "可能破音",
-    "qam.boost": "声音太小？增强到 130%",
     "qam.boostHint": "直接设置绝对音量（不需要读取当前值）：",
-    "qam.boosted": "已增益到 130%",
     "qam.boosted100": "音量已设为 100%",
     "qam.boosted130": "音量已设为 130%",
     "qam.boosted150": "音量已设为 150%",
@@ -919,7 +906,6 @@ const ZH = {
     "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
     "qam.manage": "设备管理 / 设置",
     "qam.dimScreen": "息屏当音箱（继续播放）",
-    "qam.dimHint": "触摸屏幕或按任意键唤醒",
     "qam.dimFailed": "无法关闭屏幕",
     "qam.inhibitFailed": "息屏期间蓝牙可能会断",
     "qam.inhibitFailedBody": "插件没能阻止系统自动休眠。闲置计时器走完 Deck 会睡下去，音频链路随之断开。请在 Steam > 设置 > 电源 里关掉「闲置后休眠」，或检查 systemd-inhibit 权限。",
@@ -942,7 +928,6 @@ const ZH = {
     "dev.search": "搜索附近设备",
     "dev.searchHint": "流式扫描：搜到一个显示一个。再点一次可提前停止。",
     "dev.searchHintWarn": "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。",
-    "dev.searching": "正在搜索…",
     "dev.stopScan": "停止",
     "dev.foundCount": "已找到 {n} 个",
     "dev.showUnnamed": "显示没有名称的设备",
@@ -958,16 +943,13 @@ const ZH = {
     "dev.noDevices": "还没有配对过任何设备。用上面的「搜索附近设备」找到手机后点「配对」即可，不用退出插件去系统蓝牙设置。",
     "dev.pairedCount": "已配对（{n}）",
     "dev.connected": "已连接",
-    "dev.notConnected": "未连接",
     "dev.connect": "连接",
-    "dev.connecting": "正在连接…",
     "dev.disconnected": "已断开",
     "dev.repair": "修复配对",
     "dev.repairing": "正在修复配对…",
     "dev.removed": "已移除配对",
     "dev.noName": "设备未广播名称",
     "dev.unknownLabel": "未知设备 · {mac}",
-    "dev.pairedTag": "已配对",
     "dev.untrusted": "未信任",
     "dev.blocked": "已拉黑",
     "dev.trust": "信任",
@@ -1432,12 +1414,37 @@ function Speaker() {
                             display: "flex", alignItems: "center", justifyContent: "center",
                             background: "rgba(76,154,255,0.18)", fontSize: 12, color: "#fff",
                         }, children: t("qam.a2dpForce") })] })), state?.live && (SP_JSX.jsxs("div", { style: {
-                    margin: "8px 0 2px", padding: "10px 12px", borderRadius: 10,
-                    background: "rgba(76,154,255,0.10)", border: "1px solid rgba(76,154,255,0.28)",
-                }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
-                                    width: 7, height: 7, borderRadius: 4, background: COLORS.ok, flexShrink: 0,
+                    margin: "8px 0 2px", padding: "10px 12px", borderRadius: RADIUS.sm,
+                    background: TONES.accent.bg, border: `1px solid ${TONES.accent.border}`,
+                }, children: [SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: SPACE.md, marginBottom: 6 }, children: [SP_JSX.jsx("span", { style: {
+                                    width: 7, height: 7, borderRadius: RADIUS.full, background: COLORS.ok,
+                                    flexShrink: 0,
+                                    // 播放中常亮，暂停时变暗
                                     opacity: state.track?.status === "playing" ? 1 : 0.4,
-                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), state.track?.artist && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.sub, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: [state.track.artist, state.track.album ? ` · ${state.track.album}` : ""] }))] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { style: { fontSize: 11, color: COLORS.dim, marginBottom: 4 }, children: [state.track.position, " / ", state.track.duration] })), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 6, marginTop: 2 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, -10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.setSourceMute(state.live.id, !state.live.muted)), label: state.live.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepSourceVolume(state.live.id, 10)), label: "+10%" })] })] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
+                                } }), SP_JSX.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [SP_JSX.jsx("div", { style: {
+                                            fontSize: FONT.small, color: COLORS.text, fontWeight: 600,
+                                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                        }, children: state.track?.title || t("qam.playing", { name: state.live.name }) }), SP_JSX.jsx("div", { style: {
+                                            fontSize: FONT.caption, color: COLORS.sub, marginTop: 1,
+                                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                        }, children: state.track?.artist
+                                            ? (state.track.album
+                                                ? `${state.track.artist} · ${state.track.album}`
+                                                : state.track.artist)
+                                            : state.live.name })] }), SP_JSX.jsx(Pill, { tone: "accent", children: state.track?.status_label || t("qam.externalSource") })] }), state.track && state.track.duration_ms > 0 && (SP_JSX.jsxs("div", { children: [SP_JSX.jsx("div", { style: {
+                                    height: 3, borderRadius: 2, background: "rgba(255,255,255,0.12)",
+                                    overflow: "hidden",
+                                }, children: SP_JSX.jsx("div", { style: {
+                                        height: "100%",
+                                        width: `${Math.min(100, (state.track.position_ms / state.track.duration_ms) * 100)}%`,
+                                        background: COLORS.accent,
+                                        borderRadius: 2,
+                                        transition: "width 0.9s linear",
+                                    } }) }), SP_JSX.jsxs("div", { style: {
+                                    display: "flex", justifyContent: "space-between",
+                                    fontSize: FONT.caption, color: COLORS.dim, marginTop: 3,
+                                    fontVariantNumeric: "tabular-nums",
+                                }, children: [SP_JSX.jsx("span", { children: state.track.position }), SP_JSX.jsx("span", { children: state.track.duration })] })] })), (!state.track || state.track.duration_ms <= 0) && (SP_JSX.jsx("div", { style: { fontSize: FONT.caption, color: COLORS.dim }, children: t("qam.noTrackInfo") }))] })), SP_JSX.jsxs("div", { style: { width: "100%", marginTop: 8 }, children: [SP_JSX.jsxs("div", { style: {
                             display: "flex", alignItems: "center", gap: 6, padding: "0 2px", marginBottom: 6,
                             color: COLORS.sub, fontSize: 12,
                         }, children: [state?.volume.muted ? SP_JSX.jsx(FaVolumeMute, { size: 12 }) : SP_JSX.jsx(FaVolumeUp, { size: 12 }), SP_JSX.jsx("span", { children: t("qam.volume") }), SP_JSX.jsx("span", { style: { fontSize: 11, color: COLORS.dim, marginLeft: "auto" }, children: t("qam.volumeHint") })] }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-10)), label: "\u221210%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(-5)), label: "\u22125%" }), SP_JSX.jsx(VolBtn, { onClick: toggleMute, label: state?.volume.muted ? t("qam.unmute") : t("qam.mute") }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(5)), label: "+5%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.stepVolume(10)), label: "+10%" })] })] }), SP_JSX.jsxs("div", { style: { marginTop: 8 }, children: [SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, marginBottom: 6, padding: "0 2px" }, children: t("qam.boostHint") }), SP_JSX.jsxs(DFL.Focusable, { "flow-children": "row", style: { display: "flex", gap: 8 }, children: [SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.0), t("qam.boosted100")), label: "100%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.3), t("qam.boosted130")), label: "130%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(1.5), t("qam.boosted150")), label: "150%" }), SP_JSX.jsx(VolBtn, { onClick: () => act(() => api.boostVolume(2.0), t("qam.boosted200")), label: "200%" })] })] }), connected.length === 0 && ad?.discoverable && (SP_JSX.jsx("div", { style: { fontSize: 12, color: COLORS.dim, margin: "4px 4px 0", lineHeight: 1.6 }, children: t("qam.hintFind", { alias: ad.alias }) })), state?.screen?.available && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.Focusable, { onClick: enterDim, onActivate: enterDim, style: {

@@ -4,104 +4,107 @@
 
 ---
 
-## [2.0.3] - 2026-11-26
+## [3.2.0] - 2026-11-28
 
-真机验证反馈的三个问题。
+**QAM 的「正在播放」改成纯信息卡片；删掉不起作用的外部源音量**
 
-### Fixed
+### 1. 同一个面板里有两套音量控件
 
-- **切换均衡器报「重启 PipeWire 失败」**
+**现象**：QAM 上半是「正在播放」卡片，里面带 `−10% / 静音 / +10%`；
+下面又是整排主音量 `−10% / −5% / 静音 / +5% / +10%`。
 
-  Decky 后端进程虽然以 `deck` 用户运行，但**没有继承 `XDG_RUNTIME_DIR`**，
-  导致 `systemctl --user` 连不上会话总线（`Failed to connect to bus: No medium found`）。
+**真机反馈**：「这个的音量控件和下边音量调节重复了」。
 
-  修法：新增 `bt._user_session_env()`，所有 `systemctl --user` 调用都显式带上
-  `XDG_RUNTIME_DIR=/run/user/<uid>` 和 `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus`，
-  并增加 `sudo -n` 兜底；最终失败时把可直接复制的命令回传给用户。
-  PipeWire 与 WirePlumber 的重启都改用了这个方式。
+**修法**：把「正在播放」改成**纯信息卡片** —— 去掉全部按钮，换成：
 
-- **配对码 / 通行密钥不正确，无法与 Deck 配对**
+- 曲名（加粗）+ 歌手 · 专辑
+- 播放状态点（播放中常亮、暂停变暗）
+- 来源徽章（外部音源 / 播放中）
+- **进度条 + 左右时间**（原来是干巴巴一行 `01:23 / 04:56`）
+- 对端不提供元数据时给一句说明，卡片不至于空着
 
-  这是 BlueZ 的已知 Just-Works 重配对问题（[bluez#428](https://github.com/bluez/bluez/issues/428)、
-  [bluez#798](https://github.com/bluez/bluez/issues/798)）：手机「忘记」Deck 后重新配对时，
-  Deck 端仍持有旧绑定密钥，而 BlueZ 默认 `JustWorksRepairing = never` 会**拒绝替换**，
-  于是报 `incorrect PIN or passkey` / `PIN or Key Missing (0x06)`。
+### 2. 删掉「外部源独立音量」—— 它根本不起作用
 
-  修法：新增「修复配对」按钮（`repair_device` RPC）——
-  删除本机设备记录（含绑定密钥）→ 重启配对 agent → 重新配对 + 信任。
-  另有 `forget_device` 单独暴露。
+**真机反馈**：「它并不能控制我手机音量大小」。
 
-- **全屏页标题被 Steam 状态栏遮挡**
+**根因**：这个功能调的是 **Deck 端 PipeWire 里 `bluez_input` 节点的增益**，
+而手机音量是**手机自己通过 AVRCP 控制的** —— 两者根本不是同一个东西。
+所以这个 UI 不但多余，还会误导用户以为能遥控手机音量。
 
-  全屏路由页用 `position: absolute; inset: 0` 会被顶部状态栏（电量/时间）和
-  底部 A/B 提示条两头遮住。
+**删除范围**（只删对外暴露的入口）：
 
-  修法：外层容器用 padding 让位（顶 58px / 底 62px，叠加 `env(safe-area-inset-*)`），
-  内层单独做滚动容器。用 padding 而非 margin，保证背景色仍铺满整屏。
+| 位置 | 删除内容 |
+|---|---|
+| `main.py` | `set_source_volume` / `step_source_volume` / `set_source_mute` 三个 RPC |
+| `backend.ts` | `stepSourceVolume` / `setSourceMute` 两个方法 |
+| `Speaker.tsx` | 卡片里的三个按钮（已改成纯信息卡片） |
 
-### Added
+**⚠️ 刻意保留** `bt.py` 的 `Wp.get_volume_of / set_volume_of / step_volume_of / set_mute_of`：
 
-- **rfkill 阻挡识别**：`PowerState: off-blocked` 时给出准确提示
-  （而不是笼统的「打开蓝牙失败」），QAM 里提供「解除射频阻挡」按钮
-- **配对 agent 可靠性**：改用 `bluetoothctl --agent=NoInputNoOutput` 启动参数
-  （不再依赖 stdin 命令时序），并等待 "Agent registered" 确认；
-  自动应答 Confirmation / PIN / Passkey 请求作为兜底
-- **配对状态显示**：设置页显示 agent 是否已就绪，可一键重启
-- `pair_device` RPC：反向主动配对
+它们还被 `boost_volume`（一键增益）和 `_apply_auto_gain`（自动增益）用着。
+那是「把偏轻的音源在 Deck 端整体拉响」，**效果真实存在**，
+和「遥控手机音量」是两回事，不能一起删。
 
-### Notes
+### 3. 顺带清理
 
-真机验证确认的几点：
+- 删掉 9 个确认无引用的 i18n key（`qam.boost` / `qam.boosted` /
+  `qam.clipping` / `qam.dimHint` / `common.cancel` / `dev.connecting` /
+  `dev.notConnected` / `dev.pairedTag` / `dev.searching`）
+- 清掉因此变成死代码的 `act2` 辅助函数
+- i18n key 总数 235 → 226
+- **修复 CHANGELOG 本身**：开头有两条编码损坏的重复条目（2.0.3 / 2.0.1
+  @ 2026-11-26），已删除；缺失的 3.1.1 已补上
 
-- 蓝牙打不开的真因是 **rfkill 阻挡**（`PowerState: off-blocked`），
-  不是 polkit 权限问题（错误是 `org.bluez.Error.Failed` 而非 `NotAuthorized`）
-- `deck` 用户默认**没有密码**，`sudo` 全部失败，需要先 `passwd`
-- 适配器本身支持 A2DP Sink，`Class` 与 UUID 在蓝牙关闭时为空是正常现象
+> 注意：`codec.*` / `eq.*` / `lat.*` / `tab.*` 在静态扫描里「看不到引用」，
+> 但它们是**动态翻译**（后端返回 key，前端 `t(p.label_key)`），属正常用法，没有删。
+
+### 验证
+
+```
+tests_offline / i18n(226) / api / rpc(48) / bundle / tsc / pack   全过
+```
+
+RPC 数量从 51 降到 48，与删除的 3 个一致。
 
 ---
 
-## [2.0.1] - 2026-11-26
+## [3.1.1] - 2026-11-28
 
-**修复真机上「插件加载失败：SyntaxError: Unexpected token 'export'」**
+**补上真机截图（已打码）+ 填好商店封面图**
 
-这是 v2.0.0 及之前所有版本的致命打包缺陷 —— 插件能装进 Deck，但一加载就报错。
+### Added
+
+- **9 张真机截图**（1280x800，英文界面），按功能归类到 `docs/screenshots/`：
+  均衡器预设 / QAM 上下半 / 设备与配对 / 设置 / 编码器 /
+  音频焦点 / 音量归一化与延迟 / 行为与系统信息
+
+  每张都配了说明，完整清单见 `docs/screenshots/README.md`。
+
+- README 新增「Screenshots / 截图」区（中英各一份），嵌入 6 张关键图。
+
+### 隐私处理
+
+截图里包含真实设备信息，全部做了处理：
+
+| 项目 | 出现在 | 方式 |
+|---|---|---|
+| Steam 头像（右上角） | 全部 9 张 | 像素化 |
+| 蓝牙适配器 MAC 地址 | 04、05 | 像素化 |
+| 已配对设备名 | 04 | 像素化 |
+| 家目录路径 `/home/deck/` | 05 | 像素化 |
+| 游戏库背景封面 | 02、03 | 高斯模糊 |
+| 第三方截图工具浮层 | 06 | 改用同页无浮层版本 |
+
+> **一次自查失误记录**：第一版想用「饱和度」判断是否像素化 —— 错的。
+> 像素化只是把颜色**平均成块**，色块仍有颜色，饱和度照样高。
+> 改用「原图 vs 成品逐像素比对 + 颜色数下降」才靠得住。
 
 ### Fixed
 
-- **`pack.py` 漏打 `package.json`**
+- **`plugin.json` 的 `publish.image` 指向不存在的文件**
 
-  Decky Loader 靠 `package.json` 的 `type` 字段决定前端加载方式
-  （`loader.py` / `plugin.py`）：
-
-  | 条件 | 加载方式 | 结果 |
-  |---|---|---|
-  | 有 `package.json` 且 `type == "module"` | ESM：`import(url)` | ✅ 正常 |
-  | 没有 `package.json` | 旧版 IIFE：`eval(源码)` | ❌ ESM 产物直接抛 `Unexpected token 'export'` |
-
-  我们的 rollup 产物是 ESM（`@decky/rollup` 默认 `format: 'esm'`），
-  但 zip 里没有 `package.json`，于是 Decky 走了 `eval()` 路径，在 QAM 里显示：
-  ```
-  SyntaxError: Unexpected token 'export'
-    at PluginLoader.importReactPlugin
-  ```
-
-  **对比验证**：`decky-netease-music.zip` 里有 `package.json` + `type: module`，所以能正常加载；
-  `decky-bt-speaker.zip` 没有，所以失败。两个包的 `dist/index.js` 结尾格式完全一致，
-  差异只在 `package.json` 的有无。
-
-- **`pack.py` 新增 3 项自检**，让这类问题不可能再漏：
-  - `package.json` 必须存在
-  - `package.json` 的 `type` 必须是 `"module"`
-  - `dist/index.js` 必须含 `export` 语句（确认是 ESM 产物）
-
-- **`install.sh`** 同步加入 `package.json` 存在性与 `type` 校验
-
-### Notes
-
-同时确认了另外两个**不是**本次故障原因的点（排除掉，避免误判）：
-
-- **zip 层级**：`depth==1` 的 `plugin.json` 恰好 1 个，结构正确
-- **中文文件名**：已从安装包移除 `docs/`（含中文名），当前包内文件名全 ASCII
+  原本是 `docs/screenshot.png` —— 该文件根本不存在，商店提交会被直接拒。
+  现在指向 `docs/screenshots/02-qam-panel-top.jpg`（真实截图）。
 
 ---
 

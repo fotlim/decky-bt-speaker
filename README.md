@@ -321,7 +321,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v3.1.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.2.0**.
 
 | Version | Contents |
 |---|---|
@@ -369,6 +369,8 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v3.1.0**.
 | 3.0.0 | **Structure & visual refactor (no feature change)** — design-token layer, per-tab files, `dimsession.py`; removed ~60 lines of dead volume code |
 | 3.0.1 | Fixed the `DimSession` crash (`self.dim.session`) + added AST/RPC smoke tests |
 | 3.1.0 | Preset lists (codec / latency / EQ) fully localized — backend returns i18n keys; config-file comments bilingual |
+| 3.1.1 | Real-device screenshots (privacy pixelated) + fixed the broken publish.image |
+| 3.2.0 | QAM "Now playing" is now a pure info card (title/artist/progress bar); removed the external-source volume buttons — they never controlled the phone volume |
 
 ---
 
@@ -716,7 +718,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.1.0**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.2.0**。
 
 | 版本 | 内容 |
 |---|---|
@@ -764,6 +766,8 @@ python pack.py          # 打包 zip
 | 3.0.0 | **结构与视觉重构（不改功能）** —— 设计令牌层、按 Tab 拆分、`dimsession.py`；删掉约 60 行音量死代码 |
 | 3.0.1 | 修 `DimSession` 崩溃（`self.dim.session`）+ 新增 AST / RPC 冒烟测试 |
 | 3.1.0 | 预设列表（音质/延迟/EQ）完全本地化 —— 后端只返回 i18n key；配置文件注释改中英双语 |
+| 3.1.1 | 真机截图（隐私已打码）+ 修好失效的 publish.image |
+| 3.2.0 | QAM「正在播放」改成纯信息卡片（曲名/歌手/进度条）；删掉外部源音量按钮 —— 它控制不了手机音量 |
 
 ---
 

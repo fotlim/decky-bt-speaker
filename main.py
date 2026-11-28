@@ -1131,25 +1131,6 @@ class Plugin:
         await self.wp.set_mute(bool(muted))
         return {"ok": True, "muted": bool(muted)}
 
-    @_safe
-    async def set_source_volume(self, node_id, value):
-        """给外部蓝牙源节点单独调音量（不影响游戏声音）。"""
-        self._last_manual_volume = time.time()
-        await self.wp.set_volume_of(node_id, value)
-        return {"ok": True, "volume": max(0.0, min(bt.MAX_GAIN, float(value)))}
-
-    @_safe
-    async def step_source_volume(self, node_id, delta):
-        """外部源相对调节（不读取当前值）。"""
-        self._last_manual_volume = time.time()
-        await self.wp.step_volume_of(node_id, delta)
-        return {"ok": True, "delta": int(delta)}
-
-    @_safe
-    async def set_source_mute(self, node_id, muted):
-        await self.wp.set_mute_of(node_id, bool(muted))
-        return {"ok": True, "muted": bool(muted)}
-
     # ------------------------------------------------------------------
     # RPC：音量增益
     # ------------------------------------------------------------------

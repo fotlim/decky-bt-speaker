@@ -24,7 +24,7 @@ type Dict = Record<string, string>;
 const EN: Dict = {
   // 通用
   "common.ok": "OK",
-  "common.cancel": "Cancel",
+
   "common.save": "Save",
   "common.saving": "Saving…",
   "common.remove": "Remove",
@@ -52,15 +52,15 @@ const EN: Dict = {
   "qam.rfkillSoft": "Bluetooth is blocked by the radio switch. This is the most common reason it won't turn on.",
   "qam.playing": "Now playing: {name}",
   "qam.externalSource": "External source",
+  "qam.noTrackInfo": "No track info from the source device",
   "qam.disconnect": "Disconnect",
   "qam.volume": "Volume",
   "qam.volumeHint": "use Steam volume keys for exact value",
   "qam.mute": "Mute",
   "qam.unmute": "Unmute",
-  "qam.clipping": "may clip",
-  "qam.boost": "Too quiet? Boost to 130%",
+
   "qam.boostHint": "Set absolute volume (no read-back needed):",
-  "qam.boosted": "Boosted to 130%",
+
   "qam.boosted100": "Volume set to 100%",
   "qam.boosted130": "Volume set to 130%",
   "qam.boosted150": "Volume set to 150%",
@@ -68,7 +68,7 @@ const EN: Dict = {
   "qam.hintFind": "Look for {alias} in your phone's Bluetooth settings, then just play.",
   "qam.manage": "Devices / Settings",
   "qam.dimScreen": "Turn off screen (keep playing)",
-  "qam.dimHint": "Tap anywhere or press any key to wake",
+
   "qam.dimFailed": "Cannot turn off screen",
   "qam.inhibitFailed": "Bluetooth may drop while screen is off",
   "qam.inhibitFailedBody": "The plugin could not stop the system from auto-suspending. Your Deck will sleep on the idle timer and the audio link drops. Turn off \"sleep after idle\" in Steam > Settings > Power, or check systemd-inhibit permissions.",
@@ -95,7 +95,7 @@ const EN: Dict = {
   "dev.search": "Search nearby devices",
   "dev.searchHint": "Streaming scan: results appear as they're found. Tap again to stop early.",
   "dev.searchHintWarn": "Tip: turn on \"Allow devices to find and connect\" in QAM first.",
-  "dev.searching": "Searching…",
+
   "dev.stopScan": "Stop",
   "dev.foundCount": "{n} found",
   "dev.showUnnamed": "Show unnamed devices",
@@ -111,16 +111,16 @@ const EN: Dict = {
   "dev.noDevices": "No devices paired yet. Use \"Search nearby devices\" above to find your phone.",
   "dev.pairedCount": "Paired ({n})",
   "dev.connected": "Connected",
-  "dev.notConnected": "Not connected",
+
   "dev.connect": "Connect",
-  "dev.connecting": "Connecting…",
+
   "dev.disconnected": "Disconnected",
   "dev.repair": "Repair",
   "dev.repairing": "Repairing…",
   "dev.removed": "Pairing removed",
   "dev.noName": "device did not broadcast a name",
   "dev.unknownLabel": "Unknown device · {mac}",
-  "dev.pairedTag": "Paired",
+
   "dev.untrusted": "Untrusted",
   "dev.blocked": "Blocked",
   "dev.trust": "Trust",
@@ -285,7 +285,7 @@ const EN: Dict = {
 
 const ZH: Dict = {
   "common.ok": "确定",
-  "common.cancel": "取消",
+
   "common.save": "保存",
   "common.saving": "保存中…",
   "common.remove": "移除",
@@ -311,15 +311,15 @@ const ZH: Dict = {
   "qam.rfkillSoft": "蓝牙被射频开关阻挡了（Soft blocked），这是打不开蓝牙最常见的原因。",
   "qam.playing": "正在播放：{name}",
   "qam.externalSource": "外部音源",
+  "qam.noTrackInfo": "对端设备未提供曲目信息",
   "qam.disconnect": "断开",
   "qam.volume": "音量",
   "qam.volumeHint": "精确数值请用 Steam 音量键",
   "qam.mute": "静音",
   "qam.unmute": "取消静音",
-  "qam.clipping": "可能破音",
-  "qam.boost": "声音太小？增强到 130%",
+
   "qam.boostHint": "直接设置绝对音量（不需要读取当前值）：",
-  "qam.boosted": "已增益到 130%",
+
   "qam.boosted100": "音量已设为 100%",
   "qam.boosted130": "音量已设为 130%",
   "qam.boosted150": "音量已设为 150%",
@@ -327,7 +327,7 @@ const ZH: Dict = {
   "qam.hintFind": "在手机的「蓝牙」里找 {alias}，配对后直接放歌即可～",
   "qam.manage": "设备管理 / 设置",
   "qam.dimScreen": "息屏当音箱（继续播放）",
-  "qam.dimHint": "触摸屏幕或按任意键唤醒",
+
   "qam.dimFailed": "无法关闭屏幕",
   "qam.inhibitFailed": "息屏期间蓝牙可能会断",
   "qam.inhibitFailedBody": "插件没能阻止系统自动休眠。闲置计时器走完 Deck 会睡下去，音频链路随之断开。请在 Steam > 设置 > 电源 里关掉「闲置后休眠」，或检查 systemd-inhibit 权限。",
@@ -352,7 +352,7 @@ const ZH: Dict = {
   "dev.search": "搜索附近设备",
   "dev.searchHint": "流式扫描：搜到一个显示一个。再点一次可提前停止。",
   "dev.searchHintWarn": "建议先在 QAM 里打开「允许设备发现并连接」，否则对方可能搜不到这台 Deck。",
-  "dev.searching": "正在搜索…",
+
   "dev.stopScan": "停止",
   "dev.foundCount": "已找到 {n} 个",
   "dev.showUnnamed": "显示没有名称的设备",
@@ -368,16 +368,16 @@ const ZH: Dict = {
   "dev.noDevices": "还没有配对过任何设备。用上面的「搜索附近设备」找到手机后点「配对」即可，不用退出插件去系统蓝牙设置。",
   "dev.pairedCount": "已配对（{n}）",
   "dev.connected": "已连接",
-  "dev.notConnected": "未连接",
+
   "dev.connect": "连接",
-  "dev.connecting": "正在连接…",
+
   "dev.disconnected": "已断开",
   "dev.repair": "修复配对",
   "dev.repairing": "正在修复配对…",
   "dev.removed": "已移除配对",
   "dev.noName": "设备未广播名称",
   "dev.unknownLabel": "未知设备 · {mac}",
-  "dev.pairedTag": "已配对",
+
   "dev.untrusted": "未信任",
   "dev.blocked": "已拉黑",
   "dev.trust": "信任",
