@@ -321,7 +321,7 @@ python pack.py          # package the zip
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Current **v3.3.1**.
+See [CHANGELOG.md](CHANGELOG.md). Current **v3.3.2**.
 
 | Version | Contents |
 |---|---|
@@ -375,6 +375,7 @@ See [CHANGELOG.md](CHANGELOG.md). Current **v3.3.1**.
 | 3.2.2 | Track titles no longer show as octal escapes (\347\272\257) and the status badge no longer shows s "playing |
 | 3.3.0 | Halved polling cost (17 → 8 processes per poll): shared read cache for pactl/pw-dump/wpctl, cached versions and player tree, merged busctl properties; parallelised status(); smooth progress interpolation; gamepad handlers no longer double-fire or silently swallow errors; fixed a possible permanent black screen after dimming |
 | 3.3.1 | Fixed an infinite loop in octal decoding that could freeze the whole plugin; built-in mic no longer mistaken for a Bluetooth source; multi-sink list no longer always empty; A2DP picks the right card when several exist; quality preset no longer re-enables peer volume control; resample config moved to the PipeWire directory where it actually takes effect |
+| 3.3.2 | Store-readiness cleanup: dist/ no longer committed (the store CI builds it), LICENSE switched to BSD 3-Clause keeping the template copyright, added 	ests_store.py compliance self-check |
 
 ---
 
@@ -722,7 +723,7 @@ python pack.py          # 打包 zip
 
 ## 版本历史
 
-见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.3.1**。
+见 [CHANGELOG.md](CHANGELOG.md)。当前 **v3.3.2**。
 
 | 版本 | 内容 |
 |---|---|
@@ -776,6 +777,7 @@ python pack.py          # 打包 zip
 | 3.2.2 | 修曲名显示成八进制反斜杠数字、状态徽章带 s " 前缀 |
 | 3.3.0 | 轮询开销减半（17 → 8 个进程）：pactl/pw-dump/wpctl 共享读取缓存、版本号与 player 树缓存、busctl 多属性合并；status() 改并发；进度条平滑插值；手柄按键不再双触发、不再静默吞错；修掉息屏后可能永久黑屏的隐患 |
 | 3.3.1 | 修掉一个能卡死整个插件的死循环（八进制解码）；内置麦克风不再被误判为蓝牙源；多输出 sink 列表不再永远为空；多卡时 A2DP 选对卡；音质预设不再把「对端抢音量」带回来；重采样配置移到真正生效的 PipeWire 目录 |
+| 3.3.2 | 商店合规清理：dist/ 不再入库（商店 CI 自己构建）、LICENSE 换成 BSD 3-Clause 并保留模板版权、新增 	ests_store.py 合规自检 |
 
 ---
 

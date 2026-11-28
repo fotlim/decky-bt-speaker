@@ -4,6 +4,71 @@
 
 ---
 
+## [3.3.2] - 2026-11-28
+
+**准备提交插件商店：对照官方审核要求做合规清理**
+
+这一版**没有任何功能改动**，全部是为了通过 Decky 插件商店审核。
+参考文档：
+
+- [Review and Testing Process](https://wiki.deckbrew.xyz/en/plugin-dev/review-and-testing)
+- [Submitting Plugins](https://wiki.deckbrew.xyz/en/plugin-dev/submitting-plugins)
+
+### 1. `dist/` 移出版本控制
+
+商店 CI（`decky-plugin-database` 的 `build-plugins.yml`）会自己跑
+`decky plugin build -b` 重新构建，用的是仓库里的 `src/`。把
+`dist/index.js` 提交上去有两个问题：
+
+1. 那是压缩后的产物，审核员按「混淆代码」逐案审，增加不必要的摩擦
+2. 产物和源码可能不同步 —— 本项目就出过一次：改了版本号忘重建，
+   `dist` 里还是旧版本（`pack.py` 自检 9 抓到的）
+
+现在 `.gitignore` 里加了 `dist/`，本地开发和打 Release 时照常
+`rollup -c`，只是不进 git。
+
+### 2. LICENSE 换成 BSD 3-Clause，并保留模板版权
+
+官方模板（`decky-plugin-template`）是 **BSD 3-Clause**，而商店明确要求：
+
+> If your plugin is based on the plugin template, copy your desired license
+> to the top of the original LICENSE file that already exists in the repo.
+> The original license must be included as per the terms of the template's
+> license and is required for distribution on the store.
+
+原来只有一份 MIT，没有模板的原始版权 —— 这会被审核打回。现在文件里
+同时包含 Steam Deck Homebrew 的原始声明和本项目的声明。
+
+### 3. `package.json` 补全元数据
+
+补了 `license`（BSD-3-Clause）、`repository`、`keywords`、`author`。
+审核会检查 npm 包名是否规范、依赖是否清晰，这些字段缺了不好过。
+
+### 4. 清掉测试临时文件
+
+`_test_settings.json` 是 `tests_rpc.py` 运行时写出来的，被误提交进了仓库。
+已移出版本控制并加进 `.gitignore`。
+
+### 5. 新增 `tests_store.py`：合规自检
+
+把审核员会逐条看的点固化成可执行检查，避免以后改动时悄悄退化：
+
+- 清单字段（`name` / `author` / `api_version` / `publish.*`）
+- 许可证（必须含模板原始版权 + BSD 3-Clause 条款）
+- 不该入库的文件（`dist/`、`node_modules`、`*.zip`、`__pycache__`）
+- `backend/` / `assets/` / `defaults/` 目录要么不存在、要么有实质内容
+- `pnpm-lock.yaml` 的 `lockfileVersion` 必须是 9.0（CI 要求）
+- 没有 `remote-binary` 标记
+- 前端没有 `fetch` / `eval` / `new Function`
+- 后端只用标准库（PyInstaller 冻结环境里第三方库会 ImportError）
+- 没有 `shell=True` / `os.system` / `os.popen`
+
+### 升级提示
+
+无功能变更，无需重装。
+
+---
+
 ## [3.3.1] - 2026-11-28
 
 **一次深度审计后修掉的问题：一个能卡死插件的死循环、几个「一直在悄悄失效」的功能**
